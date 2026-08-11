@@ -11,9 +11,10 @@ import {
   CartesianGrid,
   Legend,
 } from "recharts";
-import { Download, Server, CheckCircle2, XCircle, HelpCircle } from "lucide-react";
+import { Download, RefreshCw, Server, CheckCircle2, XCircle, HelpCircle } from "lucide-react";
 import { apiClient, getAccessToken } from "../api/client";
 import { useTheme } from "../context/ThemeContext";
+import { useAuth } from "../context/AuthContext";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import Button from "../components/ui/Button";
@@ -54,7 +55,7 @@ interface InstallerFile {
   mtime: string;
 }
 
-const AGENT_ARCHIVE_NAME = "FleetManager-agent.zip";
+const AGENT_INSTALLER_NAME = "FleetManagerAgent-Setup.exe";
 
 const STAT_CARDS: {
   key: keyof HostsSummary;
@@ -70,6 +71,8 @@ const STAT_CARDS: {
 
 export default function Dashboard() {
   const { theme } = useTheme();
+  const { user } = useAuth();
+  const canManage = user?.role === "admin" || user?.role === "operator";
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<HostsSummary | null>(null);
   const [recentTasks, setRecentTasks] = useState<TaskRunOut[]>([]);
@@ -78,7 +81,9 @@ export default function Dashboard() {
   const [recentChanges, setRecentChanges] = useState<SoftwareHistoryOut[]>([]);
   const [onlineTimeline, setOnlineTimeline] = useState<{ hour: string; online: number }[]>([]);
   const [weeklyStats, setWeeklyStats] = useState<{ day: string; success: number; failed: number }[]>([]);
-  const [agentArchive, setAgentArchive] = useState<InstallerFile | null>(null);
+  const [agentInstaller, setAgentInstaller] = useState<InstallerFile | null>(null);
+  const [syncingAgent, setSyncingAgent] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   const isDark = theme === "dark";
   const chart = {
@@ -95,6 +100,13 @@ export default function Dashboard() {
     cursorStroke: isDark ? "#334155" : "#cbd5e1",
   };
 
+  async function loadAgentInstaller() {
+    const { data } = await apiClient.get<InstallerFile[]>("/installers");
+    const installer = data.find((file) => file.name === AGENT_INSTALLER_NAME)
+      ?? data.find((file) => /^FleetManagerAgent-Setup(?:[-_].+)?\.exe$/i.test(file.name));
+    setAgentInstaller(installer ?? null);
+  }
+
   useEffect(() => {
     setLoading(true);
     Promise.all([
@@ -105,20 +117,16 @@ export default function Dashboard() {
       apiClient.get("/dashboard/recent-software-changes", { params: { limit: 8 } }).then((r) => setRecentChanges(r.data)),
       apiClient.get("/dashboard/online-timeline").then((r) => setOnlineTimeline(r.data)),
       apiClient.get("/dashboard/weekly-run-stats").then((r) => setWeeklyStats(r.data)),
-      apiClient.get<InstallerFile[]>("/installers").then(({ data }) => {
-        const archive = data.find((file) => file.name === AGENT_ARCHIVE_NAME)
-          ?? data.find((file) => /^FleetManager-agent(?:[-_].+)?\.zip$/i.test(file.name));
-        setAgentArchive(archive ?? null);
-      }),
+      loadAgentInstaller(),
     ]).finally(() => setLoading(false));
   }, []);
 
   async function downloadAgent() {
-    if (!agentArchive) return;
+    if (!agentInstaller) return;
 
     const token = getAccessToken();
     const response = await fetch(
-      `${apiClient.defaults.baseURL}/installers/${encodeURIComponent(agentArchive.name)}/download`,
+      `${apiClient.defaults.baseURL}/installers/${encodeURIComponent(agentInstaller.name)}/download`,
       { headers: token ? { Authorization: `Bearer ${token}` } : {} },
     );
     if (!response.ok) return;
@@ -126,20 +134,47 @@ export default function Dashboard() {
     const url = URL.createObjectURL(await response.blob());
     const link = document.createElement("a");
     link.href = url;
-    link.download = agentArchive.name;
+    link.download = agentInstaller.name;
     link.click();
     URL.revokeObjectURL(url);
   }
 
+  async function handleSyncAgent() {
+    setSyncingAgent(true);
+    setSyncMessage(null);
+    try {
+      const { data } = await apiClient.post<{ updated: boolean; version?: string; reason?: string }>(
+        "/installers/agent/sync",
+      );
+      setSyncMessage(
+        data.updated
+          ? `Установщик агента обновлён до ${data.version}`
+          : data.reason || "Обновлений не найдено",
+      );
+      if (data.updated) await loadAgentInstaller();
+    } catch (e: any) {
+      setSyncMessage(e.response?.data?.detail || "Не удалось проверить обновление агента");
+    } finally {
+      setSyncingAgent(false);
+    }
+  }
+
   return (
     <div className="animate-fade-in space-y-6">
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-2">
+        {syncMessage && <span className="text-sm text-muted-foreground">{syncMessage}</span>}
+        {canManage && (
+          <Button variant="secondary" size="sm" onClick={handleSyncAgent} loading={syncingAgent}>
+            <RefreshCw className="h-3.5 w-3.5" />
+            Проверить обновление агента
+          </Button>
+        )}
         <Button
           variant="secondary"
           size="sm"
           onClick={downloadAgent}
-          disabled={!agentArchive}
-          title={agentArchive ? `Скачать ${agentArchive.name}` : "Загрузите FleetManager-agent.zip в хранилище установочников"}
+          disabled={!agentInstaller}
+          title={agentInstaller ? `Скачать ${agentInstaller.name}` : "Установщик агента ещё не синхронизирован"}
         >
           <Download className="h-3.5 w-3.5" />
           Скачать агент
