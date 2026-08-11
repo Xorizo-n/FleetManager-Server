@@ -35,12 +35,14 @@ class AgentApiContractTests(unittest.TestCase):
             os="windows_11",
             status="online",
             ssh_login=r"rtf\s.u.mirzagitov",
+            ssh_port=5022,
             hardware={"manufacturer": "Dell", "model": "OptiPlex", "fingerprint": "abc123"},
             software=[AgentSoftware(name="7-Zip", version="24.0", source="registry")],
         )
         self.assertEqual(payload.software[0].name, "7-Zip")
         self.assertEqual(payload.hardware.fingerprint, "abc123")
         self.assertEqual(payload.ssh_login, r"rtf\s.u.mirzagitov")
+        self.assertEqual(payload.ssh_port, 5022)
 
     def test_alert_requires_message(self):
         with self.assertRaises(ValidationError):
@@ -76,8 +78,10 @@ class AgentApiContractTests(unittest.TestCase):
             hostname="pc-01.example.local",
             os="windows_11",
             ssh_login=r"rtf\s.u.mirzagitov",
+            ssh_port=5022,
         )
         self.assertEqual(payload.ssh_login, r"rtf\s.u.mirzagitov")
+        self.assertEqual(payload.ssh_port, 5022)
 
 
 if __name__ == "__main__":

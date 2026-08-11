@@ -15,7 +15,7 @@ from services.audit import record_audit
 
 router = APIRouter(prefix="/installers", tags=["installers"])
 
-ALLOWED_EXTENSIONS = {".exe", ".msi"}
+ALLOWED_EXTENSIONS = {".exe", ".msi", ".zip"}
 MAX_FILE_SIZE = 4 * 1024 * 1024 * 1024  # 4 GB
 CHUNK_SIZE = 1024 * 1024
 

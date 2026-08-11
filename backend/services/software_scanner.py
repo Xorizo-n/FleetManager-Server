@@ -1,5 +1,4 @@
 import base64
-import tempfile
 import uuid
 from datetime import datetime, timezone
 
@@ -8,7 +7,7 @@ from database import SessionLocal
 from models.host import Host
 from models.software import InstallMethod
 from models.task import TaskRun, TaskStatus
-from services.ansible_runner import build_full_inventory
+from services.ansible_runner import build_full_inventory, run_ansible
 from services.host_target import resolve_host_target
 from services.software_parse import parse_get_package, parse_choco_list, parse_registry_packages
 from services.software_sync import sync_host_software
@@ -47,10 +46,7 @@ REGISTRY_PACKAGES_CMD = "powershell -NoProfile -NonInteractive -EncodedCommand "
 
 
 def _run_raw(inventory: dict, inventory_host: str, command: str) -> str:
-    import ansible_runner
-
-    result = ansible_runner.run(
-        private_data_dir=tempfile.mkdtemp(prefix="scan-"),
+    result = run_ansible(
         module="ansible.builtin.raw",
         module_args=command,
         host_pattern=inventory_host,

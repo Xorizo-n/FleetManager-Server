@@ -11,6 +11,7 @@ from dependencies import get_current_user
 from models.task import TaskRun, TaskStatus, TaskType
 from models.user import User
 from schemas.task import TaskRunOut, TaskRunDetailOut
+from services.task_visibility import can_view_task_type
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -22,9 +23,11 @@ def list_tasks(
     task_type: TaskType | None = None,
     status_filter: TaskStatus | None = None,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     query = select(TaskRun)
+    if not can_view_task_type(user.role, TaskType.host_diagnostic):
+        query = query.where(TaskRun.task_type != TaskType.host_diagnostic)
     if task_type:
         query = query.where(TaskRun.task_type == task_type)
     if status_filter:
@@ -33,15 +36,23 @@ def list_tasks(
 
 
 @router.get("/{task_id}", response_model=TaskRunDetailOut)
-def get_task(task_id: uuid.UUID, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def get_task(task_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     task_run = db.get(TaskRun, task_id)
     if task_run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задача не найдена")
+    if not can_view_task_type(user.role, task_run.task_type):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient permissions")
     return task_run
 
 
 @router.get("/{task_id}/stream")
-async def stream_task_log(task_id: uuid.UUID, _: User = Depends(get_current_user)):
+async def stream_task_log(task_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    task_run = db.get(TaskRun, task_id)
+    if task_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="task not found")
+    if not can_view_task_type(user.role, task_run.task_type):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient permissions")
+
     async def event_generator():
         last_len = 0
         while True:

@@ -6,7 +6,7 @@ celery_app = Celery(
     "fleet_manager",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["services.ansible_runner", "services.software_scanner", "services.host_health"],
+    include=["services.ansible_runner", "services.software_scanner", "services.host_health", "services.host_diagnostics"],
 )
 
 celery_app.conf.update(

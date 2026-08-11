@@ -40,6 +40,10 @@ class InventoryGeneratorTests(unittest.TestCase):
         host_vars = hosts[str(host.id)]
         self.assertEqual(host_vars["ansible_port"], 5022)
         self.assertEqual(host_vars["ansible_shell_type"], "powershell")
+        self.assertEqual(
+            host_vars["ansible_ssh_common_args"],
+            "-o ControlMaster=no -o ControlPersist=no",
+        )
         self.assertIn(str(host.id), inventory["all"]["children"]["Win_Hosts"]["hosts"])
         self.assertIn(str(host.id), inventory["all"]["children"]["windows"]["hosts"])
 

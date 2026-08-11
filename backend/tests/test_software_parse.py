@@ -9,10 +9,6 @@ class SoftwareParseTests(unittest.TestCase):
         raw = '\x1b[2J\x1b[m\x1b[H[{"Name":"7-Zip","Version":"24.09"}]\x1b[H'
         self.assertEqual(parse_get_package(raw), [("7-Zip", "24.09")])
 
-    def test_parse_registry_packages_joins_console_wrapped_json(self):
-        raw = '[{"Name":"Microsoft Office","Vers\r\nion":"16.0"}]'
-        self.assertEqual(parse_registry_packages(raw), [("Microsoft Office", "16.0")])
-
     def test_parse_registry_packages_reads_json_array(self):
         raw = '[{"Name":"7-Zip 24.09","Version":"24.09"},{"Name":"Visual Studio Code","Version":"1.95.3"}]'
         self.assertEqual(

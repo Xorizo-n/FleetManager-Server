@@ -12,6 +12,7 @@ from database import Base
 class TaskType(str, enum.Enum):
     playbook = "playbook"
     software_scan = "software_scan"
+    host_diagnostic = "host_diagnostic"
 
 
 class TaskStatus(str, enum.Enum):

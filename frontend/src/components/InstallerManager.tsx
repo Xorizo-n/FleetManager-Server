@@ -124,7 +124,7 @@ export default function InstallerManager() {
               <input
                 ref={inputRef}
                 type="file"
-                accept=".exe,.msi"
+                accept=".exe,.msi,.zip"
                 multiple
                 className="hidden"
                 onChange={(e) => handleUpload(e.target.files)}

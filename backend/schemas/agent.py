@@ -30,6 +30,7 @@ class AgentRegisterRequest(BaseModel):
     ip_address: str | None = Field(default=None, max_length=64)
     os: HostOS
     ssh_login: str | None = Field(default=None, max_length=255)
+    ssh_port: int | None = Field(default=None, ge=1, le=65535)
 
     @field_validator("hostname", "ip_address", "ssh_login", mode="before")
     @classmethod
@@ -59,6 +60,7 @@ class AgentHeartbeatRequest(BaseModel):
     hostname: str | None = Field(default=None, max_length=255)
     ip_address: str | None = Field(default=None, max_length=64)
     ssh_login: str | None = Field(default=None, max_length=255)
+    ssh_port: int | None = Field(default=None, ge=1, le=65535)
     os: HostOS
     status: HostStatus = HostStatus.online
     hardware: AgentHardware = Field(default_factory=AgentHardware)

@@ -2,6 +2,7 @@ import os
 import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from celery_app import celery_app
 from config import settings
@@ -12,6 +13,23 @@ from models.playbook import PlaybookRepo, PlaybookSchedule
 from models.task import TaskRun, TaskStatus, TaskType
 from services.crypto import decrypt_secret
 from services.inventory_generator import build_inventory_dict, resolve_host_group_members
+
+
+def run_ansible(**kwargs):
+    """Run Ansible and materialize its lazy result before cleanup.
+
+    ansible-runner exposes ``events`` as a lazy iterator backed by files below
+    ``private_data_dir``. Materialize events and stats while that directory is
+    still alive, then remove it so completed tasks cannot accumulate artifacts.
+    The inventory separately disables OpenSSH control persistence.
+    """
+    import ansible_runner
+
+    with tempfile.TemporaryDirectory(prefix="ansible-") as private_data_dir:
+        result = ansible_runner.run(private_data_dir=private_data_dir, **kwargs)
+        events = list(result.events)
+        stats = result.stats
+        return SimpleNamespace(rc=result.rc, status=result.status, stats=stats, events=events)
 
 
 def _resolve_credential_vars(host: Host) -> dict:
@@ -62,8 +80,6 @@ def playbook_matched_hosts(result, expected_hosts: set[str], observed_hosts: set
 
 @celery_app.task(name="services.ansible_runner.run_playbook_task", bind=True)
 def run_playbook_task(self, task_run_id: str):
-    import ansible_runner
-
     db = SessionLocal()
     try:
         task_run = db.get(TaskRun, uuid.UUID(task_run_id))
@@ -94,8 +110,7 @@ def run_playbook_task(self, task_run_id: str):
                 task_run.log_output = "\n".join(log_lines)
                 db.commit()
 
-        result = ansible_runner.run(
-            private_data_dir=tempfile.mkdtemp(prefix="runner-"),
+        result = run_ansible(
             playbook=task_run.playbook_name,
             project_dir=repo.local_path,
             inventory=inventory,

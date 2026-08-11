@@ -7,6 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from database import get_db
+from config import settings
 from dependencies import require_roles
 from models.agent import AgentAlert, AgentEnrollmentToken
 from models.credential import Credential, CredentialType
@@ -150,6 +151,7 @@ def register_agent(payload: AgentRegisterRequest, db: Session = Depends(get_db))
             last_seen_at=now,
             last_checked_at=now,
             is_agent_managed=True,
+            ssh_port=payload.ssh_port or settings.ansible_ssh_port,
         )
         db.add(host)
     else:
@@ -162,6 +164,8 @@ def register_agent(payload: AgentRegisterRequest, db: Session = Depends(get_db))
         host.hostname = payload.hostname or host.hostname
         host.ip_address = payload.ip_address or host.ip_address
         host.os = payload.os
+        if payload.ssh_port:
+            host.ssh_port = payload.ssh_port
         host.status = HostStatus.online
         host.last_seen_at = now
         host.last_checked_at = now
@@ -214,6 +218,14 @@ def heartbeat(
     host.last_checked_at = now
     host.last_shutdown_at = None
     host.hardware_fingerprint = payload.hardware.fingerprint
+    host.hw_manufacturer = payload.hardware.manufacturer
+    host.hw_model = payload.hardware.model
+    host.hw_serial_number = payload.hardware.serial_number
+    host.hw_os_caption = payload.hardware.operating_system
+    host.hw_processor = payload.hardware.processor
+    host.hw_total_memory_bytes = payload.hardware.total_memory_bytes
+    if payload.ssh_port:
+        host.ssh_port = payload.ssh_port
     if payload.ssh_login and host.credential_id:
         credential = db.get(Credential, host.credential_id)
         if credential is not None and credential.is_agent_managed:

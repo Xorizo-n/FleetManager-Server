@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from models.host import HostStatus, HostOS
 from services.host_target import normalize_host_address, resolve_host_target
@@ -51,7 +51,6 @@ class HostCreate(BaseModel):
     os: HostOS
     comment: str | None = None
     credential_id: uuid.UUID | None = None
-    ssh_port: int | None = Field(default=None, ge=1, le=65535)
 
     @field_validator("ip_address", "hostname", mode="before")
     @classmethod
@@ -72,7 +71,6 @@ class HostUpdate(BaseModel):
     status: HostStatus | None = None
     comment: str | None = None
     credential_id: uuid.UUID | None = None
-    ssh_port: int | None = Field(default=None, ge=1, le=65535)
 
     @field_validator("ip_address", "hostname", mode="before")
     @classmethod
@@ -92,13 +90,8 @@ class HostOut(BaseModel):
     last_checked_at: datetime | None
     comment: str | None
     credential_id: uuid.UUID | None
-    ssh_port: int
     created_at: datetime
     updated_at: datetime
-    agent_id: uuid.UUID | None = None
-    hardware_fingerprint: str | None = None
-    last_seen_at: datetime | None = None
-    last_shutdown_at: datetime | None = None
 
 
 class CsvImportResult(BaseModel):

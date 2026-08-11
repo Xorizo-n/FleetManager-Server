@@ -29,6 +29,10 @@ def build_inventory_dict(db: Session, host_ids: list[uuid.UUID] | None = None) -
             "ansible_port": host.ssh_port or settings.ansible_ssh_port,
             "ansible_connection": "ssh",
             "ansible_shell_type": "powershell",
+            # Do not let OpenSSH create persistent control-master helper
+            # processes under the long-lived Celery worker. Those helpers
+            # accumulated as zombies in production and exhausted pids.max.
+            "ansible_ssh_common_args": "-o ControlMaster=no -o ControlPersist=no",
             "_fleet_host_id": str(host.id),
             "_fleet_credential_id": str(host.credential_id) if host.credential_id else (
                 str(host.group.credential_id) if host.group_id and host.group and host.group.credential_id else None

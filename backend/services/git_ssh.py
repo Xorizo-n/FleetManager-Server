@@ -7,6 +7,12 @@ from models.credential import Credential
 from services.crypto import decrypt_secret
 
 
+def normalize_key_material(secret: str) -> str:
+    """Приводит приватный ключ к виду, который принимает OpenSSH:
+    LF вместо CRLF и обязательный перевод строки в конце файла."""
+    return secret.replace("\r\n", "\n").replace("\r", "\n").strip() + "\n"
+
+
 def _extract_host(git_url: str) -> str:
     if git_url.startswith("ssh://"):
         return urlparse(git_url).hostname or ""
@@ -41,9 +47,14 @@ def build_git_ssh_command(credential: Credential, git_url: str) -> str:
     os.makedirs(settings.ansible_private_key_dir, exist_ok=True)
 
     key_path = os.path.join(settings.ansible_private_key_dir, f"git-{credential.id}.pem")
-    if not os.path.exists(key_path):
+    key_material = normalize_key_material(decrypt_secret(credential.secret_encrypted))
+    current = None
+    if os.path.exists(key_path):
+        with open(key_path) as f:
+            current = f.read()
+    if current != key_material:
         with open(key_path, "w") as f:
-            f.write(decrypt_secret(credential.secret_encrypted))
+            f.write(key_material)
         os.chmod(key_path, 0o600)
 
     _ensure_host_key_known(_extract_host(git_url))

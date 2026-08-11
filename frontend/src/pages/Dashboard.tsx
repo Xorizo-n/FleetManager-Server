@@ -11,11 +11,12 @@ import {
   CartesianGrid,
   Legend,
 } from "recharts";
-import { Server, CheckCircle2, XCircle, HelpCircle } from "lucide-react";
-import { apiClient } from "../api/client";
+import { Download, Server, CheckCircle2, XCircle, HelpCircle } from "lucide-react";
+import { apiClient, getAccessToken } from "../api/client";
 import { useTheme } from "../context/ThemeContext";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
+import Button from "../components/ui/Button";
 
 interface HostsSummary {
   total: number;
@@ -47,6 +48,14 @@ interface SoftwareHistoryOut {
   changed_at: string;
 }
 
+interface InstallerFile {
+  name: string;
+  size: number;
+  mtime: string;
+}
+
+const AGENT_ARCHIVE_NAME = "FleetManager-agent.zip";
+
 const STAT_CARDS: {
   key: keyof HostsSummary;
   label: string;
@@ -69,6 +78,7 @@ export default function Dashboard() {
   const [recentChanges, setRecentChanges] = useState<SoftwareHistoryOut[]>([]);
   const [onlineTimeline, setOnlineTimeline] = useState<{ hour: string; online: number }[]>([]);
   const [weeklyStats, setWeeklyStats] = useState<{ day: string; success: number; failed: number }[]>([]);
+  const [agentArchive, setAgentArchive] = useState<InstallerFile | null>(null);
 
   const isDark = theme === "dark";
   const chart = {
@@ -95,11 +105,46 @@ export default function Dashboard() {
       apiClient.get("/dashboard/recent-software-changes", { params: { limit: 8 } }).then((r) => setRecentChanges(r.data)),
       apiClient.get("/dashboard/online-timeline").then((r) => setOnlineTimeline(r.data)),
       apiClient.get("/dashboard/weekly-run-stats").then((r) => setWeeklyStats(r.data)),
+      apiClient.get<InstallerFile[]>("/installers").then(({ data }) => {
+        const archive = data.find((file) => file.name === AGENT_ARCHIVE_NAME)
+          ?? data.find((file) => /^FleetManager-agent(?:[-_].+)?\.zip$/i.test(file.name));
+        setAgentArchive(archive ?? null);
+      }),
     ]).finally(() => setLoading(false));
   }, []);
 
+  async function downloadAgent() {
+    if (!agentArchive) return;
+
+    const token = getAccessToken();
+    const response = await fetch(
+      `${apiClient.defaults.baseURL}/installers/${encodeURIComponent(agentArchive.name)}/download`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+    );
+    if (!response.ok) return;
+
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = agentArchive.name;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="animate-fade-in space-y-6">
+      <div className="flex justify-end">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={downloadAgent}
+          disabled={!agentArchive}
+          title={agentArchive ? `Скачать ${agentArchive.name}` : "Загрузите FleetManager-agent.zip в хранилище установочников"}
+        >
+          <Download className="h-3.5 w-3.5" />
+          Скачать агент
+        </Button>
+      </div>
       <h1 className="text-2xl font-semibold tracking-tight">Дашборд</h1>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">

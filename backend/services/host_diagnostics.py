@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import socket
-import tempfile
 import uuid
 from datetime import datetime, timezone
 
@@ -10,7 +9,7 @@ from config import settings
 from database import SessionLocal
 from models.host import Host, HostStatus, HostStatusHistory
 from models.task import TaskRun, TaskStatus
-from services.ansible_runner import build_full_inventory
+from services.ansible_runner import build_full_inventory, run_ansible
 from services.host_diagnostic_utils import format_stage, inventory_host_key, sanitize_detail
 from services.host_target import resolve_host_target
 
@@ -40,8 +39,6 @@ def _ssh_port(host: Host) -> int:
 
 @celery_app.task(name="services.host_diagnostics.run_host_diagnostic")
 def run_host_diagnostic(task_run_id: str):
-    import ansible_runner
-
     db = SessionLocal()
     task = None
     host = None
@@ -83,8 +80,7 @@ def run_host_diagnostic(task_run_id: str):
         inventory = build_full_inventory(db, [host.id])
         inventory_host = inventory_host_key(host.id)
         _append_log(db, task, f"starting Ansible SSH check for inventory host {inventory_host}", stage=stage)
-        result = ansible_runner.run(
-            private_data_dir=tempfile.mkdtemp(prefix="diagnostic-"),
+        result = run_ansible(
             module="ansible.builtin.raw",
             module_args="echo fleet-diagnostic-ok",
             host_pattern=inventory_host,

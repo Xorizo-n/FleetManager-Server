@@ -1,16 +1,13 @@
-import tempfile
 from datetime import datetime, timezone
 
 from celery_app import celery_app
 from database import SessionLocal
 from models.host import Host, HostStatus, HostStatusHistory
-from services.ansible_runner import build_full_inventory
+from services.ansible_runner import build_full_inventory, run_ansible
 
 
 @celery_app.task(name="services.host_health.ping_hosts")
 def ping_hosts():
-    import ansible_runner
-
     db = SessionLocal()
     try:
         hosts = db.query(Host).all()
@@ -23,8 +20,7 @@ def ping_hosts():
         # Используем raw + echo вместо win_ping/WinRM, чтобы не тянуть отдельные Ansible
         # коллекции — раз ansible_connection везде ssh (см. build_full_inventory), достаточно
         # проверить, что SSH-сессия вообще устанавливается и выполняет команду.
-        result = ansible_runner.run(
-            private_data_dir=tempfile.mkdtemp(prefix="ping-"),
+        result = run_ansible(
             module="ansible.builtin.raw",
             module_args="echo fleet-ping-ok",
             host_pattern="all",

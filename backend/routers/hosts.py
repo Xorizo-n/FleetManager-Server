@@ -12,18 +12,20 @@ from dependencies import get_current_user, require_roles
 from models.host import Host, HostGroup, HostOS
 from models.task import TaskRun, TaskStatus, TaskType
 from models.user import User, UserRole
-from config import settings
 from schemas.host import (
     HostCreate,
     HostUpdate,
     HostOut,
     HostGroupCreate,
     HostGroupOut,
+    HostGroupAssignRequest,
     CsvImportResult,
 )
+from schemas.task import TaskRunOut
 from services.audit import record_audit
 from services.inventory_generator import build_inventory_ini
-from schemas.task import TaskRunOut
+from services.host_target import normalize_host_address, resolve_host_target
+from services.host_diagnostics import run_host_diagnostic
 
 router = APIRouter(prefix="/hosts", tags=["hosts"])
 
@@ -47,6 +49,31 @@ def get_inventory(db: Session = Depends(get_db), _: User = Depends(get_current_u
     return build_inventory_ini(db)
 
 
+@router.post("/{host_id}/diagnostics", response_model=TaskRunOut, status_code=status.HTTP_202_ACCEPTED)
+def start_host_diagnostic(
+    host_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*EDITOR_ROLES)),
+):
+    host = db.get(Host, host_id)
+    if host is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Хост не найден")
+
+    task = TaskRun(
+        task_type=TaskType.host_diagnostic,
+        host_ids=[str(host_id)],
+        status=TaskStatus.queued,
+        created_by=user.id,
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    run_host_diagnostic.delay(str(task.id))
+    record_audit(db, user.id, "host.diagnostic", str(host_id), request)
+    return task
+
+
 @router.get("/groups", response_model=list[HostGroupOut])
 def list_groups(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     return db.execute(select(HostGroup).order_by(HostGroup.name)).scalars().all()
@@ -67,6 +94,38 @@ def create_group(
     return group
 
 
+@router.post("/groups/assign", response_model=HostGroupOut)
+def assign_hosts_to_group(
+    payload: HostGroupAssignRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*EDITOR_ROLES)),
+):
+    if payload.group_id:
+        group = db.get(HostGroup, payload.group_id)
+        if group is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Группа не найдена")
+    else:
+        group = db.execute(select(HostGroup).where(HostGroup.name == payload.group_name)).scalar_one_or_none()
+        if group is None:
+            group = HostGroup(name=payload.group_name)
+            db.add(group)
+            db.flush()
+
+    hosts = db.execute(select(Host).where(Host.id.in_(payload.host_ids))).scalars().all()
+    found_ids = {host.id for host in hosts}
+    missing_ids = [host_id for host_id in payload.host_ids if host_id not in found_ids]
+    if missing_ids:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Один или несколько хостов не найдены")
+
+    for host in hosts:
+        host.group_id = group.id
+    db.commit()
+    db.refresh(group)
+    record_audit(db, user.id, "host_group.assign", f"group={group.name} hosts={len(hosts)}", request)
+    return group
+
+
 @router.post("", response_model=HostOut, status_code=status.HTTP_201_CREATED)
 def create_host(
     payload: HostCreate,
@@ -74,43 +133,14 @@ def create_host(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*EDITOR_ROLES)),
 ):
-    host_data = payload.model_dump()
-    if host_data.get("ssh_port") is None:
-        host_data["ssh_port"] = settings.ansible_ssh_port
-    host = Host(**host_data)
+    host_values = payload.model_dump()
+    resolve_host_target(host_values.get("hostname"), host_values.get("ip_address"))
+    host = Host(**host_values)
     db.add(host)
     db.commit()
     db.refresh(host)
     record_audit(db, user.id, "host.create", f"{host.hostname} ({host.ip_address})", request)
     return host
-
-
-@router.post("/{host_id}/diagnostics", response_model=TaskRunOut, status_code=status.HTTP_202_ACCEPTED)
-def start_host_diagnostic(
-    host_id: uuid.UUID,
-    request: Request,
-    db: Session = Depends(get_db),
-    user: User = Depends(require_roles(*EDITOR_ROLES)),
-):
-    host = db.get(Host, host_id)
-    if host is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Хост не найден")
-
-    task_run = TaskRun(
-        task_type=TaskType.host_diagnostic,
-        host_ids=[str(host.id)],
-        status=TaskStatus.queued,
-        created_by=user.id,
-    )
-    db.add(task_run)
-    db.commit()
-    db.refresh(task_run)
-
-    from services.host_diagnostics import run_host_diagnostic
-
-    run_host_diagnostic.delay(str(task_run.id))
-    record_audit(db, user.id, "host.diagnostic", host.hostname or host.ip_address, request)
-    return task_run
 
 
 @router.patch("/{host_id}", response_model=HostOut)
@@ -125,9 +155,9 @@ def update_host(
     if host is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Хост не найден")
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        if field == "ssh_port" and value is None:
-            continue
+    values = payload.model_dump(exclude_unset=True)
+    resolve_host_target(values.get("hostname", host.hostname), values.get("ip_address", host.ip_address))
+    for field, value in values.items():
         setattr(host, field, value)
 
     db.commit()
@@ -171,12 +201,14 @@ def import_csv(
 
     for i, row in enumerate(reader, start=2):
         try:
-            ip_address = row["ip_address"].strip()
-            hostname = row["hostname"].strip()
+            ip_address = normalize_host_address(row.get("ip_address"))
+            hostname = normalize_host_address(row.get("hostname"))
             os_value = row["os"].strip()
             group_name = (row.get("group") or "").strip()
 
-            if not ip_address or not hostname:
+            try:
+                resolve_host_target(hostname, ip_address)
+            except ValueError:
                 errors.append(f"Строка {i}: пустой ip_address или hostname")
                 skipped += 1
                 continue
