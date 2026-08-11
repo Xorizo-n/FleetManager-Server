@@ -1,6 +1,19 @@
-# Fleet Manager
+# FleetManager Server
 
-Веб-система управления парком компьютеров с интеграцией Ansible: CMDB хостов, инвентаризация ПО, запуск плейбуков через Celery, Key Store для credentials, JWT+TOTP аутентификация.
+Веб-система управления парком компьютеров с интеграцией Ansible: CMDB хостов, инвентаризация ПО, диагностика подключения, запуск плейбуков через Celery, Key Store для credentials, JWT+TOTP аутентификация.
+
+## Связанные репозитории
+
+- [FleetManager-Agent](https://github.com/Xorizo-n/FleetManager-Agent) — Windows-агент, который шлёт heartbeat и инвентаризацию на этот сервер.
+- [RTF_OOD_AnsiblePlaybooks](https://github.com/kozlov174/RTF_OOD_AnsiblePlaybooks) — плейбуки установки ПО, которые сервер запускает через Ansible Runner.
+
+## Структура
+
+```
+backend/    FastAPI + SQLAlchemy + Alembic + Celery
+frontend/   React + TypeScript + Tailwind (Vite)
+ansible/    плейбуки Fleet Manager, включая scan_software.yaml
+```
 
 ## Запуск
 
@@ -19,14 +32,6 @@ docker compose up -d
 
 Первый запуск: зарегистрируйте пользователя через `/auth/register` (первый зарегистрированный пользователь становится `admin`), затем привяжите TOTP на экране логина по QR-коду.
 
-## Структура
-
-```
-backend/    FastAPI + SQLAlchemy + Alembic + Celery
-frontend/   React + TypeScript + Tailwind (Vite)
-ansible/    плейбуки, включая scan_software.yaml
-```
-
 ## Переменные окружения
 
 Смотрите `.env.example` — там описаны все обязательные секреты (JWT, Fernet-ключ для Key Store, параметры Postgres/Redis, CORS). `.env` в `.gitignore` — никогда не коммитьте реальные значения.
@@ -43,7 +48,3 @@ python -m unittest discover -s tests
 Тестам нужен заполненный `.env` в `backend/` (или переменные окружения) — `Settings` требует `jwt_secret_key` и `credential_encryption_key`; живая БД/Redis для этих тестов не нужны.
 
 Фронтенд: `cd frontend && npm install && npm run build` (отдельного test-скрипта пока нет).
-
-## Агент
-
-Windows-агент для сбора инвентаризации хостов вынесен в отдельный репозиторий: [FleetManager-Agent](https://github.com/Xorizo-n/FleetManager-Agent).
