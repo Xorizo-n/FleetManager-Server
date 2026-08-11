@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Download, HardDrive, Search, Trash2, Upload } from "lucide-react";
+import { Download, HardDrive, RefreshCw, Search, Trash2, Upload } from "lucide-react";
 import { apiClient, getAccessToken } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import Button from "./ui/Button";
@@ -26,6 +26,7 @@ export default function InstallerManager() {
   const [error, setError] = useState<string | null>(null);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [syncingAgent, setSyncingAgent] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function loadFiles() {
@@ -67,6 +68,26 @@ export default function InstallerManager() {
     } finally {
       setUploading(false);
       if (inputRef.current) inputRef.current.value = "";
+    }
+  }
+
+  async function handleSyncAgent() {
+    setSyncingAgent(true);
+    setError(null);
+    try {
+      const { data } = await apiClient.post<{ updated: boolean; version?: string; reason?: string }>(
+        "/installers/agent/sync",
+      );
+      setUploadStatus(
+        data.updated
+          ? `Установщик агента обновлён до ${data.version}`
+          : data.reason || "Обновлений не найдено",
+      );
+      if (data.updated) await loadFiles();
+    } catch (e: any) {
+      setError(e.response?.data?.detail || "Не удалось проверить обновление агента");
+    } finally {
+      setSyncingAgent(false);
     }
   }
 
@@ -121,6 +142,10 @@ export default function InstallerManager() {
           </span>
           {canManage && (
             <>
+              <Button onClick={handleSyncAgent} loading={syncingAgent} variant="secondary">
+                <RefreshCw className="h-4 w-4" />
+                Проверить обновление агента
+              </Button>
               <input
                 ref={inputRef}
                 type="file"

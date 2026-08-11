@@ -10,7 +10,8 @@ from config import settings
 from database import get_db
 from dependencies import get_current_user, require_roles
 from models.user import User, UserRole
-from schemas.installer import InstallerFileOut, InstallerUploadResult
+from schemas.installer import AgentInstallerSyncResult, InstallerFileOut, InstallerUploadResult
+from services.agent_installer_sync import sync_agent_installer
 from services.audit import record_audit
 
 router = APIRouter(prefix="/installers", tags=["installers"])
@@ -97,6 +98,18 @@ def upload_installer(
 
     record_audit(db, user.id, "installer_upload", f"{filename} ({size} bytes)", request)
     return InstallerUploadResult(name=filename, size=size, replaced=replaced)
+
+
+@router.post("/agent/sync", response_model=AgentInstallerSyncResult)
+def sync_agent_installer_endpoint(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.operator)),
+):
+    """Проверяет GitHub Releases FleetManager-Agent и, если вышла новая версия, скачивает её в soft_share_dir."""
+    result = sync_agent_installer()
+    record_audit(db, user.id, "installer_agent_sync", str(result), request)
+    return result
 
 
 @router.get("/{name}/download")

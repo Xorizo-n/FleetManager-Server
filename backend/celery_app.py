@@ -6,7 +6,13 @@ celery_app = Celery(
     "fleet_manager",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["services.ansible_runner", "services.software_scanner", "services.host_health", "services.host_diagnostics"],
+    include=[
+        "services.ansible_runner",
+        "services.software_scanner",
+        "services.host_health",
+        "services.host_diagnostics",
+        "services.agent_installer_sync",
+    ],
 )
 
 celery_app.conf.update(
@@ -24,6 +30,10 @@ celery_app.conf.update(
         "ping-hosts": {
             "task": "services.host_health.ping_hosts",
             "schedule": 300.0,
+        },
+        "sync-agent-installer": {
+            "task": "services.agent_installer_sync.sync_agent_installer_task",
+            "schedule": 3600.0,
         },
     },
 )
