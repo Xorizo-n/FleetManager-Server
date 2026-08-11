@@ -1,0 +1,186 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+:root {
+  color-scheme: light;
+  --c-background: 248 250 252;
+  --c-surface: 255 255 255;
+  --c-muted: 241 245 249;
+  --c-border: 226 232 240;
+  --c-foreground: 15 23 42;
+  --c-muted-foreground: 71 85 105;
+  --c-subtle: 100 116 139;
+  --c-scrollbar: 203 213 225;
+  --c-scrollbar-hover: 148 163 184;
+  --shadow-panel: 0 1px 2px rgb(15 23 42 / 0.05), 0 8px 24px -12px rgb(15 23 42 / 0.08);
+  --shadow-panel-lg: 0 4px 6px rgb(15 23 42 / 0.04), 0 16px 40px -16px rgb(15 23 42 / 0.12);
+}
+
+.dark {
+  color-scheme: dark;
+  --c-background: 2 6 23;
+  --c-surface: 15 23 42;
+  --c-muted: 30 41 59;
+  --c-border: 30 41 59;
+  --c-foreground: 241 245 249;
+  --c-muted-foreground: 148 163 184;
+  --c-subtle: 100 116 139;
+  --c-scrollbar: 51 65 85;
+  --c-scrollbar-hover: 71 85 105;
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -8px rgb(0 0 0 / 0.6);
+  --shadow-panel-lg: 0 4px 6px rgb(0 0 0 / 0.3), 0 16px 40px -12px rgb(0 0 0 / 0.7);
+}
+
+@layer base {
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  ::selection {
+    @apply bg-blue-500/30 text-inherit;
+  }
+
+  * {
+    scrollbar-color: rgb(var(--c-scrollbar)) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    @apply h-2 w-2;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full;
+    background-color: rgb(var(--c-scrollbar));
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(var(--c-scrollbar-hover));
+  }
+}
+
+@layer components {
+  /* Surfaces */
+  .surface-card {
+    @apply rounded-xl border border-border bg-surface shadow-panel;
+  }
+
+  .surface-panel {
+    @apply rounded-xl border border-border bg-surface p-4 shadow-panel;
+  }
+
+  /* Form controls */
+  .field-label {
+    @apply mb-1.5 block text-xs font-medium text-muted-foreground;
+  }
+
+  .input-base {
+    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-foreground outline-none transition-colors duration-150 placeholder:text-subtle focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950;
+  }
+
+  select.input-base {
+    @apply cursor-pointer;
+  }
+
+  /* Buttons */
+  .btn {
+    @apply inline-flex cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-sm {
+    @apply px-2.5 py-1.5 text-xs;
+  }
+
+  .btn-primary {
+    @apply btn bg-blue-600 text-white hover:bg-blue-500 focus-visible:ring-blue-500 disabled:hover:bg-blue-600;
+  }
+
+  .btn-secondary {
+    @apply btn border border-slate-300 bg-white text-foreground hover:bg-slate-100 focus-visible:ring-slate-400 disabled:hover:bg-white dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:disabled:hover:bg-slate-800;
+  }
+
+  .btn-danger {
+    @apply btn bg-rose-600/90 text-white hover:bg-rose-500 focus-visible:ring-rose-500 disabled:hover:bg-rose-600/90;
+  }
+
+  .btn-ghost {
+    @apply btn text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-slate-400;
+  }
+
+  .btn-icon {
+    @apply p-2;
+  }
+
+  /* Inline destructive row action (tables) */
+  .action-danger {
+    @apply inline-flex cursor-pointer items-center gap-1 rounded-md px-2 py-1 text-rose-600 transition-colors hover:bg-rose-500/10 hover:text-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/70 dark:text-rose-400 dark:hover:text-rose-300;
+  }
+
+  /* Tables */
+  .table-shell {
+    @apply overflow-x-auto rounded-xl border border-border bg-surface;
+  }
+
+  .table-base {
+    @apply w-full border-collapse text-left text-sm;
+  }
+
+  .table-base thead {
+    @apply bg-muted/60 text-xs font-medium uppercase tracking-wide text-muted-foreground;
+  }
+
+  .table-base th {
+    @apply px-4 py-3 font-medium;
+  }
+
+  .table-base td {
+    @apply px-4 py-3 text-foreground;
+  }
+
+  .table-base tbody tr {
+    @apply border-t border-border/70 transition-colors duration-150;
+  }
+
+  .table-base tbody tr.is-interactive {
+    @apply cursor-pointer hover:bg-muted/50;
+  }
+
+  /* Console / log blocks — intentionally stay dark in both themes (terminal look) */
+  .console-block {
+    @apply max-h-96 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-3 font-mono text-xs leading-relaxed text-emerald-400;
+  }
+
+  /* Chip used as keyboard-accessible toggle (host/tag selectors) */
+  .chip-label {
+    @apply inline-flex cursor-pointer select-none items-center rounded-md border px-2 py-1 text-xs font-medium transition-colors duration-150;
+  }
+  .chip-label:focus-within {
+    @apply outline-none ring-2 ring-blue-500/60;
+  }
+
+  /* Toggle chip (host/tag selectors) */
+  .chip {
+    @apply inline-flex cursor-pointer select-none items-center rounded-md border px-2 py-1 text-xs font-medium transition-colors duration-150;
+  }
+
+  .chip-off {
+    @apply chip border-slate-300 text-muted-foreground hover:border-slate-400 hover:text-foreground dark:border-slate-700 dark:hover:border-slate-600;
+  }
+
+  .chip-on {
+    @apply chip border-blue-500 bg-blue-600/10 text-blue-700 dark:bg-blue-600/20 dark:text-blue-300;
+  }
+}

@@ -1,0 +1,53 @@
+---
+# Сканирование установленного ПО на Windows-хостах и отправка результата в API Fleet Manager.
+#
+# Основной путь сканирования — через Celery (backend/services/software_scanner.py), который
+# выполняет те же самые raw-команды напрямую через ansible-runner и пишет в БД без похода в API.
+#
+# Этот плейбук — вариант для ручного/внешнего запуска (cron на bastion-хосте и т.п.), когда
+# инвентарь и запуск не управляются самим Fleet Manager. Он не парсит вывод на стороне Ansible —
+# сырой текст пересылается в /software/ingest, где используется тот же Python-парсер, что и
+# в основном пути сканирования (backend/services/software_parse.py).
+#
+# Запуск:
+#   ansible-playbook ansible/scan_software.yaml -i inventory.ini \
+#     -e api_base_url=http://backend:8000 \
+#     -e api_token=<JWT access token пользователя с ролью admin/operator>
+#
+# Инвентарь должен содержать переменную fleet_host_id для каждого хоста — UUID хоста в CMDB
+# Fleet Manager (её можно получить через GET /hosts).
+#
+- name: Scan installed software on Windows hosts
+  hosts: all
+  gather_facts: false
+  vars:
+    api_base_url: "{{ api_base_url | default('http://backend:8000') }}"
+
+  tasks:
+    - name: Get MSI-installed packages via Get-Package
+      ansible.builtin.raw: >
+        powershell -NoProfile -Command
+        "Get-Package | Select-Object Name,Version | ConvertTo-Json -Compress"
+      register: get_package_result
+      changed_when: false
+
+    - name: Get Chocolatey packages
+      ansible.builtin.raw: choco list --local-only --limit-output
+      register: choco_result
+      changed_when: false
+      failed_when: false
+
+    - name: Send raw scan result to Fleet Manager API for parsing and storage
+      ansible.builtin.uri:
+        url: "{{ api_base_url }}/software/ingest"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ api_token }}"
+        body_format: json
+        body:
+          host_id: "{{ fleet_host_id }}"
+          get_package_raw: "{{ get_package_result.stdout | default('') }}"
+          choco_raw: "{{ choco_result.stdout | default('') }}"
+        status_code: [200, 204]
+      delegate_to: localhost
+      when: fleet_host_id is defined
