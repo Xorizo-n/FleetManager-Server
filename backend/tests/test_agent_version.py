@@ -18,7 +18,18 @@ from services.agent_version import (
     parse_version,
     version_status,
 )
-from services.agent_update import PROBE_CMD, UPDATE_CMD, encode_powershell, parse_probe_output
+from services import agent_update
+from services.agent_update import (
+    PROBE_CMD,
+    PROBE_TIMEOUT,
+    TCP_CHECK_TIMEOUT,
+    UPDATE_CMD,
+    UPDATE_TIMEOUT,
+    _is_reachable,
+    _ssh_port,
+    encode_powershell,
+    parse_probe_output,
+)
 
 
 class AgentVersionParsingTests(unittest.TestCase):
@@ -122,6 +133,44 @@ class AgentUpdateScriptTests(unittest.TestCase):
     def test_probe_output_without_json_is_empty(self):
         self.assertEqual(parse_probe_output("agent not installed"), {})
         self.assertEqual(parse_probe_output(""), {})
+
+
+class _FakeHost:
+    def __init__(self, hostname=None, ip_address=None, ssh_port=None):
+        self.hostname = hostname
+        self.ip_address = ip_address
+        self.ssh_port = ssh_port
+
+
+class AgentUnreachableHostTests(unittest.TestCase):
+    """An unreachable host used to stall run_agent_update for up to UPDATE_TIMEOUT
+    (30 min) plus the disconnect-recovery retries, because nothing failed fast
+    before handing the host to ansible-runner. _is_reachable is the fast-fail
+    gate both run_agent_version_scan and run_agent_update check first."""
+
+    def test_tcp_check_is_far_shorter_than_the_ssh_job_timeouts(self):
+        self.assertLess(TCP_CHECK_TIMEOUT, PROBE_TIMEOUT)
+        self.assertLess(TCP_CHECK_TIMEOUT, UPDATE_TIMEOUT)
+
+    def test_ssh_port_falls_back_to_the_ansible_default(self):
+        self.assertEqual(_ssh_port(_FakeHost(ssh_port=None)), agent_update.settings.ansible_ssh_port)
+        self.assertEqual(_ssh_port(_FakeHost(ssh_port=2222)), 2222)
+
+    def test_reachable_host_opens_a_socket_on_its_ssh_port(self):
+        host = _FakeHost(hostname="pc-01.example.local", ssh_port=5022)
+        with mock.patch.object(agent_update.socket, "create_connection") as create_connection:
+            create_connection.return_value.__enter__ = mock.Mock(return_value=mock.Mock())
+            create_connection.return_value.__exit__ = mock.Mock(return_value=False)
+            self.assertTrue(_is_reachable(host))
+            create_connection.assert_called_once_with(("pc-01.example.local", 5022), timeout=TCP_CHECK_TIMEOUT)
+
+    def test_unreachable_host_fails_fast_without_raising(self):
+        host = _FakeHost(ip_address="10.40.1.20")
+        with mock.patch.object(agent_update.socket, "create_connection", side_effect=OSError("timed out")):
+            self.assertFalse(_is_reachable(host))
+
+    def test_host_without_hostname_or_ip_is_reported_unreachable(self):
+        self.assertFalse(_is_reachable(_FakeHost()))
 
 
 class AgentVersionSchemaTests(unittest.TestCase):

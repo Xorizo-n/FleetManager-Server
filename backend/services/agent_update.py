@@ -16,11 +16,13 @@ ansible.builtin.raw + PowerShell по SSH (порт 5022, ключ из Key Stor
 
 import base64
 import json
+import socket
 import time
 import uuid
 from datetime import datetime, timezone
 
 from celery_app import celery_app
+from config import settings
 from database import SessionLocal
 from models.host import Host
 from models.task import TaskRun, TaskStatus
@@ -38,6 +40,11 @@ from services.host_target import resolve_host_target
 # Таймауты (сек) на выполнение шага через ansible-runner.
 PROBE_TIMEOUT = 120
 UPDATE_TIMEOUT = 1800
+
+# Быстрая проверка TCP-доступности перед SSH: инвентарь не задаёт ConnectTimeout
+# для ansible_ssh_common_args, поэтому недоступный хост иначе висит на таймауте
+# всей SSH-сессии (до PROBE_TIMEOUT/UPDATE_TIMEOUT) вместо мгновенного отказа.
+TCP_CHECK_TIMEOUT = 5
 
 # Если SSH-сессия оборвалась во время установки, версию перепроверяем новой
 # сессией: установка на хосте при этом обычно доходит до конца.
@@ -145,10 +152,30 @@ def _store_version(db, host: Host, version: str | None) -> str | None:
     return normalized
 
 
+def _ssh_port(host: Host) -> int:
+    return host.ssh_port or settings.ansible_ssh_port
+
+
+def _is_reachable(host: Host) -> bool:
+    """TCP-проверка перед SSH — детерминированно укладывается в TCP_CHECK_TIMEOUT,
+    в отличие от ожидания на уровне SSH/ansible при недоступном хосте."""
+    try:
+        target = resolve_host_target(host.hostname, host.ip_address)
+    except ValueError:
+        return False
+    try:
+        with socket.create_connection((target, _ssh_port(host)), timeout=TCP_CHECK_TIMEOUT):
+            return True
+    except OSError:
+        return False
+
+
 def _recheck_version(inventory: dict, host: Host, available: str | None) -> str | None:
     """Повторно опрашивает хост после обрыва сессии; None — обновление не подтвердилось."""
     for _ in range(RECHECK_ATTEMPTS):
         time.sleep(RECHECK_DELAY)
+        if not _is_reachable(host):
+            continue
         try:
             probe = parse_probe_output(run_raw_command(inventory, str(host.id), PROBE_CMD, timeout=PROBE_TIMEOUT))
         except Exception:  # noqa: BLE001
@@ -207,6 +234,10 @@ def run_agent_version_scan(task_run_id: str):
             label = _label(host)
             try:
                 resolve_host_target(host.hostname, host.ip_address)
+                if not _is_reachable(host):
+                    any_failure = True
+                    _append_log(db, task, f"[{label}] недоступен по TCP {_ssh_port(host)}")
+                    continue
                 raw = run_raw_command(inventory, str(host.id), PROBE_CMD, timeout=PROBE_TIMEOUT)
                 probe = parse_probe_output(raw)
                 version = _store_version(db, host, probe.get("version"))
@@ -256,6 +287,10 @@ def run_agent_update(task_run_id: str):
             label = _label(host)
             previous = host.agent_version
             try:
+                if not _is_reachable(host):
+                    any_failure = True
+                    _append_log(db, task, f"[{label}] недоступен по TCP {_ssh_port(host)}")
+                    continue
                 _append_log(db, task, f"[{label}] запуск обновления (было: {previous or 'неизвестно'})")
                 raw = run_raw_command(inventory, str(host.id), UPDATE_CMD, timeout=UPDATE_TIMEOUT)
                 result = parse_probe_output(raw)
