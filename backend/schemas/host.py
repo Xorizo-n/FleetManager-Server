@@ -90,6 +90,9 @@ class HostOut(BaseModel):
     last_checked_at: datetime | None
     comment: str | None
     credential_id: uuid.UUID | None
+    has_agent: bool = False
+    agent_version: str | None = None
+    agent_version_checked_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

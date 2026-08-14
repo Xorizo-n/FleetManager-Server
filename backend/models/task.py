@@ -13,6 +13,8 @@ class TaskType(str, enum.Enum):
     playbook = "playbook"
     software_scan = "software_scan"
     host_diagnostic = "host_diagnostic"
+    agent_version_scan = "agent_version_scan"
+    agent_update = "agent_update"
 
 
 class TaskStatus(str, enum.Enum):

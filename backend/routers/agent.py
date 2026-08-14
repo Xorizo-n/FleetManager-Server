@@ -1,18 +1,21 @@
+import os
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from database import get_db
 from config import settings
-from dependencies import require_roles
+from dependencies import get_current_user, require_roles
 from models.agent import AgentAlert, AgentEnrollmentToken
 from models.credential import Credential, CredentialType
 from models.host import Host, HostStatus
 from models.software import InstallMethod, SoftwareItem, SoftwareStatus
+from models.task import TaskRun, TaskStatus, TaskType
 from models.user import User, UserRole
 from schemas.agent import (
     AgentAlertOut,
@@ -21,18 +24,36 @@ from schemas.agent import (
     AgentEnrollmentTokenOut,
     AgentEnrollmentTokenResponse,
     AgentHeartbeatRequest,
+    AgentHostSelection,
+    AgentHostVersionOut,
     AgentOfflineRequest,
     AgentRegisterRequest,
     AgentRegisterResponse,
     AgentStatusOut,
     AgentUninstallRequest,
+    AgentVersionOverviewOut,
 )
+from schemas.task import TaskRunOut
 from services.agent_auth import hash_agent_token, issue_agent_token
 from services.agent_ssh import generate_agent_keypair
+from services.agent_update import run_agent_update, run_agent_version_scan
+from services.agent_version import (
+    INSTALLER_FILENAME,
+    STATUS_OUTDATED,
+    STATUS_UNKNOWN,
+    agent_version_from_software,
+    available_agent_version,
+    installer_path,
+    normalize_version,
+    version_status,
+)
+from services.audit import record_audit
 from services.crypto import encrypt_secret
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 bearer = HTTPBearer(auto_error=False)
+
+MAINTENANCE_ROLES = (UserRole.admin, UserRole.operator)
 
 
 def _now() -> datetime:
@@ -152,6 +173,8 @@ def register_agent(payload: AgentRegisterRequest, db: Session = Depends(get_db))
             last_checked_at=now,
             is_agent_managed=True,
             ssh_port=payload.ssh_port or settings.ansible_ssh_port,
+            agent_version=normalize_version(payload.agent_version),
+            agent_version_checked_at=now if payload.agent_version else None,
         )
         db.add(host)
     else:
@@ -169,6 +192,9 @@ def register_agent(payload: AgentRegisterRequest, db: Session = Depends(get_db))
         host.status = HostStatus.online
         host.last_seen_at = now
         host.last_checked_at = now
+        if payload.agent_version:
+            host.agent_version = normalize_version(payload.agent_version)
+            host.agent_version_checked_at = now
 
     credential = db.get(Credential, host.credential_id) if host.credential_id else None
     if credential is None:
@@ -230,6 +256,16 @@ def heartbeat(
         credential = db.get(Credential, host.credential_id)
         if credential is not None and credential.is_agent_managed:
             credential.login = payload.ssh_login
+
+    # Версию присылают только свежие агенты. Для старых она достаётся из их же
+    # инвентаризации ПО: установщик регистрирует запись "FleetManager Agent".
+    reported_version = normalize_version(payload.agent_version) or agent_version_from_software(
+        (item.name, item.version) for item in payload.software
+    )
+    if reported_version:
+        host.agent_version = reported_version
+        host.agent_version_checked_at = now
+
     db.execute(delete(SoftwareItem).where(SoftwareItem.host_id == host.id))
     for item in payload.software:
         db.add(SoftwareItem(
@@ -303,6 +339,135 @@ def uninstall_agent(
         host.status = HostStatus.offline
     db.commit()
     return {"status": "uninstalled", "host_id": host_id}
+
+
+@router.get("/installer")
+def download_agent_installer(host: Host = Depends(_require_agent_host)):
+    """Отдаёт установщик самому хосту по его agent-токену.
+
+    Так удалённое обновление (services/agent_update.py) не требует передавать на
+    хост никаких серверных секретов: хост скачивает файл своим токеном.
+    """
+    path = installer_path()
+    if not os.path.isfile(path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Установщик агента ещё не синхронизирован на сервере",
+        )
+    return FileResponse(path, filename=INSTALLER_FILENAME, media_type="application/octet-stream")
+
+
+@router.get("/versions", response_model=AgentVersionOverviewOut)
+def agent_versions(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """Сводка версий агента по всем хостам с агентом."""
+    available = available_agent_version()
+    hosts = db.execute(select(Host).where(Host.agent_id.isnot(None)).order_by(Host.hostname)).scalars().all()
+
+    entries: list[AgentHostVersionOut] = []
+    up_to_date = outdated = unknown = 0
+    for host in hosts:
+        state = version_status(host.agent_version, available, has_agent=True)
+        if state == STATUS_OUTDATED:
+            outdated += 1
+        elif state == STATUS_UNKNOWN:
+            unknown += 1
+        else:
+            # up_to_date и newer одинаково не требуют обновления.
+            up_to_date += 1
+        entries.append(AgentHostVersionOut(
+            host_id=host.id,
+            hostname=host.hostname,
+            ip_address=host.ip_address,
+            has_agent=True,
+            agent_version=host.agent_version,
+            version_status=state,
+            agent_version_checked_at=host.agent_version_checked_at,
+            last_seen_at=host.last_seen_at,
+            status=host.status,
+        ))
+
+    return AgentVersionOverviewOut(
+        available_version=available,
+        installer_present=os.path.isfile(installer_path()),
+        total_agents=len(entries),
+        up_to_date=up_to_date,
+        outdated=outdated,
+        unknown=unknown,
+        hosts=entries,
+    )
+
+
+def _agent_hosts_for(db: Session, host_ids: list[uuid.UUID]) -> list[Host]:
+    """Хосты с установленным агентом; пустой список host_ids — все такие хосты."""
+    query = select(Host).where(Host.agent_id.isnot(None))
+    if host_ids:
+        query = query.where(Host.id.in_(host_ids))
+    hosts = db.execute(query).scalars().all()
+
+    if host_ids:
+        missing = set(host_ids) - {host.id for host in hosts}
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Хост не найден или на нём нет зарегистрированного агента",
+            )
+    if not hosts:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нет хостов с установленным агентом")
+    return hosts
+
+
+def _queue_agent_task(
+    db: Session,
+    user: User,
+    request: Request,
+    hosts: list[Host],
+    task_type: TaskType,
+    audit_action: str,
+) -> TaskRun:
+    task = TaskRun(
+        task_type=task_type,
+        host_ids=[str(host.id) for host in hosts],
+        status=TaskStatus.queued,
+        created_by=user.id,
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    record_audit(db, user.id, audit_action, f"hosts={len(hosts)}", request)
+    return task
+
+
+@router.post("/version-scan", response_model=TaskRunOut, status_code=status.HTTP_202_ACCEPTED)
+def start_agent_version_scan(
+    payload: AgentHostSelection,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*MAINTENANCE_ROLES)),
+):
+    """Проверяет по SSH, какая версия агента реально установлена на хостах."""
+    hosts = _agent_hosts_for(db, payload.host_ids)
+    task = _queue_agent_task(db, user, request, hosts, TaskType.agent_version_scan, "agent.version_scan")
+    run_agent_version_scan.delay(str(task.id))
+    return task
+
+
+@router.post("/update", response_model=TaskRunOut, status_code=status.HTTP_202_ACCEPTED)
+def start_agent_update(
+    payload: AgentHostSelection,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*MAINTENANCE_ROLES)),
+):
+    """Ставит актуальный установщик агента поверх текущей установки на хостах."""
+    if not os.path.isfile(installer_path()):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Установщик агента отсутствует: сначала синхронизируйте его с GitHub Releases",
+        )
+    hosts = _agent_hosts_for(db, payload.host_ids)
+    task = _queue_agent_task(db, user, request, hosts, TaskType.agent_update, "agent.update")
+    run_agent_update.delay(str(task.id))
+    return task
 
 
 @router.get("/status/{agent_id}", response_model=AgentStatusOut)

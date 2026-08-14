@@ -12,6 +12,7 @@ celery_app = Celery(
         "services.host_health",
         "services.host_diagnostics",
         "services.agent_installer_sync",
+        "services.agent_update",
     ],
 )
 

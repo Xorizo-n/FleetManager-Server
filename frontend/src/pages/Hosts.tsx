@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Activity, CheckSquare, Download, FolderPlus, Plus, Trash2, Upload, X } from "lucide-react";
+import { Activity, ArrowUpCircle, CheckSquare, Download, FolderPlus, Plus, RefreshCw, Trash2, Upload, X } from "lucide-react";
 import { apiClient, getAccessToken } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import Badge from "../components/ui/Badge";
@@ -21,6 +21,9 @@ interface Host {
   status: string;
   last_checked_at: string | null;
   comment: string | null;
+  has_agent: boolean;
+  agent_version: string | null;
+  agent_version_checked_at: string | null;
 }
 
 interface Credential {
@@ -36,7 +39,40 @@ interface DiagnosticTask {
   log_output: string | null;
 }
 
+interface AgentHostVersion {
+  host_id: string;
+  agent_version: string | null;
+  version_status: string;
+  agent_version_checked_at: string | null;
+}
+
+interface AgentVersionOverview {
+  available_version: string | null;
+  installer_present: boolean;
+  total_agents: number;
+  up_to_date: number;
+  outdated: number;
+  unknown: number;
+  hosts: AgentHostVersion[];
+}
+
 const OS_OPTIONS = ["windows_10", "windows_11", "windows_server"];
+
+const VERSION_LABEL: Record<string, string> = {
+  up_to_date: "актуальна",
+  outdated: "устарела",
+  newer: "новее сервера",
+  unknown: "неизвестна",
+  no_agent: "нет агента",
+};
+
+const VERSION_TONE: Record<string, "success" | "warning" | "info" | "neutral"> = {
+  up_to_date: "success",
+  outdated: "warning",
+  newer: "info",
+  unknown: "neutral",
+  no_agent: "neutral",
+};
 
 export default function Hosts() {
   const { user } = useAuth();
@@ -59,6 +95,11 @@ export default function Hosts() {
   const [newGroupName, setNewGroupName] = useState("");
   const [groupError, setGroupError] = useState<string | null>(null);
   const [groupSaving, setGroupSaving] = useState(false);
+  const [agentVersions, setAgentVersions] = useState<AgentVersionOverview | null>(null);
+  const [agentTask, setAgentTask] = useState<DiagnosticTask | null>(null);
+  const [agentTaskTitle, setAgentTaskTitle] = useState("");
+  const [agentError, setAgentError] = useState<string | null>(null);
+  const [agentBusy, setAgentBusy] = useState<"scan" | "update" | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [form, setForm] = useState({
@@ -91,9 +132,19 @@ export default function Hosts() {
     }
   }
 
+  async function loadAgentVersions() {
+    try {
+      const { data } = await apiClient.get<AgentVersionOverview>("/agent/versions");
+      setAgentVersions(data);
+    } catch {
+      setAgentVersions(null);
+    }
+  }
+
   useEffect(() => {
     loadGroups();
     loadCredentials();
+    loadAgentVersions();
   }, []);
 
   useEffect(() => {
@@ -197,6 +248,49 @@ export default function Hosts() {
     return () => clearInterval(interval);
   }, [diagnosticTask?.id, diagnosticTask?.status]);
 
+  async function startAgentTask(kind: "scan" | "update", hostIds: string[], title: string) {
+    setAgentBusy(kind);
+    setAgentError(null);
+    setAgentTask(null);
+    setAgentTaskTitle(title);
+    try {
+      const { data } = await apiClient.post(kind === "scan" ? "/agent/version-scan" : "/agent/update", {
+        host_ids: hostIds,
+      });
+      setAgentTask({ ...data, log_output: null });
+    } catch (err: any) {
+      setAgentError(err.response?.data?.detail || "Не удалось запустить операцию с агентом");
+    } finally {
+      setAgentBusy(null);
+    }
+  }
+
+  // Пустой список host_ids на сервере означает «все хосты с агентом».
+  function selectedAgentHostIds() {
+    return selectedHostIds.filter((id) => hosts.find((host) => host.id === id)?.has_agent);
+  }
+
+  useEffect(() => {
+    if (!agentTask || !["queued", "running"].includes(agentTask.status)) return;
+    const interval = setInterval(async () => {
+      try {
+        const { data } = await apiClient.get<DiagnosticTask>(`/tasks/${agentTask.id}`);
+        setAgentTask(data);
+        if (!["queued", "running"].includes(data.status)) {
+          await Promise.all([loadHosts(), loadAgentVersions()]);
+        }
+      } catch {
+        // Живой лог идёт через SSE; опрос статуса — best effort.
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentTask?.id, agentTask?.status]);
+
+  function agentVersionOf(hostId: string): AgentHostVersion | undefined {
+    return agentVersions?.hosts.find((entry) => entry.host_id === hostId);
+  }
+
   async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -272,10 +366,53 @@ export default function Hosts() {
                 <FolderPlus className="h-3.5 w-3.5" />
                 В группу ({selectedHostIds.length})
               </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={agentBusy === "scan"}
+                onClick={() => startAgentTask(
+                  "scan",
+                  selectedAgentHostIds(),
+                  selectedAgentHostIds().length ? "Проверка версий агента на выбранных хостах" : "Проверка версий агента на всех хостах",
+                )}
+                title="Опросить хосты по SSH и обновить установленные версии агента"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Проверить версии агента
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={selectedAgentHostIds().length === 0}
+                loading={agentBusy === "update"}
+                onClick={() => startAgentTask(
+                  "update",
+                  selectedAgentHostIds(),
+                  `Обновление агента (${selectedAgentHostIds().length} хост(ов))`,
+                )}
+                title={
+                  agentVersions?.installer_present
+                    ? `Установить версию ${agentVersions.available_version ?? "из папки установочников"}`
+                    : "Установщик агента ещё не синхронизирован с сервером"
+                }
+              >
+                <ArrowUpCircle className="h-3.5 w-3.5" />
+                Обновить агент ({selectedAgentHostIds().length})
+              </Button>
             </>
           )}
         </div>
       </div>
+
+      {agentVersions && (
+        <p className="text-sm text-muted-foreground">
+          Доступная версия агента: <span className="font-mono text-foreground">{agentVersions.available_version ?? "неизвестна"}</span>
+          {" · "}актуальных: {agentVersions.up_to_date}
+          {" · "}устаревших: {agentVersions.outdated}
+          {" · "}без данных: {agentVersions.unknown}
+          {" · "}всего с агентом: {agentVersions.total_agents}
+        </p>
+      )}
 
       {importResult && <p className="text-sm text-muted-foreground">{importResult}</p>}
 
@@ -383,6 +520,38 @@ export default function Hosts() {
         </section>
       )}
 
+      {(agentTask || agentError) && canEdit && (
+        <section className="surface-panel animate-slide-up space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-foreground">Обслуживание агента</h2>
+              <p className="text-sm text-muted-foreground">{agentTaskTitle}</p>
+            </div>
+            <button
+              className="btn-ghost p-1"
+              onClick={() => { setAgentTask(null); setAgentError(null); }}
+              aria-label="Закрыть панель обслуживания агента"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          {agentError && <p className="text-sm text-red-500">{agentError}</p>}
+          {agentTask && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-muted-foreground">Статус:</span>
+                <Badge status={agentTask.status} />
+              </div>
+              {["queued", "running"].includes(agentTask.status) ? (
+                <TaskLog taskId={agentTask.id} />
+              ) : (
+                <pre className="console-block">{agentTask.log_output || "Лог пуст"}</pre>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
       <div className="table-shell">
         <table className="table-base">
           <thead>
@@ -402,6 +571,7 @@ export default function Hosts() {
               <th>Группа</th>
               <th>OS</th>
               <th>Статус</th>
+              <th>Агент</th>
               <th>Проверен</th>
               {canEdit && <th className="text-right">Действия</th>}
             </tr>
@@ -424,11 +594,39 @@ export default function Hosts() {
                 <td>{groupName(h.group_id)}</td>
                 <td>{h.os}</td>
                 <td><Badge status={h.status} /></td>
+                <td>
+                  {h.has_agent ? (
+                    <div className="flex flex-col gap-1">
+                      <span className="font-mono text-foreground/80">
+                        {agentVersionOf(h.id)?.agent_version ?? h.agent_version ?? "—"}
+                      </span>
+                      <Badge
+                        status={agentVersionOf(h.id)?.version_status ?? "unknown"}
+                        tone={VERSION_TONE[agentVersionOf(h.id)?.version_status ?? "unknown"]}
+                      >
+                        {VERSION_LABEL[agentVersionOf(h.id)?.version_status ?? "unknown"]}
+                      </Badge>
+                    </div>
+                  ) : (
+                    <span className="text-subtle">без агента</span>
+                  )}
+                </td>
                 <td className="text-muted-foreground">
                   {h.last_checked_at ? new Date(h.last_checked_at).toLocaleString() : "—"}
                 </td>
                 {canEdit && (
                   <td className="text-right">
+                    {h.has_agent && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => startAgentTask("update", [h.id], `Обновление агента: ${h.hostname || h.ip_address || h.id}`)}
+                        className="mr-2"
+                      >
+                        <ArrowUpCircle className="h-3.5 w-3.5" />
+                        Обновить агент
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -452,7 +650,7 @@ export default function Hosts() {
             ))}
             {hosts.length === 0 && (
               <tr>
-                <td colSpan={canEdit ? 8 : 6} className="px-3 py-8 text-center text-subtle">Хостов нет</td>
+                <td colSpan={canEdit ? 9 : 7} className="px-3 py-8 text-center text-subtle">Хостов нет</td>
               </tr>
             )}
           </tbody>

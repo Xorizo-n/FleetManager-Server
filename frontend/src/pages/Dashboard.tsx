@@ -55,6 +55,16 @@ interface InstallerFile {
   mtime: string;
 }
 
+interface AgentVersionOverview {
+  available_version: string | null;
+  installer_present: boolean;
+  total_agents: number;
+  up_to_date: number;
+  outdated: number;
+  unknown: number;
+  hosts: { host_id: string; hostname: string | null; agent_version: string | null; version_status: string }[];
+}
+
 const AGENT_INSTALLER_NAME = "FleetManagerAgent-Setup.exe";
 
 const STAT_CARDS: {
@@ -82,6 +92,7 @@ export default function Dashboard() {
   const [onlineTimeline, setOnlineTimeline] = useState<{ hour: string; online: number }[]>([]);
   const [weeklyStats, setWeeklyStats] = useState<{ day: string; success: number; failed: number }[]>([]);
   const [agentInstaller, setAgentInstaller] = useState<InstallerFile | null>(null);
+  const [agentVersions, setAgentVersions] = useState<AgentVersionOverview | null>(null);
   const [syncingAgent, setSyncingAgent] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
@@ -107,6 +118,11 @@ export default function Dashboard() {
     setAgentInstaller(installer ?? null);
   }
 
+  async function loadAgentVersions() {
+    const { data } = await apiClient.get<AgentVersionOverview>("/agent/versions");
+    setAgentVersions(data);
+  }
+
   useEffect(() => {
     setLoading(true);
     Promise.all([
@@ -118,6 +134,7 @@ export default function Dashboard() {
       apiClient.get("/dashboard/online-timeline").then((r) => setOnlineTimeline(r.data)),
       apiClient.get("/dashboard/weekly-run-stats").then((r) => setWeeklyStats(r.data)),
       loadAgentInstaller(),
+      loadAgentVersions(),
     ]).finally(() => setLoading(false));
   }, []);
 
@@ -151,7 +168,7 @@ export default function Dashboard() {
           ? `Установщик агента обновлён до ${data.version}`
           : data.reason || "Обновлений не найдено",
       );
-      if (data.updated) await loadAgentInstaller();
+      if (data.updated) await Promise.all([loadAgentInstaller(), loadAgentVersions()]);
     } catch (e: any) {
       setSyncMessage(e.response?.data?.detail || "Не удалось проверить обновление агента");
     } finally {
@@ -259,6 +276,27 @@ export default function Dashboard() {
               </li>
             ))}
             {staleHosts.length === 0 && <p className="text-subtle">Все хосты просканированы недавно</p>}
+          </ul>
+        </Card>
+
+        <Card title={`Версии агента (доступна ${agentVersions?.available_version ?? "—"})`}>
+          <div className="flex flex-wrap gap-4 text-sm">
+            <span className="text-emerald-600 dark:text-emerald-400">Актуальны: {agentVersions?.up_to_date ?? 0}</span>
+            <span className="text-amber-600 dark:text-amber-400">Устарели: {agentVersions?.outdated ?? 0}</span>
+            <span className="text-muted-foreground">Без данных: {agentVersions?.unknown ?? 0}</span>
+            <span className="text-muted-foreground">Всего с агентом: {agentVersions?.total_agents ?? 0}</span>
+          </div>
+          <ul className="mt-3 space-y-2 text-sm">
+            {agentVersions?.hosts
+              .filter((h) => h.version_status === "outdated")
+              .slice(0, 8)
+              .map((h) => (
+                <li key={h.host_id} className="flex items-center justify-between border-b border-border/70 pb-2 last:border-0 last:pb-0">
+                  <span className="truncate">{h.hostname || h.host_id}</span>
+                  <span className="font-mono text-muted-foreground">{h.agent_version ?? "—"}</span>
+                </li>
+              ))}
+            {(agentVersions?.outdated ?? 0) === 0 && <p className="text-subtle">Устаревших агентов нет</p>}
           </ul>
         </Card>
 

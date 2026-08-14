@@ -55,6 +55,10 @@ class Host(Base):
     is_agent_managed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ssh_port: Mapped[int] = mapped_column(Integer, default=22, nullable=False)
 
+    # Версия установленного агента (heartbeat, инвентаризация ПО или SSH-проверка)
+    agent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    agent_version_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # Hardware inventory (populated by agent heartbeat)
     hw_manufacturer: Mapped[str | None] = mapped_column(String(255), nullable=True)
     hw_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -69,6 +73,11 @@ class Host(Base):
     group: Mapped["HostGroup"] = relationship(back_populates="hosts")
     credential: Mapped["Credential"] = relationship(back_populates="hosts")
     software_items: Mapped[list["SoftwareItem"]] = relationship(back_populates="host", cascade="all, delete-orphan")
+
+    @property
+    def has_agent(self) -> bool:
+        """Хост зарегистрирован агентом (agent_id выдаётся только при регистрации)."""
+        return self.agent_id is not None
 
 
 class HostStatusHistory(Base):

@@ -31,8 +31,10 @@ class AgentRegisterRequest(BaseModel):
     os: HostOS
     ssh_login: str | None = Field(default=None, max_length=255)
     ssh_port: int | None = Field(default=None, ge=1, le=65535)
+    # Агенты до версии с поддержкой отчёта о версии поля не присылают — оно опционально.
+    agent_version: str | None = Field(default=None, max_length=64)
 
-    @field_validator("hostname", "ip_address", "ssh_login", mode="before")
+    @field_validator("hostname", "ip_address", "ssh_login", "agent_version", mode="before")
     @classmethod
     def trim_address(cls, value: str | None) -> str | None:
         if value is None:
@@ -63,10 +65,11 @@ class AgentHeartbeatRequest(BaseModel):
     ssh_port: int | None = Field(default=None, ge=1, le=65535)
     os: HostOS
     status: HostStatus = HostStatus.online
+    agent_version: str | None = Field(default=None, max_length=64)
     hardware: AgentHardware = Field(default_factory=AgentHardware)
     software: list[AgentSoftware] = Field(default_factory=list, max_length=10000)
 
-    @field_validator("ssh_login", mode="before")
+    @field_validator("ssh_login", "agent_version", mode="before")
     @classmethod
     def trim_ssh_login(cls, value: str | None) -> str | None:
         if value is None:
@@ -121,6 +124,34 @@ class AgentAlertOut(BaseModel):
     previous_fingerprint: str | None
     current_fingerprint: str | None
     created_at: datetime
+
+
+class AgentHostVersionOut(BaseModel):
+    host_id: uuid.UUID
+    hostname: str | None
+    ip_address: str | None
+    has_agent: bool
+    agent_version: str | None
+    version_status: str
+    agent_version_checked_at: datetime | None
+    last_seen_at: datetime | None
+    status: HostStatus
+
+
+class AgentVersionOverviewOut(BaseModel):
+    available_version: str | None
+    installer_present: bool
+    total_agents: int
+    up_to_date: int
+    outdated: int
+    unknown: int
+    hosts: list[AgentHostVersionOut]
+
+
+class AgentHostSelection(BaseModel):
+    """Хосты для обслуживания агента; пустой список — все хосты с агентом."""
+
+    host_ids: list[uuid.UUID] = Field(default_factory=list, max_length=1000)
 
 
 class AgentStatusOut(BaseModel):

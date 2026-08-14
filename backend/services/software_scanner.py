@@ -7,7 +7,8 @@ from database import SessionLocal
 from models.host import Host
 from models.software import InstallMethod
 from models.task import TaskRun, TaskStatus
-from services.ansible_runner import build_full_inventory, run_ansible
+from services.agent_version import agent_version_from_software
+from services.ansible_runner import build_full_inventory, run_raw_command
 from services.host_target import resolve_host_target
 from services.software_parse import parse_get_package, parse_choco_list, parse_registry_packages
 from services.software_sync import sync_host_software
@@ -46,31 +47,7 @@ REGISTRY_PACKAGES_CMD = "powershell -NoProfile -NonInteractive -EncodedCommand "
 
 
 def _run_raw(inventory: dict, inventory_host: str, command: str) -> str:
-    result = run_ansible(
-        module="ansible.builtin.raw",
-        module_args=command,
-        host_pattern=inventory_host,
-        inventory=inventory,
-        quiet=True,
-    )
-    output_parts = []
-    failure_msg = None
-    for event in result.events:
-        event_data = event.get("event_data", {})
-        if event_data.get("host") != inventory_host:
-            continue
-
-        res = event_data.get("res") or {}
-        if event.get("event") in ("runner_on_unreachable", "runner_on_failed"):
-            failure_msg = res.get("msg") or event_data.get("res", {}).get("stdout") or event.get("event")
-        stdout = res.get("stdout")
-        if stdout:
-            output_parts.append(stdout)
-
-    if failure_msg is not None:
-        raise RuntimeError(f"Ansible: {failure_msg}")
-
-    return "\n".join(output_parts)
+    return run_raw_command(inventory, inventory_host, command)
 
 
 @celery_app.task(name="services.software_scanner.scan_software_task")
@@ -112,6 +89,17 @@ def scan_software_task(task_run_id: str):
                     discovered[name] = (version, InstallMethod.chocolatey)
 
                 sync_host_software(db, host, discovered)
+
+                # Сканирование реестра заодно показывает версию самого агента —
+                # это бесплатный источник данных для страницы версий агента.
+                agent_version = agent_version_from_software(
+                    (name, version) for name, (version, _method) in discovered.items()
+                )
+                if agent_version:
+                    host.agent_version = agent_version
+                    host.agent_version_checked_at = datetime.now(timezone.utc)
+                    db.commit()
+
                 log_lines.append(f"[{display_target}] обнаружено пакетов: {len(discovered)}")
             except Exception as exc:  # noqa: BLE001
                 any_failure = True

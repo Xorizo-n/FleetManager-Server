@@ -32,6 +32,44 @@ def run_ansible(**kwargs):
         return SimpleNamespace(rc=result.rc, status=result.status, stats=stats, events=events)
 
 
+def run_raw_command(inventory: dict, inventory_host: str, command: str, *, timeout: int | None = None) -> str:
+    """Выполняет команду через ansible.builtin.raw на одном хосте и возвращает stdout.
+
+    Хосты Windows подключаются по SSH с ansible_shell_type=powershell (см.
+    inventory_generator), поэтому raw — единственный доступный способ выполнения:
+    отдельные Ansible-коллекции (ansible.windows) в образ не устанавливаются.
+    """
+    kwargs = {
+        "module": "ansible.builtin.raw",
+        "module_args": command,
+        "host_pattern": inventory_host,
+        "inventory": inventory,
+        "quiet": True,
+    }
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    result = run_ansible(**kwargs)
+
+    output_parts: list[str] = []
+    failure_msg = None
+    for event in result.events:
+        event_data = event.get("event_data", {})
+        if event_data.get("host") != inventory_host:
+            continue
+
+        res = event_data.get("res") or {}
+        if event.get("event") in ("runner_on_unreachable", "runner_on_failed"):
+            failure_msg = res.get("msg") or res.get("stdout") or event.get("event")
+        stdout = res.get("stdout")
+        if stdout:
+            output_parts.append(stdout)
+
+    if failure_msg is not None:
+        raise RuntimeError(f"Ansible: {failure_msg}")
+
+    return "\n".join(output_parts)
+
+
 def _resolve_credential_vars(host: Host) -> dict:
     credential = host.credential or (host.group.credential if host.group_id and host.group else None)
     if credential is None:
