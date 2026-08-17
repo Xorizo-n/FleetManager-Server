@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, ArrowUpCircle, CheckSquare, Download, FolderPlus, Plus, RefreshCw, Trash2, Upload, X, XCircle } from "lucide-react";
+import { Activity, ArrowUpCircle, CheckSquare, Download, Filter, FolderPlus, Plus, RefreshCw, Trash2, Upload, X, XCircle } from "lucide-react";
 import { apiClient, getAccessToken } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import Badge from "../components/ui/Badge";
@@ -112,6 +112,7 @@ export default function Hosts() {
   const [groups, setGroups] = useState<HostGroup[]>([]);
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [filters, setFilters] = useState<HostFilters>(EMPTY_FILTERS);
+  const [showFilters, setShowFilters] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [importResult, setImportResult] = useState<string | null>(null);
   const [hostFormError, setHostFormError] = useState<string | null>(null);
@@ -351,7 +352,8 @@ export default function Hosts() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hosts, filters, agentVersions]);
 
-  const filtersActive = Object.values(filters).some((v) => v !== "");
+  const activeFilterCount = Object.values(filters).filter((v) => v !== "").length;
+  const filtersActive = activeFilterCount > 0;
 
   function updateFilter<K extends keyof HostFilters>(key: K, value: string) {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -394,6 +396,15 @@ export default function Hosts() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">Реестр хостов</h1>
         <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant={filtersActive ? "primary" : "secondary"}
+            size="sm"
+            onClick={() => setShowFilters((v) => !v)}
+            title={showFilters ? "Скрыть фильтры" : "Показать фильтры по столбцам"}
+          >
+            <Filter className="h-3.5 w-3.5" />
+            Фильтры{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+          </Button>
           <Button variant="secondary" size="sm" onClick={downloadInventory}>
             <Download className="h-3.5 w-3.5" />
             Скачать inventory
@@ -631,6 +642,7 @@ export default function Hosts() {
               <th>Проверен</th>
               {canEdit && <th className="text-right">Действия</th>}
             </tr>
+            {showFilters && (
             <tr className="bg-muted/30">
               {canEdit && <th className="w-10" />}
               <th className="p-1.5">
@@ -724,6 +736,7 @@ export default function Hosts() {
                 </th>
               )}
             </tr>
+            )}
           </thead>
           <tbody>
             {filteredHosts.map((h) => (
