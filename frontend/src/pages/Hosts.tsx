@@ -1,5 +1,5 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
-import { Activity, ArrowUpCircle, CheckSquare, Download, FolderPlus, Plus, RefreshCw, Trash2, Upload, X } from "lucide-react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Activity, ArrowUpCircle, CheckSquare, Download, FolderPlus, Plus, RefreshCw, Trash2, Upload, X, XCircle } from "lucide-react";
 import { apiClient, getAccessToken } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import Badge from "../components/ui/Badge";
@@ -57,6 +57,36 @@ interface AgentVersionOverview {
 }
 
 const OS_OPTIONS = ["windows_10", "windows_11", "windows_server"];
+const STATUS_OPTIONS = ["online", "offline", "unknown"];
+const NO_GROUP = "__none__";
+
+const AGENT_FILTER_OPTIONS: { value: string; label: string }[] = [
+  { value: "with", label: "С агентом" },
+  { value: "without", label: "Без агента" },
+  { value: "up_to_date", label: "Актуальна" },
+  { value: "outdated", label: "Устарела" },
+  { value: "newer", label: "Новее сервера" },
+  { value: "unknown", label: "Версия неизвестна" },
+];
+
+const CHECKED_FILTER_OPTIONS: { value: string; label: string }[] = [
+  { value: "never", label: "Никогда" },
+  { value: "24h", label: "За 24 часа" },
+  { value: "7d", label: "За 7 дней" },
+  { value: "older", label: "Старше 7 дней" },
+];
+
+interface HostFilters {
+  hostname: string;
+  ip: string;
+  group: string;
+  os: string;
+  status: string;
+  agent: string;
+  checked: string;
+}
+
+const EMPTY_FILTERS: HostFilters = { hostname: "", ip: "", group: "", os: "", status: "", agent: "", checked: "" };
 
 const VERSION_LABEL: Record<string, string> = {
   up_to_date: "актуальна",
@@ -81,7 +111,7 @@ export default function Hosts() {
   const [hosts, setHosts] = useState<Host[]>([]);
   const [groups, setGroups] = useState<HostGroup[]>([]);
   const [credentials, setCredentials] = useState<Credential[]>([]);
-  const [groupFilter, setGroupFilter] = useState("");
+  const [filters, setFilters] = useState<HostFilters>(EMPTY_FILTERS);
   const [showForm, setShowForm] = useState(false);
   const [importResult, setImportResult] = useState<string | null>(null);
   const [hostFormError, setHostFormError] = useState<string | null>(null);
@@ -112,9 +142,7 @@ export default function Hosts() {
   });
 
   async function loadHosts() {
-    const { data } = await apiClient.get<Host[]>("/hosts", {
-      params: groupFilter ? { group_id: groupFilter } : {},
-    });
+    const { data } = await apiClient.get<Host[]>("/hosts");
     setHosts(data);
   }
 
@@ -142,15 +170,11 @@ export default function Hosts() {
   }
 
   useEffect(() => {
+    loadHosts();
     loadGroups();
     loadCredentials();
     loadAgentVersions();
   }, []);
-
-  useEffect(() => {
-    loadHosts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupFilter]);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -189,7 +213,7 @@ export default function Hosts() {
   }
 
   function toggleAllVisibleHosts() {
-    const visibleIds = hosts.map((host) => host.id);
+    const visibleIds = filteredHosts.map((host) => host.id);
     const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedHostIds.includes(id));
     setSelectedHostIds(allSelected ? [] : visibleIds);
   }
@@ -291,6 +315,48 @@ export default function Hosts() {
     return agentVersions?.hosts.find((entry) => entry.host_id === hostId);
   }
 
+  function agentStateOf(host: Host): string {
+    if (!host.has_agent) return "no_agent";
+    return agentVersionOf(host.id)?.version_status ?? "unknown";
+  }
+
+  const filteredHosts = useMemo(() => {
+    const hostname = filters.hostname.trim().toLowerCase();
+    const ip = filters.ip.trim().toLowerCase();
+    const now = Date.now();
+
+    return hosts.filter((h) => {
+      if (hostname && !(h.hostname || "").toLowerCase().includes(hostname)) return false;
+      if (ip && !(h.ip_address || "").toLowerCase().includes(ip)) return false;
+      if (filters.group) {
+        if (filters.group === NO_GROUP ? h.group_id !== null : h.group_id !== filters.group) return false;
+      }
+      if (filters.os && h.os !== filters.os) return false;
+      if (filters.status && h.status !== filters.status) return false;
+      if (filters.agent) {
+        if (filters.agent === "with" && !h.has_agent) return false;
+        else if (filters.agent === "without" && h.has_agent) return false;
+        else if (!["with", "without"].includes(filters.agent) && agentStateOf(h) !== filters.agent) return false;
+      }
+      if (filters.checked) {
+        const checkedAt = h.last_checked_at ? new Date(h.last_checked_at).getTime() : null;
+        const ageMs = checkedAt !== null ? now - checkedAt : null;
+        if (filters.checked === "never" && checkedAt !== null) return false;
+        if (filters.checked === "24h" && (ageMs === null || ageMs > 24 * 3600 * 1000)) return false;
+        if (filters.checked === "7d" && (ageMs === null || ageMs > 7 * 24 * 3600 * 1000)) return false;
+        if (filters.checked === "older" && (ageMs === null || ageMs <= 7 * 24 * 3600 * 1000)) return false;
+      }
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hosts, filters, agentVersions]);
+
+  const filtersActive = Object.values(filters).some((v) => v !== "");
+
+  function updateFilter<K extends keyof HostFilters>(key: K, value: string) {
+    setFilters((prev) => ({ ...prev, [key]: value }));
+  }
+
   async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -328,16 +394,6 @@ export default function Hosts() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">Реестр хостов</h1>
         <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={groupFilter}
-            onChange={(e) => setGroupFilter(e.target.value)}
-            className="input-base w-auto py-2 text-sm"
-          >
-            <option value="">Все группы</option>
-            {groups.map((g) => (
-              <option key={g.id} value={g.id}>{g.name}</option>
-            ))}
-          </select>
           <Button variant="secondary" size="sm" onClick={downloadInventory}>
             <Download className="h-3.5 w-3.5" />
             Скачать inventory
@@ -560,7 +616,7 @@ export default function Hosts() {
                 <th className="w-10">
                   <input
                     type="checkbox"
-                    checked={hosts.length > 0 && hosts.every((host) => selectedHostIds.includes(host.id))}
+                    checked={filteredHosts.length > 0 && filteredHosts.every((host) => selectedHostIds.includes(host.id))}
                     onChange={toggleAllVisibleHosts}
                     aria-label="Выбрать все хосты"
                   />
@@ -575,9 +631,102 @@ export default function Hosts() {
               <th>Проверен</th>
               {canEdit && <th className="text-right">Действия</th>}
             </tr>
+            <tr className="bg-muted/30">
+              {canEdit && <th className="w-10" />}
+              <th className="p-1.5">
+                <input
+                  value={filters.hostname}
+                  onChange={(e) => updateFilter("hostname", e.target.value)}
+                  className="input-base h-8 py-1 text-xs font-normal"
+                  placeholder="Поиск…"
+                  aria-label="Фильтр по hostname"
+                />
+              </th>
+              <th className="p-1.5">
+                <input
+                  value={filters.ip}
+                  onChange={(e) => updateFilter("ip", e.target.value)}
+                  className="input-base h-8 py-1 text-xs font-normal font-mono"
+                  placeholder="Поиск…"
+                  aria-label="Фильтр по IP"
+                />
+              </th>
+              <th className="p-1.5">
+                <select
+                  value={filters.group}
+                  onChange={(e) => updateFilter("group", e.target.value)}
+                  className="input-base h-8 py-1 text-xs font-normal"
+                  aria-label="Фильтр по группе"
+                >
+                  <option value="">Все</option>
+                  <option value={NO_GROUP}>Без группы</option>
+                  {groups.map((g) => (
+                    <option key={g.id} value={g.id}>{g.name}</option>
+                  ))}
+                </select>
+              </th>
+              <th className="p-1.5">
+                <select
+                  value={filters.os}
+                  onChange={(e) => updateFilter("os", e.target.value)}
+                  className="input-base h-8 py-1 text-xs font-normal"
+                  aria-label="Фильтр по ОС"
+                >
+                  <option value="">Все</option>
+                  {OS_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </th>
+              <th className="p-1.5">
+                <select
+                  value={filters.status}
+                  onChange={(e) => updateFilter("status", e.target.value)}
+                  className="input-base h-8 py-1 text-xs font-normal"
+                  aria-label="Фильтр по статусу"
+                >
+                  <option value="">Все</option>
+                  {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </th>
+              <th className="p-1.5">
+                <select
+                  value={filters.agent}
+                  onChange={(e) => updateFilter("agent", e.target.value)}
+                  className="input-base h-8 py-1 text-xs font-normal"
+                  aria-label="Фильтр по агенту"
+                >
+                  <option value="">Все</option>
+                  {AGENT_FILTER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </th>
+              <th className="p-1.5">
+                <select
+                  value={filters.checked}
+                  onChange={(e) => updateFilter("checked", e.target.value)}
+                  className="input-base h-8 py-1 text-xs font-normal"
+                  aria-label="Фильтр по дате проверки"
+                >
+                  <option value="">Все</option>
+                  {CHECKED_FILTER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </th>
+              {canEdit && (
+                <th className="p-1.5 text-right">
+                  {filtersActive && (
+                    <button
+                      onClick={() => setFilters(EMPTY_FILTERS)}
+                      className="btn-ghost inline-flex items-center gap-1 px-2 py-1 text-xs"
+                      title="Сбросить фильтры"
+                    >
+                      <XCircle className="h-3.5 w-3.5" />
+                      Сбросить
+                    </button>
+                  )}
+                </th>
+              )}
+            </tr>
           </thead>
           <tbody>
-            {hosts.map((h) => (
+            {filteredHosts.map((h) => (
               <tr key={h.id}>
                 {canEdit && (
                   <td className="w-10">
@@ -616,17 +765,6 @@ export default function Hosts() {
                 </td>
                 {canEdit && (
                   <td className="text-right">
-                    {h.has_agent && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => startAgentTask("update", [h.id], `Обновление агента: ${h.hostname || h.ip_address || h.id}`)}
-                        className="mr-2"
-                      >
-                        <ArrowUpCircle className="h-3.5 w-3.5" />
-                        Обновить агент
-                      </Button>
-                    )}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -648,9 +786,11 @@ export default function Hosts() {
                 )}
               </tr>
             ))}
-            {hosts.length === 0 && (
+            {filteredHosts.length === 0 && (
               <tr>
-                <td colSpan={canEdit ? 9 : 7} className="px-3 py-8 text-center text-subtle">Хостов нет</td>
+                <td colSpan={canEdit ? 9 : 7} className="px-3 py-8 text-center text-subtle">
+                  {hosts.length === 0 ? "Хостов нет" : "Ничего не найдено по заданным фильтрам"}
+                </td>
               </tr>
             )}
           </tbody>
