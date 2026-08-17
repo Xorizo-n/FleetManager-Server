@@ -87,13 +87,17 @@ $dest = Join-Path $env:TEMP '{INSTALLER_FILENAME}'
 $ProgressPreference = 'SilentlyContinue'
 Invoke-WebRequest -Uri "$base/api/agent/installer" -Headers @{{ Authorization = "Bearer $($config.AgentToken)" }} -OutFile $dest -UseBasicParsing -TimeoutSec 900
 
-$process = Start-Process -FilePath $dest -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -Wait -PassThru
-$exitCode = $process.ExitCode
-
-# Inno Setup может завершить исходный процесс раньше, чем отработает установка,
-# поэтому версию перечитываем с ожиданием, а не сразу после выхода процесса.
+$process = Start-Process -FilePath $dest -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -PassThru
+# Deliberately not -Wait: the installer's manifest requires elevation, and
+# Start-Process -Wait on a manifest-elevated exe launched over a non-interactive
+# SSH session is unreliable — observed on production hosts never returning even
+# though the install had already finished and the process itself had exited (no
+# child process left, nothing to wait for). Poll instead: HasExited/ExitCode are
+# plain non-blocking GetExitCodeProcess() calls, a different code path from the
+# blocking wait that hangs, and the registry entry is the authoritative signal
+# for "the install actually finished" regardless of the process handle anyway.
 $version = $null
-$deadline = (Get-Date).AddSeconds(180)
+$deadline = (Get-Date).AddSeconds(300)
 do {{
     Start-Sleep -Seconds 3
     $entry = Get-ItemProperty '{UNINSTALL_KEYS[0]}','{UNINSTALL_KEYS[1]}' -ErrorAction SilentlyContinue |
@@ -101,6 +105,9 @@ do {{
         Select-Object -First 1
     $version = [string]$entry.DisplayVersion
 }} while (-not $version -and (Get-Date) -lt $deadline)
+
+$exitCode = $null
+if ($process.HasExited) {{ $exitCode = $process.ExitCode }}
 
 Remove-Item $dest -Force -ErrorAction SilentlyContinue
 $service = Get-Service -Name FleetManagerAgent -ErrorAction SilentlyContinue

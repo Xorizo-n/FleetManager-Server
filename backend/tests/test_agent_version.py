@@ -118,6 +118,22 @@ class AgentUpdateScriptTests(unittest.TestCase):
         self.assertIn("/VERYSILENT", script)
         self.assertNotIn("EnrollmentToken", script)
 
+    def test_update_script_does_not_block_on_start_process_wait(self):
+        # Start-Process -Wait on the (manifest-elevated) installer, run over a
+        # non-interactive SSH session, was observed hanging indefinitely in
+        # production even after the install had already finished and the
+        # process had exited — completion must be polled instead (registry
+        # entry + non-blocking HasExited), never a blocking -Wait.
+        import base64
+        import re
+
+        script = base64.b64decode(UPDATE_CMD.rsplit(" ", 1)[1]).decode("utf-16le")
+        launch_line = next(line for line in script.splitlines() if "Start-Process" in line and "$dest" in line)
+        self.assertNotIn("-Wait", launch_line)
+        self.assertIn("-PassThru", launch_line)
+        self.assertIn("HasExited", script)
+        self.assertRegex(script, r"deadline\s*=\s*\(Get-Date\)\.AddSeconds\(300\)")
+
     def test_probe_script_reads_the_inno_setup_uninstall_entry(self):
         import base64
 
