@@ -37,6 +37,18 @@ def _resolve_ssh_credential(db: Session, credential_id) -> Credential | None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Для SSH-подключения нужен credential типа ssh_key")
     return credential
 
+def _read_play_name(path: Path) -> str | None:
+    try:
+        import yaml
+        with open(path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if isinstance(data, list) and data and isinstance(data[0], dict):
+            return data[0].get("name") or None
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 router = APIRouter(prefix="/playbooks", tags=["playbooks"])
 EDITOR_ROLES = (UserRole.admin, UserRole.operator)
 
@@ -144,7 +156,8 @@ def list_playbook_files(repo_id: uuid.UUID, db: Session = Depends(get_db), _: Us
         for path in base.rglob(pattern):
             if ".git" in path.parts:
                 continue
-            files.append(PlaybookFileOut(name=path.name, path=str(path.relative_to(base))))
+            display_name = _read_play_name(path)
+            files.append(PlaybookFileOut(name=path.name, path=str(path.relative_to(base)).replace("\\", "/"), display_name=display_name))
     return files
 
 

@@ -26,6 +26,7 @@ class PlaybookRepoOut(BaseModel):
 class PlaybookFileOut(BaseModel):
     name: str
     path: str
+    display_name: str | None = None
 
 
 class PlaybookRunRequest(BaseModel):
