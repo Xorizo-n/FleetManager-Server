@@ -112,6 +112,7 @@ class AgentEnrollmentTokenOut(BaseModel):
     expires_at: datetime | None
     is_active: bool
     created_at: datetime
+    installer_available: bool = False
 
 
 class AgentAlertOut(BaseModel):

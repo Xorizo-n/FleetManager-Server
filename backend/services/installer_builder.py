@@ -1,0 +1,103 @@
+"""Generate a Windows self-extracting .exe installer with baked-in credentials.
+
+Requires:
+  - nsis (makensis) installed in the container
+  - /mnt/soft-share/agent-dist/ containing:
+      FleetManager.Agent.Service.exe
+      install.ps1
+"""
+
+import os
+import re
+import subprocess
+import tempfile
+import uuid
+from pathlib import Path
+
+from config import settings
+
+_AGENT_DIST = Path(settings.soft_share_dir) / "agent-dist"
+
+_NSIS_TEMPLATE = """\
+Unicode True
+SetCompressor /SOLID lzma
+
+Name "FleetManager Agent"
+OutFile "{output}"
+InstallDir "$TEMP\\fm-agent-{uid}"
+RequestExecutionLevel admin
+SilentInstall silent
+
+Section
+  SetOutPath "$INSTDIR"
+  File "{agent_exe}"
+  File "{install_ps1}"
+  File "{bootstrap_ps1}"
+
+  nsExec::ExecToLog 'powershell.exe -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "$INSTDIR\\bootstrap.ps1"'
+  Pop $0
+
+  RMDir /r "$INSTDIR"
+SectionEnd
+"""
+
+
+def agent_dist_ready() -> bool:
+    return (
+        (_AGENT_DIST / "FleetManager.Agent.Service.exe").is_file()
+        and (_AGENT_DIST / "install.ps1").is_file()
+    )
+
+
+def build_installer_exe(server_url: str, enrollment_token: str) -> bytes:
+    if not agent_dist_ready():
+        raise RuntimeError(
+            f"Agent distribution files missing in {_AGENT_DIST}. "
+            "Copy FleetManager.Agent.Service.exe and install.ps1 there."
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+
+        # Bootstrap script with baked-in credentials
+        bootstrap = tmpdir / "bootstrap.ps1"
+        bootstrap.write_text(
+            "$ErrorActionPreference = 'Stop'\n"
+            f"& \"$PSScriptRoot\\install.ps1\""
+            f" -ServerUrl '{server_url}'"
+            f" -EnrollmentToken '{enrollment_token}'"
+            f" -PackageRoot \"$PSScriptRoot\"\n",
+            encoding="utf-8",
+        )
+
+        output_exe = tmpdir / "installer.exe"
+        nsi_path = tmpdir / "installer.nsi"
+        nsi_path.write_text(
+            _NSIS_TEMPLATE.format(
+                output=str(output_exe),
+                uid=uuid.uuid4().hex[:12],
+                agent_exe=str(_AGENT_DIST / "FleetManager.Agent.Service.exe"),
+                install_ps1=str(_AGENT_DIST / "install.ps1"),
+                bootstrap_ps1=str(bootstrap),
+            ),
+            encoding="utf-8",
+        )
+
+        result = subprocess.run(
+            ["makensis", "-V2", str(nsi_path)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"makensis failed (exit {result.returncode}):\n"
+                f"{result.stdout}\n{result.stderr}"
+            )
+
+        return output_exe.read_bytes()
+
+
+def safe_filename(name: str) -> str:
+    safe = re.sub(r"[^\w\-]", "_", name).strip("_")
+    return f"FleetManagerAgent-{safe or 'Setup'}.exe"

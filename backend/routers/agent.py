@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -48,7 +48,8 @@ from services.agent_version import (
     version_status,
 )
 from services.audit import record_audit
-from services.crypto import encrypt_secret
+from services.crypto import decrypt_secret, encrypt_secret
+from services.installer_builder import agent_dist_ready, build_installer_exe, safe_filename
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 bearer = HTTPBearer(auto_error=False)
@@ -99,6 +100,7 @@ def create_enrollment_token(
     token = AgentEnrollmentToken(
         name=payload.name,
         token_hash=hash_agent_token(raw_token),
+        token_encrypted=encrypt_secret(raw_token),
         created_by=user.id,
         expires_at=payload.expires_at,
     )
@@ -122,6 +124,46 @@ def list_enrollment_tokens(
     return db.execute(
         select(AgentEnrollmentToken).order_by(AgentEnrollmentToken.created_at.desc())
     ).scalars().all()
+
+
+@router.get("/enrollment-tokens/{token_id}/installer")
+def download_enrollment_installer(
+    token_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.admin)),
+):
+    """Генерирует .exe-установщик агента с вшитыми токеном и адресом сервера."""
+    token = db.get(AgentEnrollmentToken, token_id)
+    if token is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Enrollment token not found")
+    if not token.is_active:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Enrollment token is revoked")
+    if not token.token_encrypted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Installer not available for this token (created before installer feature)",
+        )
+    if not agent_dist_ready():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent distribution files not found. Copy FleetManager.Agent.Service.exe and install.ps1 to /mnt/soft-share/agent-dist/ on the server.",
+        )
+
+    raw_token = decrypt_secret(token.token_encrypted)
+    server_url = settings.agent_public_url.rstrip("/") or str(request.base_url).rstrip("/")
+
+    try:
+        exe_bytes = build_installer_exe(server_url, raw_token)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+
+    filename = safe_filename(token.name)
+    return Response(
+        content=exe_bytes,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.delete("/enrollment-tokens/{token_id}", status_code=status.HTTP_204_NO_CONTENT)

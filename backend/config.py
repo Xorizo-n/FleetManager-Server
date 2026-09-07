@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     # Software share (network share mounted into the container)
     soft_share_dir: str = "/mnt/soft-share"
 
+    # Public URL baked into downloaded agent installers (e.g. https://fleet.example.com)
+    # Falls back to the request base_url when empty.
+    agent_public_url: str = ""
+
     # CORS
     cors_origins: str = "http://localhost:5173,http://localhost:8080"
 

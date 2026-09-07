@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openssh-client \
         sshpass \
         build-essential \
+        nsis \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
