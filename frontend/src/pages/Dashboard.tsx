@@ -186,16 +186,18 @@ export default function Dashboard() {
             Проверить обновление агента
           </Button>
         )}
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={downloadAgent}
-          disabled={!agentInstaller}
-          title={agentInstaller ? `Скачать ${agentInstaller.name}` : "Установщик агента ещё не синхронизирован"}
-        >
-          <Download className="h-3.5 w-3.5" />
-          Скачать агент
-        </Button>
+        {canManage && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={downloadAgent}
+            disabled={!agentInstaller}
+            title={agentInstaller ? `Скачать ${agentInstaller.name}` : "Установщик агента ещё не синхронизирован"}
+          >
+            <Download className="h-3.5 w-3.5" />
+            Скачать агент
+          </Button>
+        )}
       </div>
       <h1 className="text-2xl font-semibold tracking-tight">Дашборд</h1>
 

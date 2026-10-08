@@ -61,6 +61,16 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _client_ip(request: Request) -> str | None:
+    """Real source address of the agent, as seen through the nginx proxy."""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        candidate = forwarded.split(",")[0].strip()
+        if candidate:
+            return candidate
+    return request.client.host if request.client else None
+
+
 def _require_agent_host(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
     db: Session = Depends(get_db),
@@ -180,7 +190,7 @@ def revoke_enrollment_token(
 
 
 @router.post("/register", response_model=AgentRegisterResponse)
-def register_agent(payload: AgentRegisterRequest, db: Session = Depends(get_db)):
+def register_agent(payload: AgentRegisterRequest, request: Request, db: Session = Depends(get_db)):
     now = _now()
     enrollment = db.execute(
         select(AgentEnrollmentToken).where(AgentEnrollmentToken.token_hash == hash_agent_token(payload.enrollment_token))
@@ -208,7 +218,7 @@ def register_agent(payload: AgentRegisterRequest, db: Session = Depends(get_db))
             agent_id=payload.machine_id,
             agent_token_hash=hash_agent_token(raw_agent_token),
             hostname=payload.hostname,
-            ip_address=payload.ip_address,
+            ip_address=payload.ip_address or _client_ip(request),
             os=payload.os,
             status=HostStatus.online,
             last_seen_at=now,
@@ -227,7 +237,7 @@ def register_agent(payload: AgentRegisterRequest, db: Session = Depends(get_db))
             host.is_agent_managed = True
         host.agent_token_hash = hash_agent_token(raw_agent_token)
         host.hostname = payload.hostname or host.hostname
-        host.ip_address = payload.ip_address or host.ip_address
+        host.ip_address = payload.ip_address or _client_ip(request) or host.ip_address
         host.os = payload.os
         if payload.ssh_port:
             host.ssh_port = payload.ssh_port
@@ -273,13 +283,14 @@ def register_agent(payload: AgentRegisterRequest, db: Session = Depends(get_db))
 @router.post("/heartbeat")
 def heartbeat(
     payload: AgentHeartbeatRequest,
+    request: Request,
     host: Host = Depends(_require_agent_host),
     db: Session = Depends(get_db),
 ):
     _check_machine(host, payload.machine_id)
     now = _now()
     host.hostname = payload.hostname or host.hostname
-    host.ip_address = payload.ip_address or host.ip_address
+    host.ip_address = payload.ip_address or _client_ip(request) or host.ip_address
     host.os = payload.os
     host.status = HostStatus.online
     host.last_seen_at = now
@@ -308,18 +319,28 @@ def heartbeat(
         host.agent_version = reported_version
         host.agent_version_checked_at = now
 
-    db.execute(delete(SoftwareItem).where(SoftwareItem.host_id == host.id))
-    for item in payload.software:
-        db.add(SoftwareItem(
-            host_id=host.id,
-            name=item.name,
-            version=item.version,
-            install_method=_install_method(item.source),
-            status=SoftwareStatus.installed,
-            detected_at=now,
-        ))
+    # Commit the host status first, on its own, so the machine always shows up
+    # online even if the software inventory below has a problem.
     db.commit()
-    return {"status": "accepted", "host_id": host.id, "last_seen_at": now, "software_count": len(payload.software)}
+
+    stored = 0
+    try:
+        db.execute(delete(SoftwareItem).where(SoftwareItem.host_id == host.id))
+        for item in payload.software:
+            db.add(SoftwareItem(
+                host_id=host.id,
+                name=item.name,
+                version=item.version,
+                install_method=_install_method(item.source),
+                status=SoftwareStatus.installed,
+                detected_at=now,
+            ))
+        db.commit()
+        stored = len(payload.software)
+    except Exception:  # noqa: BLE001
+        db.rollback()
+
+    return {"status": "accepted", "host_id": host.id, "last_seen_at": now, "software_count": stored}
 
 
 @router.post("/alerts", response_model=AgentAlertOut, status_code=status.HTTP_201_CREATED)

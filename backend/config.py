@@ -21,10 +21,16 @@ class Settings(BaseSettings):
 
     totp_issuer_name: str = "FleetManager"
 
+    # Второй фактор. Временно выключается на период отладки платформы
+    # (TOTP_REQUIRED=false в .env). Обязателен к возврату в true.
+    totp_required: bool = True
+
     # Ansible
     ansible_playbooks_repo_dir: str = "/app/ansible_data/playbooks_repo"
     ansible_private_key_dir: str = "/app/ansible_data/keys"
-    ansible_ssh_port: int = 5022
+    # SSH-порт хостов с агентом по умолчанию (агент не передаёт свой порт при
+    # регистрации). Агент держит sshd на 22 и пускает туда только этот сервер.
+    ansible_ssh_port: int = 22
 
     # Software share (network share mounted into the container)
     soft_share_dir: str = "/mnt/soft-share"

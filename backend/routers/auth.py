@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from config import settings
 from database import get_db
 from dependencies import get_current_user, require_roles
 from models.user import User, UserRole
@@ -19,6 +20,7 @@ from schemas.auth import (
     TotpResetResponse,
 )
 from services.audit import record_audit
+from services.rate_limiter import check_rate_limit
 from services.security import (
     hash_password,
     verify_password,
@@ -41,15 +43,43 @@ def _create_pre_auth_token(user_id: uuid.UUID) -> str:
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+# SEC-01: Registration is open only during bootstrap (no users in DB).
+# Once any user exists, only admins can create new accounts.
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
-def register(payload: UserRegister, db: Session = Depends(get_db)):
+def register(payload: UserRegister, request: Request, db: Session = Depends(get_db)):
+    is_first_user = db.execute(select(User).limit(1)).scalar_one_or_none() is None
+
+    if not is_first_user:
+        # Require admin token for all subsequent registrations
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Регистрация закрыта. Новых пользователей создаёт администратор.",
+            )
+        try:
+            token_data = decode_token(auth_header[7:])
+            registrar = db.get(User, uuid.UUID(token_data["sub"]))
+            if registrar is None or not registrar.is_active or registrar.role != UserRole.admin:
+                raise ValueError("not admin")
+        except (ValueError, KeyError):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Регистрация закрыта. Новых пользователей создаёт администратор.",
+            )
+
     existing = db.execute(
         select(User).where((User.username == payload.username) | (User.email == payload.email))
     ).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Пользователь с таким именем или email уже существует")
-
-    is_first_user = db.execute(select(User).limit(1)).scalar_one_or_none() is None
 
     user = User(
         username=payload.username,
@@ -60,22 +90,38 @@ def register(payload: UserRegister, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
-    record_audit(db, user.id, "user.register", f"Зарегистрирован пользователь {user.username}")
+    record_audit(db, user.id, "user.register", f"Зарегистрирован пользователь {user.username}", request)
     return user
 
 
-@router.post("/login", response_model=LoginTotpSetupRequired | LoginTotpRequired)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+# SEC-02: Rate limiting — 10 login attempts per IP per minute.
+@router.post("/login", response_model=TokenPair | LoginTotpSetupRequired | LoginTotpRequired)
+def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    ip = _client_ip(request)
+    if check_rate_limit(f"login:{ip}", limit=10, window_seconds=60):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Слишком много попыток. Повторите через минуту.")
+
     user = db.execute(select(User).where(User.username == payload.username)).scalar_one_or_none()
     if user is None or not user.is_active or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Неверный логин или пароль")
 
+    # Отладочный режим платформы: второй фактор выключен настройкой TOTP_REQUIRED.
+    # Пароль по-прежнему проверяется, вход фиксируется в аудите отдельным событием.
+    if not settings.totp_required:
+        record_audit(db, user.id, "user.login", "Вход без TOTP: второй фактор отключён настройкой", request)
+        return TokenPair(
+            access_token=create_access_token(str(user.id), user.role.value),
+            refresh_token=create_refresh_token(str(user.id)),
+        )
+
     pre_auth_token = _create_pre_auth_token(user.id)
 
     if not user.totp_enabled:
-        secret = totp_service.generate_totp_secret()
-        user.totp_secret = secret
-        db.commit()
+        # Only generate a new secret if one doesn't already exist (prevents secret theft on repeated logins)
+        if not user.totp_secret:
+            user.totp_secret = totp_service.generate_totp_secret()
+            db.commit()
+        secret = user.totp_secret
         uri = totp_service.get_provisioning_uri(secret, user.username)
         qr = totp_service.generate_qr_code_base64(uri)
         return LoginTotpSetupRequired(pre_auth_token=pre_auth_token, provisioning_uri=uri, qr_code_base64=qr)
@@ -83,8 +129,14 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     return LoginTotpRequired(pre_auth_token=pre_auth_token)
 
 
+# SEC-02: Rate limiting — 5 TOTP attempts per pre_auth_token per 5 minutes.
 @router.post("/totp/verify", response_model=TokenPair)
 def verify_totp(payload: TotpVerifyRequest, request: Request, db: Session = Depends(get_db)):
+    # Rate limit by token (first 32 chars as key) to prevent TOTP brute-force
+    token_key = payload.pre_auth_token[:32] if len(payload.pre_auth_token) > 32 else payload.pre_auth_token
+    if check_rate_limit(f"totp:{token_key}", limit=5, window_seconds=300):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Слишком много попыток. Повторите через 5 минут.")
+
     try:
         token_payload = decode_token(payload.pre_auth_token)
     except ValueError as exc:

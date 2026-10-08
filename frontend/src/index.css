@@ -124,6 +124,11 @@
     @apply p-2;
   }
 
+  /* Neutral inline row action (tables) */
+  .action-icon {
+    @apply inline-flex cursor-pointer items-center gap-1 rounded-md px-2 py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 disabled:pointer-events-none disabled:opacity-40;
+  }
+
   /* Inline destructive row action (tables) */
   .action-danger {
     @apply inline-flex cursor-pointer items-center gap-1 rounded-md px-2 py-1 text-rose-600 transition-colors hover:bg-rose-500/10 hover:text-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/70 dark:text-rose-400 dark:hover:text-rose-300;

@@ -13,6 +13,7 @@ import KeyStore from "./pages/KeyStore";
 import Users from "./pages/Users";
 import EnrollmentTokens from "./pages/EnrollmentTokens";
 import Hardware from "./pages/Hardware";
+import Installers from "./pages/Installers";
 
 export default function App() {
   return (
@@ -37,6 +38,7 @@ export default function App() {
               <Route path="/users" element={<ProtectedRoute roles={["admin"]}><Users /></ProtectedRoute>} />
               <Route path="/tokens" element={<ProtectedRoute roles={["admin"]}><EnrollmentTokens /></ProtectedRoute>} />
               <Route path="/hardware" element={<Hardware />} />
+              <Route path="/installers" element={<ProtectedRoute roles={["admin", "operator"]}><Installers /></ProtectedRoute>} />
             </Route>
           </Routes>
         </AuthProvider>

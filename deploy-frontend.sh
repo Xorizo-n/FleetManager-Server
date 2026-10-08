@@ -1,16 +1,16 @@
 #!/bin/bash
-# Пересобирает и перезапускает только frontend-контейнер.
-# --no-deps гарантирует что postgres/backend/redis не трогаются.
-set -euo pipefail
+# Пересобирает frontend и синхронизирует env во всех контейнерах.
+# Безопасно: не трогает postgres-данные.
+set -e
+cd /opt/fleet-manager
 
-COMPOSE_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$COMPOSE_DIR"
-
-echo "[deploy-frontend] Building..."
+echo "[deploy] Building frontend image..."
 docker compose build frontend
 
-echo "[deploy-frontend] Restarting (no-deps)..."
+echo "[deploy] Restarting frontend (no-deps)..."
 docker compose up -d --no-deps frontend
 
-echo "[deploy-frontend] Done."
-docker compose ps frontend
+echo "[deploy] Syncing env in celery workers (in case .env changed)..."
+docker compose up -d --no-deps --force-recreate celery celery-beat
+
+echo "[deploy] Done. Postgres not touched."

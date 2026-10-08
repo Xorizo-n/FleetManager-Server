@@ -44,6 +44,15 @@ class AgentApiContractTests(unittest.TestCase):
         self.assertEqual(payload.ssh_login, r"rtf\s.u.mirzagitov")
         self.assertEqual(payload.ssh_port, 5022)
 
+    def test_heartbeat_scrubs_control_chars_rejected_by_postgres(self):
+        # Vendor DisplayName values in the registry sometimes contain NUL, which
+        # PostgreSQL text columns reject — failing the whole heartbeat.
+        software = AgentSoftware(name="Foo\x00 Bar\x07", version="1.0\x00", publisher="\x00", source="registry")
+        self.assertEqual(software.name, "Foo Bar")
+        self.assertEqual(software.version, "1.0")
+        self.assertIsNone(software.publisher)
+        self.assertEqual(AgentSoftware(name="\x00\x01").name, "(unknown)")
+
     def test_alert_requires_message(self):
         with self.assertRaises(ValidationError):
             AgentAlertRequest(machine_id=str(uuid.uuid4()), alert_type="hardware_changed", message="")

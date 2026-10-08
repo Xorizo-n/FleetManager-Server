@@ -172,6 +172,11 @@ class AgentUnreachableHostTests(unittest.TestCase):
         self.assertEqual(_ssh_port(_FakeHost(ssh_port=None)), agent_update.settings.ansible_ssh_port)
         self.assertEqual(_ssh_port(_FakeHost(ssh_port=2222)), 2222)
 
+    def test_default_agent_ssh_port_is_22(self):
+        # FleetManager-Agent keeps sshd on 22 (firewalled to this server) and does
+        # not report its port at registration, so the default must match it.
+        self.assertEqual(type(agent_update.settings).model_fields["ansible_ssh_port"].default, 22)
+
     def test_reachable_host_opens_a_socket_on_its_ssh_port(self):
         host = _FakeHost(hostname="pc-01.example.local", ssh_port=5022)
         with mock.patch.object(agent_update.socket, "create_connection") as create_connection:

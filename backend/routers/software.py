@@ -169,7 +169,7 @@ def ingest_scan_result(
 
 
 @router.get("/export.csv")
-def export_csv(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def export_csv(db: Session = Depends(get_db), _: User = Depends(require_roles(UserRole.admin, UserRole.operator))):
     items = db.execute(
         select(SoftwareItem, Host.hostname)
         .join(Host, SoftwareItem.host_id == Host.id)
@@ -191,7 +191,7 @@ def export_csv(db: Session = Depends(get_db), _: User = Depends(get_current_user
 
 
 @router.get("/export.pdf")
-def export_pdf(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def export_pdf(db: Session = Depends(get_db), _: User = Depends(require_roles(UserRole.admin, UserRole.operator))):
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle

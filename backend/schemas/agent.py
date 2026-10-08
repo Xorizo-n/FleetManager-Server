@@ -6,6 +6,22 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from models.host import HostOS, HostStatus
 
 
+# Agents read software names/versions straight from the Windows registry,
+# where vendor DisplayName values occasionally contain NUL (0x00) and other
+# C0 control bytes. PostgreSQL text columns reject NUL, which fails the whole
+# heartbeat transaction (host status + inventory) - so scrub every string an
+# agent sends.
+_C0_MAP = {c: None for c in range(0x20) if c not in (0x09, 0x0A, 0x0D)}
+_C0_MAP[0x7F] = None
+
+
+def _scrub(value):
+    if not isinstance(value, str):
+        return value
+    cleaned = value.translate(_C0_MAP).replace('\ufeff', '').strip('\ufffd').strip()
+    return cleaned or None
+
+
 class AgentHardware(BaseModel):
     manufacturer: str | None = None
     model: str | None = None
@@ -15,12 +31,32 @@ class AgentHardware(BaseModel):
     total_memory_bytes: int | None = Field(default=None, ge=0)
     fingerprint: str | None = None
 
+    @field_validator("manufacturer", "model", "serial_number", "operating_system", "processor", "fingerprint", mode="before")
+    @classmethod
+    def _clean(cls, value):
+        return _scrub(value)
+
 
 class AgentSoftware(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     version: str | None = Field(default=None, max_length=128)
     publisher: str | None = Field(default=None, max_length=255)
     source: str = Field(default="unknown", max_length=64)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _clean_name(cls, value):
+        return _scrub(value) or "(unknown)"
+
+    @field_validator("version", "publisher", mode="before")
+    @classmethod
+    def _clean_optional(cls, value):
+        return _scrub(value)
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def _clean_source(cls, value):
+        return _scrub(value) or "unknown"
 
 
 class AgentRegisterRequest(BaseModel):

@@ -1,15 +1,24 @@
 import { useEffect, useRef, useState } from "react";
 import { apiClient, getAccessToken } from "../api/client";
 
-export default function TaskLog({ taskId }: { taskId: string }) {
+interface Props {
+  taskId: string;
+  onDone?: () => void;
+}
+
+export default function TaskLog({ taskId, onDone }: Props) {
   const [log, setLog] = useState("");
-  const [status, setStatus] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const [finalStatus, setFinalStatus] = useState<string | null>(null);
   const logRef = useRef<HTMLPreElement>(null);
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
 
   useEffect(() => {
     const controller = new AbortController();
     setLog("");
-    setStatus(null);
+    setDone(false);
+    setFinalStatus(null);
 
     async function run() {
       const token = getAccessToken();
@@ -24,8 +33,8 @@ export default function TaskLog({ taskId }: { taskId: string }) {
       let buffer = "";
 
       while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
+        const { value, done: streamDone } = await reader.read();
+        if (streamDone) break;
         buffer += decoder.decode(value, { stream: true });
 
         let separator: RegExpMatchArray | null;
@@ -41,9 +50,19 @@ export default function TaskLog({ taskId }: { taskId: string }) {
             else if (line.startsWith("data:")) data += line.slice(5).trim();
           }
 
-          if (eventName === "log") setLog((prev) => prev + data);
-          else if (eventName === "done") setStatus(data);
-          else if (eventName === "error") setStatus("error");
+          if (eventName === "log") {
+            setLog((prev) => prev + data);
+          } else if (eventName === "done") {
+            setFinalStatus(data);
+            setDone(true);
+            onDoneRef.current?.();
+            return;
+          } else if (eventName === "error") {
+            setFinalStatus("error");
+            setDone(true);
+            onDoneRef.current?.();
+            return;
+          }
         }
       }
     }
@@ -53,18 +72,27 @@ export default function TaskLog({ taskId }: { taskId: string }) {
   }, [taskId]);
 
   useEffect(() => {
-    logRef.current?.scrollTo(0, logRef.current.scrollHeight);
+    if (logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
   }, [log]);
 
   return (
     <div className="space-y-2">
-      {status && (
-        <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-          <span className="h-1.5 w-1.5 rounded-full bg-sky-400 motion-safe:animate-pulse" />
-          Статус: {status}
-        </p>
-      )}
-      <pre ref={logRef} className="console-block">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        {!done ? (
+          <>
+            <span className="h-1.5 w-1.5 rounded-full bg-sky-400 motion-safe:animate-pulse" />
+            Выполняется — лог обновляется в реальном времени
+          </>
+        ) : (
+          <>
+            <span className={`h-1.5 w-1.5 rounded-full ${finalStatus === "success" ? "bg-emerald-400" : "bg-rose-400"}`} />
+            Завершено: {finalStatus === "success" ? "успешно" : finalStatus === "failed" ? "с ошибкой" : finalStatus}
+          </>
+        )}
+      </div>
+      <pre ref={logRef} className="console-block max-h-[60vh] overflow-y-auto">
         {log || "Ожидание вывода..."}
       </pre>
     </div>

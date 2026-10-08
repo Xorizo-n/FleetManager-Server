@@ -44,6 +44,17 @@ class HostGroupAssignRequest(BaseModel):
         return self
 
 
+class HostGroupUnassignRequest(BaseModel):
+    host_ids: list[uuid.UUID]
+
+    @field_validator("host_ids")
+    @classmethod
+    def require_hosts(cls, value: list[uuid.UUID]) -> list[uuid.UUID]:
+        if not value:
+            raise ValueError("Необходимо выбрать хотя бы один хост")
+        return value
+
+
 class HostCreate(BaseModel):
     ip_address: str | None = None
     hostname: str | None = None
