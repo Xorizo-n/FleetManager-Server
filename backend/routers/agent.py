@@ -34,7 +34,7 @@ from schemas.agent import (
     AgentVersionOverviewOut,
 )
 from schemas.task import TaskRunOut
-from services.agent_auth import hash_agent_token, issue_agent_token
+from services.agent_auth import hash_agent_token, is_machine_id_clone, issue_agent_token
 from services.agent_ssh import generate_agent_keypair
 from services.agent_update import run_agent_update, run_agent_version_scan
 from services.agent_version import (
@@ -202,6 +202,20 @@ def register_agent(payload: AgentRegisterRequest, request: Request, db: Session 
 
     host = db.execute(select(Host).where(Host.agent_id == payload.machine_id)).scalar_one_or_none()
     matched_existing_agent = host is not None
+    if matched_existing_agent and is_machine_id_clone(host.hostname, host.last_seen_at, payload.hostname, now):
+        record_audit(
+            db, None, "agent.register_rejected",
+            f"machine_id={payload.machine_id} belongs to online host {host.hostname}; registration from {payload.hostname}",
+            request,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Machine id {payload.machine_id} already belongs to host {host.hostname}, which is still reporting "
+                "(cloned without resetting the agent identity?). Delete "
+                r"C:\ProgramData\FleetManagerAgent\machine-id on this PC and restart the FleetManagerAgent service."
+            ),
+        )
     if host is None and payload.hostname:
         host = db.execute(
             select(Host).where(Host.agent_id.is_(None), Host.hostname == payload.hostname)

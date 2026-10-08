@@ -9,7 +9,9 @@ from schemas.agent import (
     AgentRegisterRequest,
     AgentSoftware,
 )
-from services.agent_auth import hash_agent_token, issue_agent_token, verify_agent_token
+from datetime import datetime, timedelta, timezone
+
+from services.agent_auth import CLONE_GUARD_WINDOW, hash_agent_token, is_machine_id_clone, issue_agent_token, verify_agent_token
 
 
 class AgentApiContractTests(unittest.TestCase):
@@ -91,6 +93,28 @@ class AgentApiContractTests(unittest.TestCase):
         )
         self.assertEqual(payload.ssh_login, r"rtf\s.u.mirzagitov")
         self.assertEqual(payload.ssh_port, 5022)
+
+
+class MachineIdCloneGuardTests(unittest.TestCase):
+    """PCs deployed from one image without sysprep can share the agent machine-id."""
+
+    now = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+
+    def test_other_pc_with_the_id_of_a_reporting_host_is_a_clone(self):
+        self.assertTrue(is_machine_id_clone("SU5-E302-01", self.now - timedelta(minutes=3), "SU5-E302-02", self.now))
+
+    def test_same_pc_re_registering_is_allowed(self):
+        # NetBIOS-имя и FQDN, разный регистр — это тот же ПК.
+        self.assertFalse(is_machine_id_clone("su5-e302-01.at.urfu.ru", self.now - timedelta(minutes=3), "SU5-E302-01", self.now))
+
+    def test_host_that_went_quiet_can_be_taken_over(self):
+        last_seen = self.now - CLONE_GUARD_WINDOW - timedelta(seconds=1)
+        self.assertFalse(is_machine_id_clone("SU5-E302-01", last_seen, "SU5-E302-02", self.now))
+
+    def test_host_without_heartbeat_or_names_is_not_blocked(self):
+        self.assertFalse(is_machine_id_clone("SU5-E302-01", None, "SU5-E302-02", self.now))
+        self.assertFalse(is_machine_id_clone(None, self.now, "SU5-E302-02", self.now))
+        self.assertFalse(is_machine_id_clone("SU5-E302-01", self.now, None, self.now))
 
 
 if __name__ == "__main__":
