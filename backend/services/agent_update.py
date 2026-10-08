@@ -1,7 +1,7 @@
 """Проверка версии и удалённое обновление FleetManager Agent на хостах.
 
 Обе операции идут по тому же каналу, что и остальная автоматизация хостов:
-ansible.builtin.raw + PowerShell по SSH (порт 5022, ключ из Key Store).
+ansible.builtin.raw + PowerShell по SSH (порт хоста host.ssh_port, обычно 22; ключ из Key Store).
 Отдельных Ansible-коллекций для Windows в образе нет, поэтому сложные скрипты
 передаются как -EncodedCommand — так удалённый shell не портит кавычки и пути.
 
