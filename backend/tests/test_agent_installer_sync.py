@@ -40,6 +40,15 @@ class AgentInstallerSyncTests(unittest.TestCase):
         self.assertFalse(result["updated"])
         download.assert_not_called()
 
+    def test_reports_unwritable_share_instead_of_raising(self):
+        with patch("services.agent_installer_sync._latest_release", return_value=self._release()), \
+             patch("services.agent_installer_sync._download_asset", side_effect=OSError(30, "Read-only file system")):
+            result = sync_agent_installer()
+
+        self.assertFalse(result["updated"])
+        self.assertIn("Read-only file system", result["reason"])
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, VERSION_SIDECAR)))
+
     def test_reports_missing_asset(self):
         with patch("services.agent_installer_sync._latest_release", return_value=self._release(with_asset=False)), \
              patch("services.agent_installer_sync._download_asset") as download:

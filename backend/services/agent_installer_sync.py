@@ -63,14 +63,20 @@ def sync_agent_installer() -> dict:
         return {"updated": False, "reason": "Уже актуальная версия", "version": tag}
 
     dest = os.path.join(soft_dir, INSTALLER_FILENAME)
-    _download_asset(asset["browser_download_url"], dest)
-
-    with open(os.path.join(soft_dir, VERSION_SIDECAR), "w", encoding="utf-8") as f:
-        f.write(tag)
+    try:
+        _download_asset(asset["browser_download_url"], dest)
+        with open(os.path.join(soft_dir, VERSION_SIDECAR), "w", encoding="utf-8") as f:
+            f.write(tag)
+    except (urllib.error.URLError, TimeoutError) as exc:
+        return {"updated": False, "reason": f"Не удалось скачать установщик: {exc}", "version": tag}
+    except OSError as exc:
+        # Например, папка смонтирована только на чтение в контейнере, где
+        # выполняется задача, — без этого ошибка терялась в логах celery.
+        return {"updated": False, "reason": f"Не удалось сохранить установщик в {soft_dir}: {exc}", "version": tag}
 
     return {"updated": True, "version": tag}
 
 
 @celery_app.task(name="services.agent_installer_sync.sync_agent_installer_task")
 def sync_agent_installer_task():
-    sync_agent_installer()
+    return sync_agent_installer()

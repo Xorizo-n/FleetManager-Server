@@ -93,7 +93,9 @@ services:
     volumes:
       - ansible_data:/app/ansible_data
       - ./ansible:/app/ansible:ro
-      - ${SOFT_SHARE_DIR:-/mnt/soft-share}:/mnt/soft-share:ro
+      # Без :ro — почасовая задача sync-agent-installer выполняется именно в этом
+      # воркере и пишет сюда FleetManagerAgent-Setup.exe и его .version.
+      - ${SOFT_SHARE_DIR:-/mnt/soft-share}:/mnt/soft-share
     command: celery -A celery_app.celery_app worker --loglevel=info --concurrency=4
 
   celery-beat:
