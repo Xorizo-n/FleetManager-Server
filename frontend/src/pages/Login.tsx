@@ -38,6 +38,13 @@ export default function Login() {
       }
 
       const { data } = await apiClient.post("/auth/login", { username, password });
+      // Сервер отдаёт токены сразу, когда второй фактор отключён настройкой TOTP_REQUIRED.
+      if (data.status === "ok") {
+        setTokens(data.access_token, data.refresh_token);
+        await refreshUser();
+        navigate("/");
+        return;
+      }
       if (data.status === "totp_setup_required") {
         setStep({
           name: "totp_setup",

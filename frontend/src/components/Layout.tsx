@@ -17,6 +17,7 @@ const NAV_ITEMS: { to: string; label: string; end?: boolean; roles?: UserRole[] 
 const ADMIN_ITEMS: { to: string; label: string }[] = [
   { to: "/users", label: "Пользователи" },
   { to: "/tokens", label: "Токены агентов" },
+  { to: "/installers", label: "Установщики" },
 ];
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>

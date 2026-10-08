@@ -158,8 +158,36 @@ def run_playbook_task(self, task_run_id: str):
         )
 
         expected_hosts = {str(host_id) for host_id in task_run.host_ids}
+        # ansible-runner может вернуть rc=0, даже если процесс оборвался раньше
+        # времени (например, контроллер упёрся в лимит ресурсов и
+        # ansible-playbook был убит на полпути) - тогда result.status не
+        # 'successful'. Одного rc для этого недостаточно, из-за чего статус
+        # "success" мог выставляться на прогон, который по факту ничего не
+        # доделал (см. деплой образов R-411 12-14.09).
+        #
+        # Проверяем по тексту "PLAY RECAP" в самом логе, а не по наличию
+        # структурного события playbook_on_stats в result.events - на очень
+        # длинных прогонах (десятки минут, много событий) это событие иногда
+        # не попадает в постфактум прочитанный result.events из-за гонки при
+        # финализации артефактов ansible-runner, хотя recap реально был
+        # напечатан и прогон реально закончился штатно (проверено вживую:
+        # файлы на дисках хостов были на месте при таком расхождении).
+        has_final_recap = "PLAY RECAP" in (task_run.log_output or "")
         if result.rc != 0:
             task_run.status = TaskStatus.failed
+        elif result.status != "successful":
+            task_run.status = TaskStatus.failed
+            task_run.log_output = (task_run.log_output or "") + (
+                f"\n[ERROR] ansible-runner сообщил статус '{result.status}' при rc=0 - "
+                "похоже, прогон оборвался раньше времени. Результат недостоверен."
+            )
+        elif not has_final_recap:
+            task_run.status = TaskStatus.failed
+            task_run.log_output = (task_run.log_output or "") + (
+                "\n[ERROR] В логе не найден финальный PLAY RECAP - похоже, процесс "
+                "оборвался раньше времени, не все плеи/хосты обработаны. "
+                "Результат недостоверен, нужен повторный прогон."
+            )
         elif not playbook_matched_hosts(result, expected_hosts, observed_hosts):
             task_run.status = TaskStatus.failed
             task_run.log_output = (task_run.log_output or "") + "\n[ERROR] Playbook matched no hosts."

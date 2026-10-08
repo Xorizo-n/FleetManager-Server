@@ -24,6 +24,7 @@ app.include_router(dashboard.router)
 app.include_router(users.router)
 app.include_router(installers.router)
 app.include_router(agent.router)
+app.include_router(agent.router, prefix="/api")
 app.include_router(hardware.router)
 
 

@@ -21,6 +21,10 @@ class Settings(BaseSettings):
 
     totp_issuer_name: str = "FleetManager"
 
+    # Второй фактор. Временно выключается на период отладки платформы
+    # (TOTP_REQUIRED=false в .env). Обязателен к возврату в true.
+    totp_required: bool = True
+
     # Ansible
     ansible_playbooks_repo_dir: str = "/app/ansible_data/playbooks_repo"
     ansible_private_key_dir: str = "/app/ansible_data/keys"

@@ -1,5 +1,21 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, ArrowUpCircle, CheckSquare, Download, Filter, FolderPlus, Plus, RefreshCw, Trash2, Upload, X, XCircle } from "lucide-react";
+import {
+  Activity,
+  ArrowUpCircle,
+  CheckSquare,
+  ChevronDown,
+  ChevronRight,
+  Download,
+  Filter,
+  FolderPlus,
+  Plus,
+  RefreshCw,
+  Square,
+  Trash2,
+  Upload,
+  X,
+  XCircle,
+} from "lucide-react";
 import { apiClient, getAccessToken } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import Badge from "../components/ui/Badge";
@@ -59,6 +75,18 @@ interface AgentVersionOverview {
 const OS_OPTIONS = ["windows_10", "windows_11", "windows_server"];
 const STATUS_OPTIONS = ["online", "offline", "unknown"];
 const NO_GROUP = "__none__";
+const NO_GROUP_TARGET = "__none__";
+const NO_GROUP_LABEL = "Без группы";
+
+const OS_LABELS: Record<string, string> = {
+  windows_10: "Windows 10",
+  windows_11: "Windows 11",
+  windows_server: "Windows Server",
+};
+
+function osLabel(os: string) {
+  return OS_LABELS[os] ?? os;
+}
 
 const AGENT_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: "with", label: "С агентом" },
@@ -104,6 +132,26 @@ const VERSION_TONE: Record<string, "success" | "warning" | "info" | "neutral"> =
   no_agent: "neutral",
 };
 
+function relativeTime(iso: string | null): string {
+  if (!iso) return "никогда";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0) return "только что";
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return "только что";
+  if (min < 60) return `${min} мин назад`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} ч назад`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day} дн назад`;
+  return new Date(iso).toLocaleDateString();
+}
+
+interface GroupSection {
+  key: string;
+  name: string;
+  hosts: Host[];
+}
+
 export default function Hosts() {
   const { user } = useAuth();
   const canEdit = user?.role === "admin" || user?.role === "operator";
@@ -131,6 +179,7 @@ export default function Hosts() {
   const [agentTaskTitle, setAgentTaskTitle] = useState("");
   const [agentError, setAgentError] = useState<string | null>(null);
   const [agentBusy, setAgentBusy] = useState<"scan" | "update" | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [form, setForm] = useState({
@@ -219,27 +268,51 @@ export default function Hosts() {
     setSelectedHostIds(allSelected ? [] : visibleIds);
   }
 
+  function toggleGroupSelection(sectionHosts: Host[]) {
+    const ids = sectionHosts.map((h) => h.id);
+    const allSelected = ids.length > 0 && ids.every((id) => selectedHostIds.includes(id));
+    setSelectedHostIds((prev) => {
+      if (allSelected) return prev.filter((id) => !ids.includes(id));
+      const merged = new Set(prev);
+      ids.forEach((id) => merged.add(id));
+      return [...merged];
+    });
+  }
+
+  function toggleGroupCollapsed(key: string) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   async function assignSelectedHosts() {
     if (selectedHostIds.length === 0) return;
     const groupName = newGroupName.trim();
-    if (!groupTarget && !groupName) {
-      setGroupError("Выберите существующую группу или укажите имя новой");
+    if (groupTarget !== NO_GROUP_TARGET && !groupTarget && !groupName) {
+      setGroupError("Выберите существующую группу, «Без группы» или укажите имя новой");
       return;
     }
     setGroupError(null);
     setGroupSaving(true);
     try {
-      await apiClient.post("/hosts/groups/assign", {
-        host_ids: selectedHostIds,
-        ...(groupTarget ? { group_id: groupTarget } : { group_name: groupName }),
-      });
+      if (groupTarget === NO_GROUP_TARGET) {
+        await apiClient.post("/hosts/groups/unassign", { host_ids: selectedHostIds });
+      } else {
+        await apiClient.post("/hosts/groups/assign", {
+          host_ids: selectedHostIds,
+          ...(groupTarget ? { group_id: groupTarget } : { group_name: groupName }),
+        });
+      }
       await Promise.all([loadGroups(), loadHosts()]);
       setSelectedHostIds([]);
       setShowGroupPanel(false);
       setGroupTarget("");
       setNewGroupName("");
     } catch (err: any) {
-      setGroupError(err.response?.data?.detail || "Не удалось добавить хосты в группу");
+      setGroupError(err.response?.data?.detail || "Не удалось изменить группу хостов");
     } finally {
       setGroupSaving(false);
     }
@@ -352,6 +425,43 @@ export default function Hosts() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hosts, filters, agentVersions]);
 
+  // Группировка видимого (уже отфильтрованного) списка по комнатам —
+  // группы существуют именно для этого, таблица должна их отражать, а не
+  // притворяться плоским списком.
+  const sections = useMemo<GroupSection[]>(() => {
+    const byGroup = new Map<string, Host[]>();
+    for (const h of filteredHosts) {
+      const key = h.group_id ?? NO_GROUP;
+      if (!byGroup.has(key)) byGroup.set(key, []);
+      byGroup.get(key)!.push(h);
+    }
+    const sortByName = (a: Host, b: Host) => (a.hostname || a.ip_address || "").localeCompare(b.hostname || b.ip_address || "", "ru");
+
+    const result: GroupSection[] = [];
+    const sortedGroups = [...groups].sort((a, b) => a.name.localeCompare(b.name, "ru"));
+    for (const g of sortedGroups) {
+      const list = byGroup.get(g.id);
+      if (list && list.length > 0) result.push({ key: g.id, name: g.name, hosts: [...list].sort(sortByName) });
+    }
+    const ungrouped = byGroup.get(NO_GROUP);
+    if (ungrouped && ungrouped.length > 0) {
+      result.push({ key: NO_GROUP, name: NO_GROUP_LABEL, hosts: [...ungrouped].sort(sortByName) });
+    }
+    return result;
+  }, [filteredHosts, groups]);
+
+  const overallStats = useMemo(() => {
+    let online = 0;
+    let offline = 0;
+    let withAgent = 0;
+    for (const h of hosts) {
+      if (h.status === "online") online += 1;
+      else if (h.status === "offline") offline += 1;
+      if (h.has_agent) withAgent += 1;
+    }
+    return { total: hosts.length, online, offline, withAgent };
+  }, [hosts]);
+
   const activeFilterCount = Object.values(filters).filter((v) => v !== "").length;
   const filtersActive = activeFilterCount > 0;
 
@@ -387,9 +497,8 @@ export default function Hosts() {
       });
   }
 
-  function groupName(id: string | null) {
-    return groups.find((g) => g.id === id)?.name || "—";
-  }
+  const visibleCount = filteredHosts.length;
+  const allVisibleSelected = visibleCount > 0 && filteredHosts.every((h) => selectedHostIds.includes(h.id));
 
   return (
     <div className="animate-fade-in space-y-4">
@@ -400,7 +509,7 @@ export default function Hosts() {
             variant={filtersActive ? "primary" : "secondary"}
             size="sm"
             onClick={() => setShowFilters((v) => !v)}
-            title={showFilters ? "Скрыть фильтры" : "Показать фильтры по столбцам"}
+            title={showFilters ? "Скрыть фильтры" : "Показать фильтры"}
           >
             <Filter className="h-3.5 w-3.5" />
             Фильтры{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
@@ -424,62 +533,39 @@ export default function Hosts() {
                 <Plus className="h-3.5 w-3.5" />
                 Добавить хост
               </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={selectedHostIds.length === 0}
-                onClick={() => { setShowGroupPanel((value) => !value); setGroupError(null); }}
-              >
-                <FolderPlus className="h-3.5 w-3.5" />
-                В группу ({selectedHostIds.length})
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                loading={agentBusy === "scan"}
-                onClick={() => startAgentTask(
-                  "scan",
-                  selectedAgentHostIds(),
-                  selectedAgentHostIds().length ? "Проверка версий агента на выбранных хостах" : "Проверка версий агента на всех хостах",
-                )}
-                title="Опросить хосты по SSH и обновить установленные версии агента"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-                Проверить версии агента
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={selectedAgentHostIds().length === 0}
-                loading={agentBusy === "update"}
-                onClick={() => startAgentTask(
-                  "update",
-                  selectedAgentHostIds(),
-                  `Обновление агента (${selectedAgentHostIds().length} хост(ов))`,
-                )}
-                title={
-                  agentVersions?.installer_present
-                    ? `Установить версию ${agentVersions.available_version ?? "из папки установочников"}`
-                    : "Установщик агента ещё не синхронизирован с сервером"
-                }
-              >
-                <ArrowUpCircle className="h-3.5 w-3.5" />
-                Обновить агент ({selectedAgentHostIds().length})
-              </Button>
             </>
           )}
         </div>
       </div>
 
-      {agentVersions && (
-        <p className="text-sm text-muted-foreground">
-          Доступная версия агента: <span className="font-mono text-foreground">{agentVersions.available_version ?? "неизвестна"}</span>
-          {" · "}актуальных: {agentVersions.up_to_date}
-          {" · "}устаревших: {agentVersions.outdated}
-          {" · "}без данных: {agentVersions.unknown}
-          {" · "}всего с агентом: {agentVersions.total_agents}
-        </p>
-      )}
+      {/* Компактная сводка — заменяет одну плотную строку текста набором
+          читаемых с одного взгляда чисел. */}
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-xl border border-border bg-surface px-4 py-2.5 text-sm shadow-panel">
+        <span className="font-semibold text-foreground tabular-nums">{overallStats.total} хостов</span>
+        <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+          <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500 dark:bg-emerald-400" />
+          online <b className="text-foreground tabular-nums">{overallStats.online}</b>
+        </span>
+        <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+          <span className="h-2 w-2 shrink-0 rounded-full bg-rose-500 dark:bg-rose-400" />
+          offline <b className="text-foreground tabular-nums">{overallStats.offline}</b>
+        </span>
+        <span className="hidden text-border sm:inline">·</span>
+        <span className="text-muted-foreground">
+          с агентом <b className="text-foreground tabular-nums">{overallStats.withAgent}</b>
+        </span>
+        {agentVersions && (
+          <span className="text-muted-foreground">
+            актуальных <b className="text-emerald-600 dark:text-emerald-400 tabular-nums">{agentVersions.up_to_date}</b>
+            {" · "}устаревших <b className="text-amber-600 dark:text-amber-400 tabular-nums">{agentVersions.outdated}</b>
+          </span>
+        )}
+        {agentVersions?.available_version && (
+          <span className="ml-auto text-xs text-muted-foreground">
+            версия агента: <span className="font-mono text-foreground">{agentVersions.available_version}</span>
+          </span>
+        )}
+      </div>
 
       {importResult && <p className="text-sm text-muted-foreground">{importResult}</p>}
 
@@ -496,7 +582,7 @@ export default function Hosts() {
           <div>
             <label htmlFor="host-os" className="field-label">ОС</label>
             <select id="host-os" value={form.os} onChange={(e) => setForm({ ...form, os: e.target.value })} className="input-base">
-              {OS_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+              {OS_OPTIONS.map((o) => <option key={o} value={o}>{osLabel(o)}</option>)}
             </select>
           </div>
           <div>
@@ -522,11 +608,146 @@ export default function Hosts() {
         </form>
       )}
 
+      {showFilters && (
+        <section className="surface-panel animate-slide-up">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="w-40">
+              <label className="field-label">Hostname</label>
+              <input
+                value={filters.hostname}
+                onChange={(e) => updateFilter("hostname", e.target.value)}
+                className="input-base"
+                placeholder="Поиск…"
+              />
+            </div>
+            <div className="w-40">
+              <label className="field-label">IP</label>
+              <input
+                value={filters.ip}
+                onChange={(e) => updateFilter("ip", e.target.value)}
+                className="input-base font-mono"
+                placeholder="Поиск…"
+              />
+            </div>
+            <div className="w-40">
+              <label className="field-label">Группа</label>
+              <select value={filters.group} onChange={(e) => updateFilter("group", e.target.value)} className="input-base">
+                <option value="">Все</option>
+                <option value={NO_GROUP}>{NO_GROUP_LABEL}</option>
+                {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+              </select>
+            </div>
+            <div className="w-36">
+              <label className="field-label">ОС</label>
+              <select value={filters.os} onChange={(e) => updateFilter("os", e.target.value)} className="input-base">
+                <option value="">Все</option>
+                {OS_OPTIONS.map((o) => <option key={o} value={o}>{osLabel(o)}</option>)}
+              </select>
+            </div>
+            <div className="w-32">
+              <label className="field-label">Статус</label>
+              <select value={filters.status} onChange={(e) => updateFilter("status", e.target.value)} className="input-base">
+                <option value="">Все</option>
+                {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div className="w-40">
+              <label className="field-label">Агент</label>
+              <select value={filters.agent} onChange={(e) => updateFilter("agent", e.target.value)} className="input-base">
+                <option value="">Все</option>
+                {AGENT_FILTER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+            <div className="w-40">
+              <label className="field-label">Проверен</label>
+              <select value={filters.checked} onChange={(e) => updateFilter("checked", e.target.value)} className="input-base">
+                <option value="">Все</option>
+                {CHECKED_FILTER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+            {filtersActive && (
+              <button
+                onClick={() => setFilters(EMPTY_FILTERS)}
+                className="btn-ghost inline-flex items-center gap-1.5 px-2.5 py-2 text-xs"
+                title="Сбросить фильтры"
+              >
+                <XCircle className="h-3.5 w-3.5" />
+                Сбросить
+              </button>
+            )}
+            {canEdit && visibleCount > 0 && (
+              <button
+                onClick={toggleAllVisibleHosts}
+                className="btn-ghost ml-auto inline-flex items-center gap-1.5 px-2.5 py-2 text-xs"
+                title="Выбрать все хосты, подходящие под текущие фильтры"
+              >
+                {allVisibleSelected ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+                {allVisibleSelected ? "Снять выбор со всех" : `Выбрать все видимые (${visibleCount})`}
+              </button>
+            )}
+          </div>
+        </section>
+      )}
+
+      {canEdit && selectedHostIds.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/5 px-4 py-2.5 text-sm">
+          <CheckSquare className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+          <span className="font-medium text-foreground">Выбрано: {selectedHostIds.length}</span>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => { setShowGroupPanel((value) => !value); setGroupError(null); }}
+            >
+              <FolderPlus className="h-3.5 w-3.5" />
+              Группа
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={agentBusy === "scan"}
+              onClick={() => startAgentTask(
+                "scan",
+                selectedAgentHostIds(),
+                selectedAgentHostIds().length ? "Проверка версий агента на выбранных хостах" : "Проверка версий агента на всех хостах",
+              )}
+              title="Опросить хосты по SSH и обновить установленные версии агента"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Версии агента
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={selectedAgentHostIds().length === 0}
+              loading={agentBusy === "update"}
+              onClick={() => startAgentTask(
+                "update",
+                selectedAgentHostIds(),
+                `Обновление агента (${selectedAgentHostIds().length} хост(ов))`,
+              )}
+              title={
+                agentVersions?.installer_present
+                  ? `Установить версию ${agentVersions.available_version ?? "из папки установочников"}`
+                  : "Установщик агента ещё не синхронизирован с сервером"
+              }
+            >
+              <ArrowUpCircle className="h-3.5 w-3.5" />
+              Обновить агент ({selectedAgentHostIds().length})
+            </Button>
+            <button className="btn-ghost btn-sm" onClick={() => setSelectedHostIds([])}>
+              <X className="h-3.5 w-3.5" />
+              Снять выбор
+            </button>
+          </div>
+        </div>
+      )}
+
       {showGroupPanel && canEdit && (
         <section className="surface-panel animate-slide-up space-y-3">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-base font-semibold text-foreground">Добавить хосты в группу</h2>
+              <h2 className="text-base font-semibold text-foreground">Изменить группу</h2>
               <p className="text-sm text-muted-foreground">Выбрано хостов: {selectedHostIds.length}</p>
             </div>
             <button className="btn-ghost p-1" onClick={() => setShowGroupPanel(false)} aria-label="Закрыть выбор группы">
@@ -538,20 +759,21 @@ export default function Hosts() {
               <label className="field-label">Существующая группа</label>
               <select value={groupTarget} onChange={(event) => { setGroupTarget(event.target.value); setNewGroupName(""); }} className="input-base">
                 <option value="">Создать новую группу</option>
+                <option value={NO_GROUP_TARGET}>{NO_GROUP_LABEL} (убрать из текущей)</option>
                 {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
               </select>
             </div>
             {!groupTarget && (
               <div>
                 <label className="field-label">Имя новой группы</label>
-                <input value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} className="input-base" placeholder="Например, Бухгалтерия" />
+                <input value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} className="input-base" placeholder="Например, MR32-311" />
               </div>
             )}
           </div>
           {groupError && <p className="text-sm text-red-500">{groupError}</p>}
           <Button onClick={assignSelectedHosts} loading={groupSaving}>
             <CheckSquare className="h-4 w-4" />
-            Назначить выбранные хосты
+            {groupTarget === NO_GROUP_TARGET ? "Убрать выбранные хосты из группы" : "Назначить выбранные хосты"}
           </Button>
         </section>
       )}
@@ -619,195 +841,155 @@ export default function Hosts() {
         </section>
       )}
 
-      <div className="table-shell">
-        <table className="table-base">
-          <thead>
-            <tr>
-              {canEdit && (
-                <th className="w-10">
-                  <input
-                    type="checkbox"
-                    checked={filteredHosts.length > 0 && filteredHosts.every((host) => selectedHostIds.includes(host.id))}
-                    onChange={toggleAllVisibleHosts}
-                    aria-label="Выбрать все хосты"
-                  />
-                </th>
-              )}
-              <th>Hostname</th>
-              <th>IP</th>
-              <th>Группа</th>
-              <th>OS</th>
-              <th>Статус</th>
-              <th>Агент</th>
-              <th>Проверен</th>
-              {canEdit && <th className="text-right">Действия</th>}
-            </tr>
-            {showFilters && (
-            <tr className="bg-muted/30">
-              {canEdit && <th className="w-10" />}
-              <th className="p-1.5">
-                <input
-                  value={filters.hostname}
-                  onChange={(e) => updateFilter("hostname", e.target.value)}
-                  className="input-base h-8 py-1 text-xs font-normal"
-                  placeholder="Поиск…"
-                  aria-label="Фильтр по hostname"
-                />
-              </th>
-              <th className="p-1.5">
-                <input
-                  value={filters.ip}
-                  onChange={(e) => updateFilter("ip", e.target.value)}
-                  className="input-base h-8 py-1 text-xs font-normal font-mono"
-                  placeholder="Поиск…"
-                  aria-label="Фильтр по IP"
-                />
-              </th>
-              <th className="p-1.5">
-                <select
-                  value={filters.group}
-                  onChange={(e) => updateFilter("group", e.target.value)}
-                  className="input-base h-8 py-1 text-xs font-normal"
-                  aria-label="Фильтр по группе"
+      {/* Хосты сгруппированы по комнатам — ради этого группы и существуют.
+          Каждая секция сворачивается и несёт мини-сводку online/offline. */}
+      <div className="space-y-3">
+        {sections.map((section) => {
+          const collapsed = collapsedGroups.has(section.key);
+          const online = section.hosts.filter((h) => h.status === "online").length;
+          const offline = section.hosts.filter((h) => h.status === "offline").length;
+          const sectionIds = section.hosts.map((h) => h.id);
+          const allSelected = sectionIds.length > 0 && sectionIds.every((id) => selectedHostIds.includes(id));
+          const someSelected = !allSelected && sectionIds.some((id) => selectedHostIds.includes(id));
+
+          return (
+            <div key={section.key} className="table-shell">
+              <div className="flex items-center gap-3 border-b border-border bg-muted/40 px-4 py-2.5">
+                <button
+                  onClick={() => toggleGroupCollapsed(section.key)}
+                  className="flex items-center gap-2 text-left"
+                  aria-expanded={!collapsed}
+                  aria-label={collapsed ? `Развернуть ${section.name}` : `Свернуть ${section.name}`}
                 >
-                  <option value="">Все</option>
-                  <option value={NO_GROUP}>Без группы</option>
-                  {groups.map((g) => (
-                    <option key={g.id} value={g.id}>{g.name}</option>
-                  ))}
-                </select>
-              </th>
-              <th className="p-1.5">
-                <select
-                  value={filters.os}
-                  onChange={(e) => updateFilter("os", e.target.value)}
-                  className="input-base h-8 py-1 text-xs font-normal"
-                  aria-label="Фильтр по ОС"
-                >
-                  <option value="">Все</option>
-                  {OS_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
-                </select>
-              </th>
-              <th className="p-1.5">
-                <select
-                  value={filters.status}
-                  onChange={(e) => updateFilter("status", e.target.value)}
-                  className="input-base h-8 py-1 text-xs font-normal"
-                  aria-label="Фильтр по статусу"
-                >
-                  <option value="">Все</option>
-                  {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </th>
-              <th className="p-1.5">
-                <select
-                  value={filters.agent}
-                  onChange={(e) => updateFilter("agent", e.target.value)}
-                  className="input-base h-8 py-1 text-xs font-normal"
-                  aria-label="Фильтр по агенту"
-                >
-                  <option value="">Все</option>
-                  {AGENT_FILTER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-              </th>
-              <th className="p-1.5">
-                <select
-                  value={filters.checked}
-                  onChange={(e) => updateFilter("checked", e.target.value)}
-                  className="input-base h-8 py-1 text-xs font-normal"
-                  aria-label="Фильтр по дате проверки"
-                >
-                  <option value="">Все</option>
-                  {CHECKED_FILTER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-              </th>
-              {canEdit && (
-                <th className="p-1.5 text-right">
-                  {filtersActive && (
-                    <button
-                      onClick={() => setFilters(EMPTY_FILTERS)}
-                      className="btn-ghost inline-flex items-center gap-1 px-2 py-1 text-xs"
-                      title="Сбросить фильтры"
-                    >
-                      <XCircle className="h-3.5 w-3.5" />
-                      Сбросить
-                    </button>
-                  )}
-                </th>
-              )}
-            </tr>
-            )}
-          </thead>
-          <tbody>
-            {filteredHosts.map((h) => (
-              <tr key={h.id}>
-                {canEdit && (
-                  <td className="w-10">
-                    <input
-                      type="checkbox"
-                      checked={selectedHostIds.includes(h.id)}
-                      onChange={() => toggleHostSelection(h.id)}
-                      aria-label={`Выбрать ${h.hostname || h.ip_address || h.id}`}
-                    />
-                  </td>
-                )}
-                <td className="font-medium text-foreground">{h.hostname || "—"}</td>
-                <td className="font-mono text-foreground/80">{h.ip_address || "—"}</td>
-                <td>{groupName(h.group_id)}</td>
-                <td>{h.os}</td>
-                <td><Badge status={h.status} /></td>
-                <td>
-                  {h.has_agent ? (
-                    <div className="flex flex-col gap-1">
-                      <span className="font-mono text-foreground/80">
-                        {agentVersionOf(h.id)?.agent_version ?? h.agent_version ?? "—"}
-                      </span>
-                      <Badge
-                        status={agentVersionOf(h.id)?.version_status ?? "unknown"}
-                        tone={VERSION_TONE[agentVersionOf(h.id)?.version_status ?? "unknown"]}
-                      >
-                        {VERSION_LABEL[agentVersionOf(h.id)?.version_status ?? "unknown"]}
-                      </Badge>
-                    </div>
+                  {collapsed ? (
+                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
                   ) : (
-                    <span className="text-subtle">без агента</span>
+                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
                   )}
-                </td>
-                <td className="text-muted-foreground">
-                  {h.last_checked_at ? new Date(h.last_checked_at).toLocaleString() : "—"}
-                </td>
-                {canEdit && (
-                  <td className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => startDiagnostic(h)}
-                      loading={diagnosticStarting && diagnosticHost?.id === h.id}
-                      className="mr-2"
-                    >
-                      <Activity className="h-3.5 w-3.5" />
-                      Диагностика
-                    </Button>
-                    <button
-                      onClick={() => handleDelete(h.id)}
-                      className="action-danger"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      Удалить
-                    </button>
-                  </td>
+                  <span className="font-semibold text-foreground">{section.name}</span>
+                </button>
+                <span className="text-xs text-muted-foreground tabular-nums">{section.hosts.length} ПК</span>
+                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400" />
+                  {online}
+                </span>
+                {offline > 0 && (
+                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                    <span className="h-1.5 w-1.5 rounded-full bg-rose-500 dark:bg-rose-400" />
+                    {offline}
+                  </span>
                 )}
-              </tr>
-            ))}
-            {filteredHosts.length === 0 && (
-              <tr>
-                <td colSpan={canEdit ? 9 : 7} className="px-3 py-8 text-center text-subtle">
-                  {hosts.length === 0 ? "Хостов нет" : "Ничего не найдено по заданным фильтрам"}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+                {canEdit && (
+                  <button
+                    onClick={() => toggleGroupSelection(section.hosts)}
+                    className="btn-ghost ml-auto inline-flex items-center gap-1.5 px-2 py-1 text-xs"
+                    title="Выбрать все хосты в этой группе"
+                  >
+                    {allSelected ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+                    {someSelected ? "Выбрать остальные" : allSelected ? "Снять выбор" : "Выбрать группу"}
+                  </button>
+                )}
+              </div>
+
+              {!collapsed && (
+                <table className="table-base">
+                  <thead>
+                    <tr>
+                      {canEdit && (
+                        <th className="w-10">
+                          <input
+                            type="checkbox"
+                            checked={allSelected}
+                            onChange={() => toggleGroupSelection(section.hosts)}
+                            aria-label={`Выбрать все хосты в группе ${section.name}`}
+                          />
+                        </th>
+                      )}
+                      <th>Hostname</th>
+                      <th>IP</th>
+                      <th>OS</th>
+                      <th>Статус</th>
+                      <th>Агент</th>
+                      <th>Проверен</th>
+                      {canEdit && <th className="text-right">Действия</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {section.hosts.map((h) => (
+                      <tr key={h.id}>
+                        {canEdit && (
+                          <td className="w-10">
+                            <input
+                              type="checkbox"
+                              checked={selectedHostIds.includes(h.id)}
+                              onChange={() => toggleHostSelection(h.id)}
+                              aria-label={`Выбрать ${h.hostname || h.ip_address || h.id}`}
+                            />
+                          </td>
+                        )}
+                        <td className="font-medium text-foreground">{h.hostname || "—"}</td>
+                        <td className="font-mono text-foreground/80">{h.ip_address || "—"}</td>
+                        <td className="text-muted-foreground">{osLabel(h.os)}</td>
+                        <td><Badge status={h.status} /></td>
+                        <td>
+                          {h.has_agent ? (
+                            <div className="flex flex-col gap-1">
+                              <span className="font-mono text-xs text-foreground/80">
+                                {agentVersionOf(h.id)?.agent_version ?? h.agent_version ?? "—"}
+                              </span>
+                              <Badge
+                                status={agentVersionOf(h.id)?.version_status ?? "unknown"}
+                                tone={VERSION_TONE[agentVersionOf(h.id)?.version_status ?? "unknown"]}
+                              >
+                                {VERSION_LABEL[agentVersionOf(h.id)?.version_status ?? "unknown"]}
+                              </Badge>
+                            </div>
+                          ) : (
+                            <span className="text-subtle">без агента</span>
+                          )}
+                        </td>
+                        <td className="text-muted-foreground" title={h.last_checked_at ? new Date(h.last_checked_at).toLocaleString() : undefined}>
+                          {relativeTime(h.last_checked_at)}
+                        </td>
+                        {canEdit && (
+                          <td className="text-right">
+                            <div className="inline-flex items-center gap-1">
+                              <button
+                                onClick={() => startDiagnostic(h)}
+                                disabled={diagnosticStarting && diagnosticHost?.id === h.id}
+                                className="action-icon"
+                                title="Запустить диагностику подключения"
+                                aria-label={`Диагностика ${h.hostname || h.ip_address}`}
+                              >
+                                <Activity className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDelete(h.id)}
+                                className="action-danger"
+                                title="Удалить хост"
+                                aria-label={`Удалить ${h.hostname || h.ip_address}`}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          );
+        })}
+
+        {sections.length === 0 && (
+          <div className="table-shell">
+            <p className="px-4 py-8 text-center text-subtle">
+              {hosts.length === 0 ? "Хостов нет" : "Ничего не найдено по заданным фильтрам"}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

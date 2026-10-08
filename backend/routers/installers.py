@@ -16,8 +16,8 @@ from services.audit import record_audit
 
 router = APIRouter(prefix="/installers", tags=["installers"])
 
-ALLOWED_EXTENSIONS = {".exe", ".msi", ".zip"}
-MAX_FILE_SIZE = 4 * 1024 * 1024 * 1024  # 4 GB
+ALLOWED_EXTENSIONS = {".exe", ".msi", ".zip", ".iso", ".7z", ".rar", ".gz"}
+MAX_FILE_SIZE = 16 * 1024 * 1024 * 1024  # 16 GB
 CHUNK_SIZE = 1024 * 1024
 
 
@@ -87,7 +87,7 @@ def upload_installer(
                 if size > MAX_FILE_SIZE:
                     raise HTTPException(
                         status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail="Файл больше 4 ГБ",
+                        detail="Файл больше 16 ГБ",
                     )
                 out.write(chunk)
         shutil.move(tmp_path, target)
@@ -113,7 +113,7 @@ def sync_agent_installer_endpoint(
 
 
 @router.get("/{name}/download")
-def download_installer(name: str, _: User = Depends(get_current_user)):
+def download_installer(name: str, _: User = Depends(require_roles(UserRole.admin, UserRole.operator))):
     path = _resolve_safe(name)
     if not os.path.isfile(path):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Файл не найден")

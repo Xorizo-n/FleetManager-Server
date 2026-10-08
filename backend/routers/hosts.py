@@ -19,6 +19,7 @@ from schemas.host import (
     HostGroupCreate,
     HostGroupOut,
     HostGroupAssignRequest,
+    HostGroupUnassignRequest,
     CsvImportResult,
 )
 from schemas.task import TaskRunOut
@@ -124,6 +125,26 @@ def assign_hosts_to_group(
     db.refresh(group)
     record_audit(db, user.id, "host_group.assign", f"group={group.name} hosts={len(hosts)}", request)
     return group
+
+
+@router.post("/groups/unassign", status_code=status.HTTP_200_OK)
+def unassign_hosts_from_group(
+    payload: HostGroupUnassignRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*EDITOR_ROLES)),
+):
+    hosts = db.execute(select(Host).where(Host.id.in_(payload.host_ids))).scalars().all()
+    found_ids = {host.id for host in hosts}
+    missing_ids = [host_id for host_id in payload.host_ids if host_id not in found_ids]
+    if missing_ids:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Один или несколько хостов не найдены")
+
+    for host in hosts:
+        host.group_id = None
+    db.commit()
+    record_audit(db, user.id, "host_group.unassign", f"hosts={len(hosts)}", request)
+    return {"unassigned": len(hosts)}
 
 
 @router.post("", response_model=HostOut, status_code=status.HTTP_201_CREATED)

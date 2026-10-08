@@ -72,27 +72,31 @@ export default function EnrollmentTokens() {
     }
   }
 
-  async function copyToken() {
-    if (newToken) await navigator.clipboard.writeText(newToken.raw_token);
-  }
+  const [downloading, setDownloading] = useState<string | null>(null);
 
   async function downloadInstaller(token: EnrollmentToken) {
+    setDownloading(token.id);
     try {
       const response = await apiClient.get(`/agent/enrollment-tokens/${token.id}/installer`, {
         responseType: "blob",
       });
-      const url = URL.createObjectURL(response.data as Blob);
+      const url = URL.createObjectURL(response.data);
       const a = document.createElement("a");
-      const filename = `FleetManagerAgent-${token.name.replace(/[^\w-]/g, "_")}.exe`;
       a.href = url;
-      a.download = filename;
+      a.download = `FleetManagerAgent-${token.name}.exe`;
       document.body.appendChild(a);
       a.click();
-      document.body.removeChild(a);
+      a.remove();
       URL.revokeObjectURL(url);
     } catch (err: any) {
       setError(err.response?.data?.detail || "Не удалось скачать установщик");
+    } finally {
+      setDownloading(null);
     }
+  }
+
+  async function copyToken() {
+    if (newToken) await navigator.clipboard.writeText(newToken.raw_token);
   }
 
   return (
@@ -161,7 +165,7 @@ export default function EnrollmentTokens() {
               <th>Название</th>
               <th>Срок действия</th>
               <th>Статус</th>
-              <th className="text-right">Действия</th>
+              <th className="text-right">Действие</th>
             </tr>
           </thead>
           <tbody>
@@ -184,10 +188,11 @@ export default function EnrollmentTokens() {
                     {token.installer_available && token.is_active && (
                       <button
                         type="button"
-                        className="btn-secondary btn-sm"
+                        className="action-icon"
+                        disabled={downloading === token.id}
                         onClick={() => downloadInstaller(token)}
                         aria-label={`Скачать установщик для токена ${token.name}`}
-                        title="Скачать установщик агента (.exe)"
+                        title="Скачать установщик с вшитым токеном"
                       >
                         <Download className="h-4 w-4" aria-hidden="true" />
                       </button>
