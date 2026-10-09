@@ -11,7 +11,7 @@ from models.host import Host, HostStatus, HostStatusHistory
 from models.task import TaskRun, TaskStatus
 from services.ansible_runner import build_full_inventory, run_ansible
 from services.host_diagnostic_utils import format_stage, inventory_host_key, sanitize_detail
-from services.host_target import resolve_host_target
+from services.host_target import normalize_host_address, resolve_host_target
 
 
 def _append_log(db, task: TaskRun, message: str, *, stage: str, ok: bool | None = None) -> None:
@@ -35,6 +35,27 @@ def _finish_task(db, task: TaskRun, status: TaskStatus) -> None:
 
 def _ssh_port(host: Host) -> int:
     return host.ssh_port or settings.ansible_ssh_port
+
+
+def _dns_stage(hostname: str | None, target: str) -> tuple[bool | None, str]:
+    """DNS stage of the diagnostic: (ok, message) for the log.
+
+    The connection goes to the IP address the agent reports, so a hostname the
+    server's resolver does not know (a PC from another domain's zone, e.g.
+    at.urfu.ru while the containers search rtf.ustu) is only informational.
+    The lookup error is raised only when the hostname itself is the target.
+    """
+    name = normalize_host_address(hostname)
+    if name is None:
+        return None, "skipped: no hostname, target is an IP address"
+    try:
+        addresses = socket.getaddrinfo(name, None, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        if name == target:
+            raise
+        return None, f"{name} does not resolve ({exc}); connecting by IP {target}"
+    resolved = sorted({item[4][0] for item in addresses if item[4]})
+    return True, f"resolved {len(resolved)} address(es): {', '.join(resolved)}"
 
 
 @celery_app.task(name="services.host_diagnostics.run_host_diagnostic")
@@ -63,12 +84,8 @@ def run_host_diagnostic(task_run_id: str):
         _append_log(db, task, f"target selected: {target}", stage=stage, ok=True)
 
         stage = "dns"
-        if host.hostname and host.hostname.strip():
-            addresses = socket.getaddrinfo(host.hostname.strip(), None, type=socket.SOCK_STREAM)
-            resolved = sorted({item[4][0] for item in addresses if item[4]})
-            _append_log(db, task, f"resolved {len(resolved)} address(es): {', '.join(resolved)}", stage=stage, ok=True)
-        else:
-            _append_log(db, task, "skipped: target is an IP address", stage=stage)
+        dns_ok, dns_message = _dns_stage(host.hostname, target)
+        _append_log(db, task, dns_message, stage=stage, ok=dns_ok)
 
         stage = "tcp"
         ssh_port = _ssh_port(host)
