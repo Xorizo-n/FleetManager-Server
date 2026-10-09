@@ -2,12 +2,15 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   ArrowUpCircle,
+  Building2,
   CheckSquare,
   ChevronDown,
   ChevronRight,
+  DoorOpen,
   Download,
   Filter,
   FolderPlus,
+  Layers,
   Plus,
   RefreshCw,
   Square,
@@ -149,12 +152,15 @@ function relativeTime(iso: string | null): string {
   return new Date(iso).toLocaleDateString();
 }
 
-interface GroupSection {
+// Узел дерева групп на странице: корпус > этаж > аудитория.
+interface GroupNode {
   key: string;
   name: string;
-  // Родительские группы через « › » (корпус › этаж), пусто для групп верхнего уровня
-  parents: string;
+  // ПК, лежащие прямо в этой группе (обычно только у аудитории)
   hosts: Host[];
+  children: GroupNode[];
+  // Все ПК поддерева — для сводки, выбора и сворачивания целого корпуса или этажа
+  allHosts: Host[];
 }
 
 export default function Hosts() {
@@ -423,7 +429,7 @@ export default function Hosts() {
     const options = groups
       .map((g) => {
         const path = chain(g.id).map((item) => item.name);
-        return { id: g.id, name: g.name, parents: path.slice(0, -1).join(" › "), label: path.join(" › ") };
+        return { id: g.id, name: g.name, label: path.join(" › ") };
       })
       .sort((a, b) => a.label.localeCompare(b.label, "ru", { numeric: true }));
     const descendants = (id: string): Set<string> => {
@@ -475,10 +481,9 @@ export default function Hosts() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hosts, filters, agentVersions, groupTree]);
 
-  // Группировка видимого (уже отфильтрованного) списка по комнатам —
-  // группы существуют именно для этого, таблица должна их отражать, а не
-  // притворяться плоским списком.
-  const sections = useMemo<GroupSection[]>(() => {
+  // Видимый (уже отфильтрованный) список раскладывается деревом групп:
+  // корпус > этаж > аудитория. Ветки без ПК после фильтров не показываются.
+  const groupNodes = useMemo<GroupNode[]>(() => {
     const byGroup = new Map<string, Host[]>();
     for (const h of filteredHosts) {
       const key = h.group_id ?? NO_GROUP;
@@ -486,20 +491,43 @@ export default function Hosts() {
       byGroup.get(key)!.push(h);
     }
     const sortByName = (a: Host, b: Host) => (a.hostname || a.ip_address || "").localeCompare(b.hostname || b.ip_address || "", "ru");
+    const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, "ru", { numeric: true });
 
-    const result: GroupSection[] = [];
-    for (const option of groupTree.options) {
-      const list = byGroup.get(option.id);
-      if (list && list.length > 0) {
-        result.push({ key: option.id, name: option.name, parents: option.parents, hosts: [...list].sort(sortByName) });
+    const known = new Set(groups.map((g) => g.id));
+    const childGroups = new Map<string, HostGroup[]>();
+    const roots: HostGroup[] = [];
+    for (const g of groups) {
+      if (g.parent_id && known.has(g.parent_id)) {
+        if (!childGroups.has(g.parent_id)) childGroups.set(g.parent_id, []);
+        childGroups.get(g.parent_id)!.push(g);
+      } else {
+        roots.push(g);
       }
     }
-    const ungrouped = byGroup.get(NO_GROUP);
-    if (ungrouped && ungrouped.length > 0) {
-      result.push({ key: NO_GROUP, name: NO_GROUP_LABEL, parents: "", hosts: [...ungrouped].sort(sortByName) });
+
+    const build = (group: HostGroup, seen: Set<string>): GroupNode | null => {
+      if (seen.has(group.id)) return null; // цикл в данных
+      seen.add(group.id);
+      const children = (childGroups.get(group.id) ?? [])
+        .sort(byName)
+        .map((child) => build(child, seen))
+        .filter((node): node is GroupNode => node !== null);
+      const hosts = [...(byGroup.get(group.id) ?? [])].sort(sortByName);
+      const allHosts = [...hosts, ...children.flatMap((child) => child.allHosts)];
+      return allHosts.length > 0 ? { key: group.id, name: group.name, hosts, children, allHosts } : null;
+    };
+
+    const seen = new Set<string>();
+    const result = roots
+      .sort(byName)
+      .map((g) => build(g, seen))
+      .filter((node): node is GroupNode => node !== null);
+    const ungrouped = [...(byGroup.get(NO_GROUP) ?? [])].sort(sortByName);
+    if (ungrouped.length > 0) {
+      result.push({ key: NO_GROUP, name: NO_GROUP_LABEL, hosts: ungrouped, children: [], allHosts: ungrouped });
     }
     return result;
-  }, [filteredHosts, groupTree]);
+  }, [filteredHosts, groups]);
 
   const overallStats = useMemo(() => {
     let online = 0;
@@ -550,6 +578,186 @@ export default function Hosts() {
 
   const visibleCount = filteredHosts.length;
   const allVisibleSelected = visibleCount > 0 && filteredHosts.every((h) => selectedHostIds.includes(h.id));
+
+  function renderHostTable(tableHosts: Host[], groupName: string) {
+    return (
+      <table className="table-base">
+        <thead>
+          <tr>
+            {canEdit && (
+              <th className="w-10">
+                <input
+                  type="checkbox"
+                  checked={tableHosts.length > 0 && tableHosts.every((h) => selectedHostIds.includes(h.id))}
+                  onChange={() => toggleGroupSelection(tableHosts)}
+                  aria-label={`Выбрать все хосты в группе ${groupName}`}
+                />
+              </th>
+            )}
+            <th>Hostname</th>
+            <th>IP</th>
+            <th>OS</th>
+            <th>Статус</th>
+            <th>Агент</th>
+            <th>Проверен</th>
+            {canEdit && <th className="text-right">Действия</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {tableHosts.map((h) => (
+            <tr key={h.id}>
+              {canEdit && (
+                <td className="w-10">
+                  <input
+                    type="checkbox"
+                    checked={selectedHostIds.includes(h.id)}
+                    onChange={() => toggleHostSelection(h.id)}
+                    aria-label={`Выбрать ${h.hostname || h.ip_address || h.id}`}
+                  />
+                </td>
+              )}
+              <td className="font-medium text-foreground">{h.hostname || "—"}</td>
+              <td className="font-mono text-foreground/80">{h.ip_address || "—"}</td>
+              <td className="text-muted-foreground">{osLabel(h.os)}</td>
+              <td><Badge status={h.status} /></td>
+              <td>
+                {h.has_agent ? (
+                  <div className="flex flex-col gap-1">
+                    <span className="font-mono text-xs text-foreground/80">
+                      {agentVersionOf(h.id)?.agent_version ?? h.agent_version ?? "—"}
+                    </span>
+                    <Badge
+                      status={agentVersionOf(h.id)?.version_status ?? "unknown"}
+                      tone={VERSION_TONE[agentVersionOf(h.id)?.version_status ?? "unknown"]}
+                    >
+                      {VERSION_LABEL[agentVersionOf(h.id)?.version_status ?? "unknown"]}
+                    </Badge>
+                  </div>
+                ) : (
+                  <span className="text-subtle">без агента</span>
+                )}
+              </td>
+              <td className="text-muted-foreground" title={h.last_checked_at ? new Date(h.last_checked_at).toLocaleString() : undefined}>
+                {relativeTime(h.last_checked_at)}
+              </td>
+              {canEdit && (
+                <td className="text-right">
+                  <div className="inline-flex items-center gap-1">
+                    <button
+                      onClick={() => startDiagnostic(h)}
+                      disabled={diagnosticStarting && diagnosticHost?.id === h.id}
+                      className="action-icon"
+                      title="Запустить диагностику подключения"
+                      aria-label={`Диагностика ${h.hostname || h.ip_address}`}
+                    >
+                      <Activity className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(h.id)}
+                      className="action-danger"
+                      title="Удалить хост"
+                      aria-label={`Удалить ${h.hostname || h.ip_address}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    );
+  }
+
+  // Заголовок группы любого уровня: сворачивание, сводка online/offline и
+  // выбор всех ПК поддерева (весь корпус, весь этаж или одна аудитория).
+  function renderGroupHeader(node: GroupNode, level: "building" | "floor" | "room") {
+    const collapsed = collapsedGroups.has(node.key);
+    const online = node.allHosts.filter((h) => h.status === "online").length;
+    const offline = node.allHosts.filter((h) => h.status === "offline").length;
+    const ids = node.allHosts.map((h) => h.id);
+    const allSelected = ids.length > 0 && ids.every((id) => selectedHostIds.includes(id));
+    const someSelected = !allSelected && ids.some((id) => selectedHostIds.includes(id));
+    const Icon = level === "building" ? Building2 : level === "floor" ? Layers : DoorOpen;
+
+    return (
+      <div
+        className={
+          level === "room"
+            ? "flex items-center gap-3 border-b border-border bg-muted/40 px-4 py-2.5"
+            : level === "building"
+              ? "flex items-center gap-3 rounded-lg border border-border bg-muted/60 px-4 py-3"
+              : "flex items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-2"
+        }
+      >
+        <button
+          onClick={() => toggleGroupCollapsed(node.key)}
+          className="flex items-center gap-2 text-left"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? `Развернуть ${node.name}` : `Свернуть ${node.name}`}
+        >
+          {collapsed ? (
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+          )}
+          <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className={level === "building" ? "text-base font-semibold text-foreground" : "font-semibold text-foreground"}>
+            {node.name}
+          </span>
+        </button>
+        <span className="text-xs text-muted-foreground tabular-nums">{node.allHosts.length} ПК</span>
+        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400" />
+          {online}
+        </span>
+        {offline > 0 && (
+          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+            <span className="h-1.5 w-1.5 rounded-full bg-rose-500 dark:bg-rose-400" />
+            {offline}
+          </span>
+        )}
+        {canEdit && (
+          <button
+            onClick={() => toggleGroupSelection(node.allHosts)}
+            className="btn-ghost ml-auto inline-flex items-center gap-1.5 px-2 py-1 text-xs"
+            title="Выбрать все хосты в этой группе"
+          >
+            {allSelected ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+            {someSelected ? "Выбрать остальные" : allSelected ? "Снять выбор" : "Выбрать группу"}
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  function renderGroupNode(node: GroupNode, depth: number) {
+    const collapsed = collapsedGroups.has(node.key);
+
+    // Аудитория (или любая группа без подгрупп) — карточка с таблицей ПК.
+    if (node.children.length === 0) {
+      return (
+        <div key={node.key} className="table-shell">
+          {renderGroupHeader(node, "room")}
+          {!collapsed && renderHostTable(node.hosts, node.name)}
+        </div>
+      );
+    }
+
+    // Корпус или этаж — заголовок и вложенные группы с отступом.
+    return (
+      <div key={node.key} className="space-y-3">
+        {renderGroupHeader(node, depth === 0 ? "building" : "floor")}
+        {!collapsed && (
+          <div className="ml-2 space-y-3 border-l border-border pl-4">
+            {node.hosts.length > 0 && <div className="table-shell">{renderHostTable(node.hosts, node.name)}</div>}
+            {node.children.map((child) => renderGroupNode(child, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="animate-fade-in space-y-4">
@@ -892,150 +1100,11 @@ export default function Hosts() {
         </section>
       )}
 
-      {/* Хосты сгруппированы по комнатам — ради этого группы и существуют.
-          Каждая секция сворачивается и несёт мини-сводку online/offline. */}
-      <div className="space-y-3">
-        {sections.map((section) => {
-          const collapsed = collapsedGroups.has(section.key);
-          const online = section.hosts.filter((h) => h.status === "online").length;
-          const offline = section.hosts.filter((h) => h.status === "offline").length;
-          const sectionIds = section.hosts.map((h) => h.id);
-          const allSelected = sectionIds.length > 0 && sectionIds.every((id) => selectedHostIds.includes(id));
-          const someSelected = !allSelected && sectionIds.some((id) => selectedHostIds.includes(id));
-
-          return (
-            <div key={section.key} className="table-shell">
-              <div className="flex items-center gap-3 border-b border-border bg-muted/40 px-4 py-2.5">
-                <button
-                  onClick={() => toggleGroupCollapsed(section.key)}
-                  className="flex items-center gap-2 text-left"
-                  aria-expanded={!collapsed}
-                  aria-label={collapsed ? `Развернуть ${section.name}` : `Свернуть ${section.name}`}
-                >
-                  {collapsed ? (
-                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  ) : (
-                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  )}
-                  <span className="font-semibold text-foreground">{section.name}</span>
-                  {section.parents && <span className="text-xs text-muted-foreground">{section.parents}</span>}
-                </button>
-                <span className="text-xs text-muted-foreground tabular-nums">{section.hosts.length} ПК</span>
-                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400" />
-                  {online}
-                </span>
-                {offline > 0 && (
-                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                    <span className="h-1.5 w-1.5 rounded-full bg-rose-500 dark:bg-rose-400" />
-                    {offline}
-                  </span>
-                )}
-                {canEdit && (
-                  <button
-                    onClick={() => toggleGroupSelection(section.hosts)}
-                    className="btn-ghost ml-auto inline-flex items-center gap-1.5 px-2 py-1 text-xs"
-                    title="Выбрать все хосты в этой группе"
-                  >
-                    {allSelected ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
-                    {someSelected ? "Выбрать остальные" : allSelected ? "Снять выбор" : "Выбрать группу"}
-                  </button>
-                )}
-              </div>
-
-              {!collapsed && (
-                <table className="table-base">
-                  <thead>
-                    <tr>
-                      {canEdit && (
-                        <th className="w-10">
-                          <input
-                            type="checkbox"
-                            checked={allSelected}
-                            onChange={() => toggleGroupSelection(section.hosts)}
-                            aria-label={`Выбрать все хосты в группе ${section.name}`}
-                          />
-                        </th>
-                      )}
-                      <th>Hostname</th>
-                      <th>IP</th>
-                      <th>OS</th>
-                      <th>Статус</th>
-                      <th>Агент</th>
-                      <th>Проверен</th>
-                      {canEdit && <th className="text-right">Действия</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {section.hosts.map((h) => (
-                      <tr key={h.id}>
-                        {canEdit && (
-                          <td className="w-10">
-                            <input
-                              type="checkbox"
-                              checked={selectedHostIds.includes(h.id)}
-                              onChange={() => toggleHostSelection(h.id)}
-                              aria-label={`Выбрать ${h.hostname || h.ip_address || h.id}`}
-                            />
-                          </td>
-                        )}
-                        <td className="font-medium text-foreground">{h.hostname || "—"}</td>
-                        <td className="font-mono text-foreground/80">{h.ip_address || "—"}</td>
-                        <td className="text-muted-foreground">{osLabel(h.os)}</td>
-                        <td><Badge status={h.status} /></td>
-                        <td>
-                          {h.has_agent ? (
-                            <div className="flex flex-col gap-1">
-                              <span className="font-mono text-xs text-foreground/80">
-                                {agentVersionOf(h.id)?.agent_version ?? h.agent_version ?? "—"}
-                              </span>
-                              <Badge
-                                status={agentVersionOf(h.id)?.version_status ?? "unknown"}
-                                tone={VERSION_TONE[agentVersionOf(h.id)?.version_status ?? "unknown"]}
-                              >
-                                {VERSION_LABEL[agentVersionOf(h.id)?.version_status ?? "unknown"]}
-                              </Badge>
-                            </div>
-                          ) : (
-                            <span className="text-subtle">без агента</span>
-                          )}
-                        </td>
-                        <td className="text-muted-foreground" title={h.last_checked_at ? new Date(h.last_checked_at).toLocaleString() : undefined}>
-                          {relativeTime(h.last_checked_at)}
-                        </td>
-                        {canEdit && (
-                          <td className="text-right">
-                            <div className="inline-flex items-center gap-1">
-                              <button
-                                onClick={() => startDiagnostic(h)}
-                                disabled={diagnosticStarting && diagnosticHost?.id === h.id}
-                                className="action-icon"
-                                title="Запустить диагностику подключения"
-                                aria-label={`Диагностика ${h.hostname || h.ip_address}`}
-                              >
-                                <Activity className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                onClick={() => handleDelete(h.id)}
-                                className="action-danger"
-                                title="Удалить хост"
-                                aria-label={`Удалить ${h.hostname || h.ip_address}`}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          );
-        })}
-
-        {sections.length === 0 && (
+      {/* Хосты разложены деревом групп: корпус > этаж > аудитория. Каждый
+          уровень сворачивается и несёт мини-сводку online/offline. */}
+      <div className="space-y-4">
+        {groupNodes.map((node) => renderGroupNode(node, 0))}
+        {groupNodes.length === 0 && (
           <div className="table-shell">
             <p className="px-4 py-8 text-center text-subtle">
               {hosts.length === 0 ? "Хостов нет" : "Ничего не найдено по заданным фильтрам"}
