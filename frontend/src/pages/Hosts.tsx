@@ -6,6 +6,8 @@ import {
   CheckSquare,
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   DoorOpen,
   Download,
   Filter,
@@ -190,7 +192,8 @@ export default function Hosts() {
   const [agentTaskTitle, setAgentTaskTitle] = useState("");
   const [agentError, setAgentError] = useState<string | null>(null);
   const [agentBusy, setAgentBusy] = useState<"scan" | "update" | null>(null);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  // По умолчанию всё дерево групп свёрнуто: хранятся только развёрнутые
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [form, setForm] = useState({
@@ -291,7 +294,7 @@ export default function Hosts() {
   }
 
   function toggleGroupCollapsed(key: string) {
-    setCollapsedGroups((prev) => {
+    setExpandedGroups((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
@@ -426,9 +429,22 @@ export default function Hosts() {
       }
       return result;
     };
+    // «SU5-D206» внутри корпуса SU5 показывается как «D206»: корпус и так виден
+    // в пути. В базе и inventory Ansible имя остаётся полным — оно уникально.
+    const shortNames = new Map<string, string>();
+    for (const g of groups) {
+      const root = chain(g.id)[0];
+      const prefix = root && root.id !== g.id ? `${root.name}-` : "";
+      shortNames.set(
+        g.id,
+        prefix && g.name.length > prefix.length && g.name.toUpperCase().startsWith(prefix.toUpperCase())
+          ? g.name.slice(prefix.length)
+          : g.name,
+      );
+    }
     const options = groups
       .map((g) => {
-        const path = chain(g.id).map((item) => item.name);
+        const path = chain(g.id).map((item) => shortNames.get(item.id) ?? item.name);
         return { id: g.id, name: g.name, label: path.join(" › ") };
       })
       .sort((a, b) => a.label.localeCompare(b.label, "ru", { numeric: true }));
@@ -443,7 +459,7 @@ export default function Hosts() {
       }
       return result;
     };
-    return { options, descendants };
+    return { options, descendants, shortNames };
   }, [groups]);
 
   const filteredHosts = useMemo(() => {
@@ -514,7 +530,8 @@ export default function Hosts() {
         .filter((node): node is GroupNode => node !== null);
       const hosts = [...(byGroup.get(group.id) ?? [])].sort(sortByName);
       const allHosts = [...hosts, ...children.flatMap((child) => child.allHosts)];
-      return allHosts.length > 0 ? { key: group.id, name: group.name, hosts, children, allHosts } : null;
+      const name = groupTree.shortNames.get(group.id) ?? group.name;
+      return allHosts.length > 0 ? { key: group.id, name, hosts, children, allHosts } : null;
     };
 
     const seen = new Set<string>();
@@ -527,7 +544,22 @@ export default function Hosts() {
       result.push({ key: NO_GROUP, name: NO_GROUP_LABEL, hosts: ungrouped, children: [], allHosts: ungrouped });
     }
     return result;
-  }, [filteredHosts, groups]);
+  }, [filteredHosts, groups, groupTree]);
+
+  const groupKeys = useMemo(() => {
+    const keys: string[] = [];
+    const walk = (node: GroupNode) => {
+      keys.push(node.key);
+      node.children.forEach(walk);
+    };
+    groupNodes.forEach(walk);
+    return keys;
+  }, [groupNodes]);
+  const anyGroupExpanded = groupKeys.some((key) => expandedGroups.has(key));
+
+  function toggleAllGroups() {
+    setExpandedGroups(anyGroupExpanded ? new Set() : new Set(groupKeys));
+  }
 
   const overallStats = useMemo(() => {
     let online = 0;
@@ -543,6 +575,13 @@ export default function Hosts() {
 
   const activeFilterCount = Object.values(filters).filter((v) => v !== "").length;
   const filtersActive = activeFilterCount > 0;
+
+  // С фильтрами найденные ПК должны быть видны сразу — дерево раскрывается;
+  // без фильтров возвращается к виду по умолчанию (всё свёрнуто).
+  useEffect(() => {
+    setExpandedGroups(filtersActive ? new Set(groupKeys) : new Set());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters]);
 
   function updateFilter<K extends keyof HostFilters>(key: K, value: string) {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -673,7 +712,7 @@ export default function Hosts() {
   // Заголовок группы любого уровня: сворачивание, сводка online/offline и
   // выбор всех ПК поддерева (весь корпус, весь этаж или одна аудитория).
   function renderGroupHeader(node: GroupNode, level: "building" | "floor" | "room") {
-    const collapsed = collapsedGroups.has(node.key);
+    const collapsed = !expandedGroups.has(node.key);
     const online = node.allHosts.filter((h) => h.status === "online").length;
     const offline = node.allHosts.filter((h) => h.status === "offline").length;
     const ids = node.allHosts.map((h) => h.id);
@@ -733,7 +772,7 @@ export default function Hosts() {
   }
 
   function renderGroupNode(node: GroupNode, depth: number) {
-    const collapsed = collapsedGroups.has(node.key);
+    const collapsed = !expandedGroups.has(node.key);
 
     // Аудитория (или любая группа без подгрупп) — карточка с таблицей ПК.
     if (node.children.length === 0) {
@@ -773,6 +812,12 @@ export default function Hosts() {
             <Filter className="h-3.5 w-3.5" />
             Фильтры{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
           </Button>
+          {groupKeys.length > 0 && (
+            <Button variant="secondary" size="sm" onClick={toggleAllGroups}>
+              {anyGroupExpanded ? <ChevronsDownUp className="h-3.5 w-3.5" /> : <ChevronsUpDown className="h-3.5 w-3.5" />}
+              {anyGroupExpanded ? "Свернуть все" : "Развернуть все"}
+            </Button>
+          )}
           <Button variant="secondary" size="sm" onClick={downloadInventory}>
             <Download className="h-3.5 w-3.5" />
             Скачать inventory
