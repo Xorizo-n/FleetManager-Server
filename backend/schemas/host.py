@@ -11,6 +11,7 @@ class HostGroupCreate(BaseModel):
     name: str
     description: str | None = None
     credential_id: uuid.UUID | None = None
+    parent_id: uuid.UUID | None = None
 
 
 class HostGroupOut(BaseModel):
@@ -20,6 +21,8 @@ class HostGroupOut(BaseModel):
     name: str
     description: str | None
     credential_id: uuid.UUID | None
+    parent_id: uuid.UUID | None = None
+    is_auto: bool = False
 
 
 class HostGroupAssignRequest(BaseModel):

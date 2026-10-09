@@ -27,6 +27,7 @@ from services.audit import record_audit
 from services.inventory_generator import build_inventory_ini
 from services.host_target import normalize_host_address, resolve_host_target
 from services.host_diagnostics import run_host_diagnostic
+from services.host_grouping import find_group_by_name
 
 router = APIRouter(prefix="/hosts", tags=["hosts"])
 
@@ -87,6 +88,8 @@ def create_group(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*EDITOR_ROLES)),
 ):
+    if payload.parent_id is not None and db.get(HostGroup, payload.parent_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Родительская группа не найдена")
     group = HostGroup(**payload.model_dump())
     db.add(group)
     db.commit()
@@ -107,7 +110,7 @@ def assign_hosts_to_group(
         if group is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Группа не найдена")
     else:
-        group = db.execute(select(HostGroup).where(HostGroup.name == payload.group_name)).scalar_one_or_none()
+        group = find_group_by_name(db, payload.group_name)
         if group is None:
             group = HostGroup(name=payload.group_name)
             db.add(group)
@@ -252,7 +255,7 @@ def import_csv(
             if group_name:
                 group = group_cache.get(group_name)
                 if group is None:
-                    group = db.execute(select(HostGroup).where(HostGroup.name == group_name)).scalar_one_or_none()
+                    group = find_group_by_name(db, group_name)
                     if group is None:
                         group = HostGroup(name=group_name)
                         db.add(group)

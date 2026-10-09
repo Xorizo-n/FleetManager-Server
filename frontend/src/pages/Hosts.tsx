@@ -26,6 +26,9 @@ interface HostGroup {
   id: string;
   name: string;
   description: string | null;
+  // Корпус > этаж > аудитория: сервер раскладывает ПК по имени (SU5-D206-TEMP -> SU5-D206).
+  parent_id: string | null;
+  is_auto: boolean;
 }
 
 interface Host {
@@ -149,6 +152,8 @@ function relativeTime(iso: string | null): string {
 interface GroupSection {
   key: string;
   name: string;
+  // Родительские группы через « › » (корпус › этаж), пусто для групп верхнего уровня
+  parents: string;
   hosts: Host[];
 }
 
@@ -394,6 +399,47 @@ export default function Hosts() {
     return agentVersionOf(host.id)?.version_status ?? "unknown";
   }
 
+  const groupTree = useMemo(() => {
+    const byId = new Map(groups.map((g) => [g.id, g]));
+    const childrenOf = new Map<string, string[]>();
+    for (const g of groups) {
+      if (g.parent_id && byId.has(g.parent_id)) {
+        if (!childrenOf.has(g.parent_id)) childrenOf.set(g.parent_id, []);
+        childrenOf.get(g.parent_id)!.push(g.id);
+      }
+    }
+    // Цепочка от корня до группы; на цикле в данных просто останавливается
+    const chain = (id: string): HostGroup[] => {
+      const result: HostGroup[] = [];
+      const seen = new Set<string>();
+      let current = byId.get(id);
+      while (current && !seen.has(current.id)) {
+        seen.add(current.id);
+        result.unshift(current);
+        current = current.parent_id ? byId.get(current.parent_id) : undefined;
+      }
+      return result;
+    };
+    const options = groups
+      .map((g) => {
+        const path = chain(g.id).map((item) => item.name);
+        return { id: g.id, name: g.name, parents: path.slice(0, -1).join(" › "), label: path.join(" › ") };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label, "ru", { numeric: true }));
+    const descendants = (id: string): Set<string> => {
+      const result = new Set<string>();
+      const stack = [id];
+      while (stack.length > 0) {
+        const current = stack.pop()!;
+        if (result.has(current)) continue;
+        result.add(current);
+        stack.push(...(childrenOf.get(current) ?? []));
+      }
+      return result;
+    };
+    return { options, descendants };
+  }, [groups]);
+
   const filteredHosts = useMemo(() => {
     const hostname = filters.hostname.trim().toLowerCase();
     const ip = filters.ip.trim().toLowerCase();
@@ -403,7 +449,11 @@ export default function Hosts() {
       if (hostname && !(h.hostname || "").toLowerCase().includes(hostname)) return false;
       if (ip && !(h.ip_address || "").toLowerCase().includes(ip)) return false;
       if (filters.group) {
-        if (filters.group === NO_GROUP ? h.group_id !== null : h.group_id !== filters.group) return false;
+        if (filters.group === NO_GROUP) {
+          if (h.group_id !== null) return false;
+        } else if (h.group_id === null || !groupTree.descendants(filters.group).has(h.group_id)) {
+          return false;
+        }
       }
       if (filters.os && h.os !== filters.os) return false;
       if (filters.status && h.status !== filters.status) return false;
@@ -423,7 +473,7 @@ export default function Hosts() {
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hosts, filters, agentVersions]);
+  }, [hosts, filters, agentVersions, groupTree]);
 
   // Группировка видимого (уже отфильтрованного) списка по комнатам —
   // группы существуют именно для этого, таблица должна их отражать, а не
@@ -438,17 +488,18 @@ export default function Hosts() {
     const sortByName = (a: Host, b: Host) => (a.hostname || a.ip_address || "").localeCompare(b.hostname || b.ip_address || "", "ru");
 
     const result: GroupSection[] = [];
-    const sortedGroups = [...groups].sort((a, b) => a.name.localeCompare(b.name, "ru"));
-    for (const g of sortedGroups) {
-      const list = byGroup.get(g.id);
-      if (list && list.length > 0) result.push({ key: g.id, name: g.name, hosts: [...list].sort(sortByName) });
+    for (const option of groupTree.options) {
+      const list = byGroup.get(option.id);
+      if (list && list.length > 0) {
+        result.push({ key: option.id, name: option.name, parents: option.parents, hosts: [...list].sort(sortByName) });
+      }
     }
     const ungrouped = byGroup.get(NO_GROUP);
     if (ungrouped && ungrouped.length > 0) {
-      result.push({ key: NO_GROUP, name: NO_GROUP_LABEL, hosts: [...ungrouped].sort(sortByName) });
+      result.push({ key: NO_GROUP, name: NO_GROUP_LABEL, parents: "", hosts: [...ungrouped].sort(sortByName) });
     }
     return result;
-  }, [filteredHosts, groups]);
+  }, [filteredHosts, groupTree]);
 
   const overallStats = useMemo(() => {
     let online = 0;
@@ -589,7 +640,7 @@ export default function Hosts() {
             <label htmlFor="host-group" className="field-label">Группа</label>
             <select id="host-group" value={form.group_id} onChange={(e) => setForm({ ...form, group_id: e.target.value })} className="input-base">
               <option value="">Без группы</option>
-              {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+              {groupTree.options.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
             </select>
           </div>
           <div>
@@ -629,12 +680,12 @@ export default function Hosts() {
                 placeholder="Поиск…"
               />
             </div>
-            <div className="w-40">
+            <div className="w-64">
               <label className="field-label">Группа</label>
               <select value={filters.group} onChange={(e) => updateFilter("group", e.target.value)} className="input-base">
                 <option value="">Все</option>
                 <option value={NO_GROUP}>{NO_GROUP_LABEL}</option>
-                {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                {groupTree.options.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
               </select>
             </div>
             <div className="w-36">
@@ -760,7 +811,7 @@ export default function Hosts() {
               <select value={groupTarget} onChange={(event) => { setGroupTarget(event.target.value); setNewGroupName(""); }} className="input-base">
                 <option value="">Создать новую группу</option>
                 <option value={NO_GROUP_TARGET}>{NO_GROUP_LABEL} (убрать из текущей)</option>
-                {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+                {groupTree.options.map((group) => <option key={group.id} value={group.id}>{group.label}</option>)}
               </select>
             </div>
             {!groupTarget && (
@@ -867,6 +918,7 @@ export default function Hosts() {
                     <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
                   )}
                   <span className="font-semibold text-foreground">{section.name}</span>
+                  {section.parents && <span className="text-xs text-muted-foreground">{section.parents}</span>}
                 </button>
                 <span className="text-xs text-muted-foreground tabular-nums">{section.hosts.length} ПК</span>
                 <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
