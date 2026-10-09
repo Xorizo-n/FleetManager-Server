@@ -48,6 +48,7 @@ from services.agent_version import (
     version_status,
 )
 from services.audit import record_audit
+from services.host_grouping import apply_auto_group
 from services.crypto import decrypt_secret, encrypt_secret
 from services.installer_builder import agent_dist_ready, build_installer_exe, safe_filename
 
@@ -283,6 +284,8 @@ def register_agent(payload: AgentRegisterRequest, request: Request, db: Session 
         ssh_login = credential.login
     db.commit()
     db.refresh(host)
+    # Группа по имени ПК (SU5-D206-TEMP -> SU5 > SU5 2 этаж > SU5-D206); ошибка не мешает регистрации.
+    apply_auto_group(db, host)
     return AgentRegisterResponse(
         agent_id=host.agent_id,
         agent_token=raw_agent_token,
@@ -336,6 +339,9 @@ def heartbeat(
     # Commit the host status first, on its own, so the machine always shows up
     # online even if the software inventory below has a problem.
     db.commit()
+
+    # Группа по имени: после переименования ПК переходит в группу своей аудитории.
+    apply_auto_group(db, host)
 
     stored = 0
     try:

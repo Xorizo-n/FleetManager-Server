@@ -12,7 +12,7 @@ from models.host import Host
 from models.playbook import PlaybookRepo, PlaybookSchedule
 from models.task import TaskRun, TaskStatus, TaskType
 from services.crypto import decrypt_secret
-from services.inventory_generator import build_inventory_dict, resolve_host_group_members
+from services.inventory_generator import build_inventory_dict, host_group_credential, resolve_host_group_members
 
 
 def run_ansible(**kwargs):
@@ -71,7 +71,7 @@ def run_raw_command(inventory: dict, inventory_host: str, command: str, *, timeo
 
 
 def _resolve_credential_vars(host: Host) -> dict:
-    credential = host.credential or (host.group.credential if host.group_id and host.group else None)
+    credential = host.credential or host_group_credential(host)
     if credential is None:
         return {}
 

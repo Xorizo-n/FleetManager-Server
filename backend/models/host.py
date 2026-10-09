@@ -28,9 +28,16 @@ class HostGroup(Base):
     name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     credential_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("credentials.id", ondelete="SET NULL"), nullable=True)
+    # Вложенность: корпус > этаж > аудитория. Хост состоит в одной группе, родители
+    # объединяют группы (в inventory Ansible — как children).
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("host_groups.id", ondelete="SET NULL"), nullable=True)
+    # Создана автоматически по имени ПК (services/host_grouping.py); такие группы
+    # сервер может пополнять и менять, ручные — нет.
+    is_auto: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
 
     credential: Mapped["Credential"] = relationship(back_populates="host_groups")
     hosts: Mapped[list["Host"]] = relationship(back_populates="group")
+    parent: Mapped["HostGroup | None"] = relationship(remote_side="HostGroup.id")
 
 
 class Host(Base):

@@ -13,6 +13,7 @@ celery_app = Celery(
         "services.host_diagnostics",
         "services.agent_installer_sync",
         "services.agent_update",
+        "services.host_grouping",
     ],
 )
 
@@ -34,6 +35,11 @@ celery_app.conf.update(
         },
         "sync-agent-installer": {
             "task": "services.agent_installer_sync.sync_agent_installer_task",
+            "schedule": 3600.0,
+        },
+        # Раскладывает по группам и ПК без агента или выключенные (агентские — сразу при heartbeat).
+        "regroup-hosts": {
+            "task": "services.host_grouping.regroup_hosts",
             "schedule": 3600.0,
         },
     },

@@ -87,6 +87,8 @@ def create_group(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*EDITOR_ROLES)),
 ):
+    if payload.parent_id is not None and db.get(HostGroup, payload.parent_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Родительская группа не найдена")
     group = HostGroup(**payload.model_dump())
     db.add(group)
     db.commit()

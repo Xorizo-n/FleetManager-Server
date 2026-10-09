@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     # регистрации). Агент держит sshd на 22 и пускает туда только этот сервер.
     ansible_ssh_port: int = 22
 
+    # Автоматические группы по имени ПК: КОРПУС-АУДИТОРИЯ-ТИП (SU5-D206-TEMP) ->
+    # SU5 > SU5 2 этаж > SU5-D206. Тот же шаблон, что NamePattern в AutoDomain:
+    # этаж — первая цифра номера аудитории. ПК с другими именами не трогаются.
+    host_auto_grouping: bool = True
+    host_name_pattern: str = r"^(?P<Building>[A-Z0-9]+)-(?P<Room>[A-Z]*(?P<Floor>[0-9])[0-9]*[A-Z]*)-[A-Z0-9-]+$"
+
     # Software share (network share mounted into the container)
     soft_share_dir: str = "/mnt/soft-share"
 
