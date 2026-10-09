@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import socket
 import uuid
 from datetime import datetime, timezone
@@ -37,25 +38,74 @@ def _ssh_port(host: Host) -> int:
     return host.ssh_port or settings.ansible_ssh_port
 
 
-def _dns_stage(hostname: str | None, target: str) -> tuple[bool | None, str]:
+def _search_domains(resolv_conf: str = "/etc/resolv.conf") -> list[str]:
+    """DNS search domains of this container (dns_search in docker-compose.yml)."""
+    domains: list[str] = []
+    try:
+        with open(resolv_conf, encoding="utf-8") as handle:
+            for line in handle:
+                parts = line.split()
+                if parts and parts[0] == "search":
+                    domains = [domain.rstrip(".") for domain in parts[1:] if domain.strip(".")]
+    except OSError:
+        pass
+    return domains
+
+
+def _resolve(name: str) -> list[str]:
+    addresses = socket.getaddrinfo(name, None, type=socket.SOCK_STREAM)
+    return sorted({item[4][0] for item in addresses if item[4]})
+
+
+def _is_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _dns_stage(hostname: str | None, target: str, domains: list[str] | None = None) -> tuple[bool | None, str]:
     """DNS stage of the diagnostic: (ok, message) for the log.
 
-    The connection goes to the IP address the agent reports, so a hostname the
-    server's resolver does not know (a PC from another domain's zone, e.g.
-    at.urfu.ru while the containers search rtf.ustu) is only informational.
-    The lookup error is raised only when the hostname itself is the target.
+    The agent reports a short name (SU5-D206-TEMP), and the PC may live in any
+    of the search domains: at.urfu.ru or the old rtf.ustu, which still has
+    records pointing at other PCs' addresses. So the name is looked up in every
+    domain and compared with the IP the agent reports, which is what the
+    connection uses. A name that is missing or stale is only a warning; the
+    lookup error is raised only when the hostname itself is the target.
     """
     name = normalize_host_address(hostname)
     if name is None:
         return None, "skipped: no hostname, target is an IP address"
-    try:
-        addresses = socket.getaddrinfo(name, None, type=socket.SOCK_STREAM)
-    except socket.gaierror as exc:
-        if name == target:
-            raise
-        return None, f"{name} does not resolve ({exc}); connecting by IP {target}"
-    resolved = sorted({item[4][0] for item in addresses if item[4]})
-    return True, f"resolved {len(resolved)} address(es): {', '.join(resolved)}"
+    if not _is_ip(target):
+        # Подключение по имени: если оно не резолвится, диагностика на этом и падает.
+        return True, f"{name} -> {', '.join(_resolve(name))}"
+
+    if domains is None:
+        domains = _search_domains()
+    # Точка в конце — абсолютное имя, без повторного прохода по списку поиска.
+    candidates = [f"{name}.{domain}." for domain in domains] if "." not in name else [f"{name.rstrip('.')}."]
+    if not candidates:
+        candidates = [name]
+    found: dict[str, list[str]] = {}
+    for candidate in candidates:
+        try:
+            found[candidate.rstrip(".")] = _resolve(candidate)
+        except socket.gaierror:
+            continue
+
+    matching = [fqdn for fqdn, addresses in found.items() if target in addresses]
+    stale = [f"{fqdn} -> {', '.join(addresses)}" for fqdn, addresses in found.items() if target not in addresses]
+    if matching:
+        message = f"{matching[0]} -> {target}, matches the agent IP"
+        if stale:
+            message += f"; stale record(s): {'; '.join(stale)}"
+        return True, message
+    if stale:
+        return None, f"stale DNS record(s): {'; '.join(stale)}; the agent reports {target}, connecting by IP"
+    where = ", ".join(domains) if domains else "DNS"
+    return None, f"{name} does not resolve in {where}; connecting by IP {target}"
 
 
 @celery_app.task(name="services.host_diagnostics.run_host_diagnostic")
