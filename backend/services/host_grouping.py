@@ -1,12 +1,13 @@
 """Automatic host groups by computer name, the same scheme AutoDomain uses for OUs.
 
-SU5-D206-TEMP -> building SU5 > floor "SU5 2 этаж" > room "SU5-D206"; the host goes
-into the room group. Only names matching settings.host_name_pattern
+SU5-D206-TEMP -> building SU5 > floor "2 этаж" > room "SU5-D206"; the host goes
+into the room group. Group names are unique within their parent, so every building
+has its own "2 этаж". Only names matching settings.host_name_pattern
 (BUILDING-ROOM-TYPE, the floor is the first digit of the room number) are grouped.
 
-Groups are created on demand, so the tree grows as PCs register. A room group that
-already exists under that name (for example a manually created MR32-411) is reused
-and attached to its floor. A host in a manually created group with another name is
+Groups are created on demand, so the tree grows as PCs register. A top-level group
+that already has the room's name (for example a manually created MR32-411) is reused
+and moved under its floor. A host in a manually created group with another name is
 left where an administrator put it; hosts in automatic groups follow their name.
 """
 
@@ -41,7 +42,7 @@ class HostNameParts:
 
     @property
     def floor_group(self) -> str:
-        return f"{self.building} {self.floor} этаж"
+        return f"{self.floor} этаж"
 
     @property
     def room_group(self) -> str:
@@ -76,19 +77,37 @@ def should_move(current_name: str | None, current_is_auto: bool, room_group: str
     return current_is_auto
 
 
-def _ensure_group(db: Session, name: str, parent: HostGroup | None, description: str) -> HostGroup:
-    group = db.execute(select(HostGroup).where(HostGroup.name == name)).scalar_one_or_none()
+def _group_named(db: Session, name: str, parent: HostGroup | None) -> HostGroup | None:
+    """The group with this name in exactly this place of the tree (names are unique per parent)."""
+    in_parent = HostGroup.parent_id.is_(None) if parent is None else HostGroup.parent_id == parent.id
+    return db.execute(select(HostGroup).where(HostGroup.name == name, in_parent)).scalar_one_or_none()
+
+
+def _ensure_group(db: Session, name: str, parent: HostGroup | None, description: str, *, adopt: bool = False) -> HostGroup:
+    group = _group_named(db, name, parent)
+    if group is None and adopt and parent is not None:
+        # A top-level group already named like the room (e.g. a manual MR32-411): move it into the tree.
+        group = _group_named(db, name, None)
+        if group is not None:
+            group.parent = parent
+            if not group.description:
+                group.description = description
     if group is None:
         group = HostGroup(name=name, description=description, parent=parent, is_auto=True)
         db.add(group)
         db.flush()
         logger.info("Created host group %s", name)
-    elif parent is not None and group.parent_id is None and group.id != parent.id:
-        # Existing group with the room/floor name (e.g. a manual MR32-411): put it into the tree.
-        group.parent = parent
-        if not group.description:
-            group.description = description
     return group
+
+
+def find_group_by_name(db: Session, name: str) -> HostGroup | None:
+    """Group for a name typed by a user (assign by name, CSV import): the top-level group
+    with that name, or the only group with it; None if absent or ambiguous ("2 этаж")."""
+    groups = db.execute(select(HostGroup).where(HostGroup.name == name)).scalars().all()
+    top_level = [group for group in groups if group.parent_id is None]
+    if top_level:
+        return top_level[0]
+    return groups[0] if len(groups) == 1 else None
 
 
 def auto_group_host(db: Session, host: Host) -> HostGroup | None:
@@ -106,7 +125,7 @@ def auto_group_host(db: Session, host: Host) -> HostGroup | None:
 
     building = _ensure_group(db, parts.building_group, None, f"Корпус {parts.building}")
     floor = _ensure_group(db, parts.floor_group, building, f"{parts.building}, {parts.floor} этаж")
-    room = _ensure_group(db, parts.room_group, floor, f"Аудитория {parts.room} ({parts.building}, {parts.floor} этаж)")
+    room = _ensure_group(db, parts.room_group, floor, f"Аудитория {parts.room} ({parts.building}, {parts.floor} этаж)", adopt=True)
     if host.group_id != room.id:
         host.group = room
         logger.info("Host %s moved to group %s", host.hostname, room.name)

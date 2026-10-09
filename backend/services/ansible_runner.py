@@ -99,8 +99,9 @@ def build_full_inventory(db, host_ids: list[uuid.UUID] | None) -> dict:
     hosts = query.all()
 
     for host in hosts:
-        group_name = host.group.name if host.group_id and host.group else "ungrouped"
-        host_vars = inventory["all"]["children"][group_name]["hosts"][str(host.id)]
+        # Win_Hosts holds every selected host and shares the vars dict with its own
+        # group, so the credential lands everywhere without knowing the group's name.
+        host_vars = inventory["all"]["children"]["Win_Hosts"]["hosts"][str(host.id)]
         host_vars.pop("_fleet_host_id", None)
         host_vars.pop("_fleet_credential_id", None)
         host_vars.update(_resolve_credential_vars(host))
