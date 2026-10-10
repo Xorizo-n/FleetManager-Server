@@ -161,6 +161,36 @@ class AgentUpdateScriptTests(unittest.TestCase):
         self.assertIn("44596 → 22", task.log_output)
         self.assertFalse(_adopt_installer_ssh_port(db, task, host))
 
+    def _recheck(self, open_ports):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from services import agent_update
+
+        db = SimpleNamespace(commit=lambda: None)
+        task = SimpleNamespace(log_output="")
+        host = SimpleNamespace(hostname="MR32-044-SERGEY", ip_address="10.40.161.34", id="h", ssh_port=5022)
+        probe = '{"version":"2026.10.10.9","service_status":"Running"}'
+        with mock.patch.object(agent_update.time, "sleep"),                 mock.patch.object(agent_update, "_is_reachable", side_effect=lambda h, port=None: (port or h.ssh_port) in open_ports),                 mock.patch.object(agent_update, "build_full_inventory", return_value={}),                 mock.patch.object(agent_update, "run_raw_command", return_value=probe):
+            confirmed = agent_update._recheck_version(db, task, {}, host, "2026.10.10.9")
+        return host, confirmed
+
+    def test_connection_lost_before_the_install_keeps_the_port(self):
+        # MR32-044-SERGEY: the session was reset on 5022 before anything ran.
+        host, confirmed = self._recheck(open_ports={5022})
+        self.assertEqual(host.ssh_port, 5022)
+        self.assertEqual(confirmed, "2026.10.10.9")
+
+    def test_sshd_moved_by_the_installer_switches_the_port(self):
+        host, confirmed = self._recheck(open_ports={22})
+        self.assertEqual(host.ssh_port, 22)
+        self.assertEqual(confirmed, "2026.10.10.9")
+
+    def test_nothing_open_keeps_the_port_and_fails(self):
+        host, confirmed = self._recheck(open_ports=set())
+        self.assertEqual(host.ssh_port, 5022)
+        self.assertIsNone(confirmed)
+
     def test_probe_script_reads_the_inno_setup_uninstall_entry(self):
         import base64
 
