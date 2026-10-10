@@ -125,5 +125,8 @@ export const useInstallers = () =>
     queryFn: () => get<InstallerFile[]>("/installers").then((files) => files.filter((f) => !f.name.toLowerCase().endsWith(".version"))),
   });
 
+export const useAlertSummary = (days = 7) =>
+  useQuery({ queryKey: ["alerts-summary", days], queryFn: () => get<{ days: number; total: number; hosts: number }>("/agent/alerts/summary", { days }) });
+
 export const useAlerts = (hostId?: string) =>
   useQuery({ queryKey: keys.alerts(hostId), queryFn: () => get<AgentAlert[]>("/agent/alerts", { host_id: hostId, limit: 50 }) });

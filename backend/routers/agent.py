@@ -1,11 +1,11 @@
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -19,6 +19,7 @@ from models.task import TaskRun, TaskStatus, TaskType
 from models.user import User, UserRole
 from schemas.agent import (
     AgentAlertOut,
+    AgentAlertSummaryOut,
     AgentAlertRequest,
     AgentEnrollmentTokenCreate,
     AgentEnrollmentTokenOut,
@@ -383,6 +384,20 @@ def create_alert(
     db.commit()
     db.refresh(alert)
     return alert
+
+
+@router.get("/alerts/summary", response_model=AgentAlertSummaryOut)
+def alerts_summary(
+    days: int = Query(default=7, ge=1, le=365),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Сколько алертов пришло за период и от скольких ПК — для счётчика на обзоре."""
+    since = _now() - timedelta(days=days)
+    total, hosts = db.execute(
+        select(func.count(), func.count(func.distinct(AgentAlert.host_id))).where(AgentAlert.created_at >= since)
+    ).one()
+    return AgentAlertSummaryOut(days=days, total=total, hosts=hosts)
 
 
 @router.get("/alerts", response_model=list[AgentAlertOut])

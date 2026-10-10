@@ -151,6 +151,12 @@ class AgentEnrollmentTokenOut(BaseModel):
     installer_available: bool = False
 
 
+class AgentAlertSummaryOut(BaseModel):
+    days: int
+    total: int
+    hosts: int
+
+
 class AgentAlertOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

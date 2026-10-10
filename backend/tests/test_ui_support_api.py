@@ -153,6 +153,18 @@ class WeeklyStatsTests(unittest.TestCase):
         self.assertTrue(all(item.success == 0 and item.failed == 0 for item in stats[:-1]))
 
 
+class AlertSummaryTests(unittest.TestCase):
+    def test_counts_come_from_the_database_not_a_page_of_alerts(self):
+        from routers.agent import alerts_summary
+
+        class _Db:
+            def execute(self, _query):
+                return SimpleNamespace(one=lambda: (788, 13))
+
+        summary = alerts_summary(days=7, db=_Db(), _=SimpleNamespace())
+        self.assertEqual((summary.days, summary.total, summary.hosts), (7, 788, 13))
+
+
 class RouteTests(unittest.TestCase):
     def test_new_routes_are_registered(self):
         routes = {(route.path, method) for route in app.routes for method in getattr(route, "methods", ())}
@@ -164,6 +176,7 @@ class RouteTests(unittest.TestCase):
             ("/software/packages", "GET"),
             ("/software/package-hosts", "GET"),
             ("/agent/alerts", "GET"),
+            ("/agent/alerts/summary", "GET"),
         ]:
             self.assertIn(expected, routes)
 

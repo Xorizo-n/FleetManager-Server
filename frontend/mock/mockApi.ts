@@ -466,6 +466,11 @@ route("GET", "/agent/versions", () => {
 });
 route("POST", "/agent/version-scan", (ctx) => { editor(ctx); const ids = ctx.body.host_ids?.length ? ctx.body.host_ids : hosts.filter((h) => h.has_agent).map((h) => h.id); return taskOut(startTask("agent_version_scan", ids, ctx.user!.id)); });
 route("POST", "/agent/update", (ctx) => { editor(ctx); return taskOut(startTask("agent_update", ctx.body.host_ids, ctx.user!.id)); });
+route("GET", "/agent/alerts/summary", ({ query }) => {
+  const days = Number(query.get("days") ?? 7);
+  const recent = alerts.filter((a) => Date.now() - new Date(a.created_at).getTime() < days * 86400_000);
+  return { days, total: recent.length, hosts: new Set(recent.map((a) => a.host_id)).size };
+});
 route("GET", "/agent/alerts", ({ query }) => alerts.filter((a) => !query.get("host_id") || a.host_id === query.get("host_id")).sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, Number(query.get("limit") ?? 100)));
 route("GET", "/agent/enrollment-tokens", (ctx) => { admin(ctx); return tokens; });
 route("POST", "/agent/enrollment-tokens", (ctx) => { admin(ctx); const t = { id: uuid(), name: ctx.body.name, expires_at: ctx.body.expires_at, is_active: true, created_at: now().toISOString(), installer_available: true }; tokens.unshift(t); return { ...t, raw_token: `fm_enroll_${Math.floor(rnd() * 1e16).toString(36)}${Math.floor(rnd() * 1e16).toString(36)}` }; });

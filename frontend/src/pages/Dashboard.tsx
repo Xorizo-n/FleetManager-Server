@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ArrowUpCircle, BellRing, ChevronRight, Clock, PlugZap, XCircle } from "lucide-react";
 import { apiClient } from "../api/client";
-import { useAlerts, useFleet, useTasks } from "../api/queries";
+import { useAlertSummary, useFleet, useTasks } from "../api/queries";
 import { useTheme } from "../context/ThemeContext";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
@@ -21,7 +21,8 @@ export default function Dashboard() {
   const timeline = useQuery({ queryKey: ["dashboard", "timeline"], queryFn: () => apiClient.get<{ hour: string; online: number }[]>("/dashboard/online-timeline").then((r) => r.data) });
   const weekly = useQuery({ queryKey: ["dashboard", "weekly"], queryFn: () => apiClient.get<{ day: string; success: number; failed: number }[]>("/dashboard/weekly-run-stats").then((r) => r.data) });
   const recent = useTasks({ limit: 50 }, 10_000);
-  const alerts = useAlerts();
+  // Счётчик считает сервер: раньше бралось 50 последних алертов, и цифра упиралась в 50
+  const alerts = useAlertSummary(7);
 
   const stats = useMemo(() => {
     const now = Date.now();
@@ -36,7 +37,8 @@ export default function Dashboard() {
 
   const failed24h = (recent.data ?? []).filter((t) => t.status === "failed" && Date.now() - new Date(t.created_at).getTime() < DAY).length;
   const running = (recent.data ?? []).filter((t) => t.status === "running" || t.status === "queued").length;
-  const alerts7d = (alerts.data ?? []).filter((a) => Date.now() - new Date(a.created_at).getTime() < 7 * DAY).length;
+  const alerts7d = alerts.data?.total ?? 0;
+  const alertHosts = alerts.data?.hosts ?? 0;
   const outdated = agentVersions?.outdated ?? 0;
 
   const isDark = theme === "dark";
@@ -50,7 +52,7 @@ export default function Dashboard() {
     { show: failed24h > 0, icon: <XCircle className="h-4 w-4" />, text: `${plural(failed24h, "задача завершилась", "задачи завершились", "задач завершились")} ошибкой за сутки`, to: "/tasks?status=failed", tone: "text-rose-600 dark:text-rose-400" },
     { show: outdated > 0, icon: <ArrowUpCircle className="h-4 w-4" />, text: `Устаревший агент на ${pcCount(outdated)} (актуальная ${agentVersions?.available_version ?? "—"})`, to: "/hosts?agent=outdated", tone: "text-amber-600 dark:text-amber-400" },
     { show: stats.stale > 0, icon: <Clock className="h-4 w-4" />, text: `${pcCount(stats.stale)} не проверялись больше 7 дней`, to: "/hosts?checked=older", tone: "text-amber-600 dark:text-amber-400" },
-    { show: alerts7d > 0, icon: <BellRing className="h-4 w-4" />, text: `${plural(alerts7d, "алерт", "алерта", "алертов")} от агентов за неделю (смена оборудования)`, to: "/hosts", tone: "text-amber-600 dark:text-amber-400" },
+    { show: alerts7d > 0, icon: <BellRing className="h-4 w-4" />, text: `${plural(alerts7d, "алерт", "алерта", "алертов")} от агентов за неделю на ${pcCount(alertHosts)} (смена оборудования)`, to: "/hosts", tone: "text-amber-600 dark:text-amber-400" },
     { show: stats.withoutAgent > 0, icon: <PlugZap className="h-4 w-4" />, text: `${pcCount(stats.withoutAgent)} без агента`, to: "/hosts?agent=without", tone: "text-muted-foreground" },
   ];
   const attentionItems = attention.filter((a) => a.show);
