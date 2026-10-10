@@ -51,6 +51,11 @@ TCP_CHECK_TIMEOUT = 5
 RECHECK_ATTEMPTS = 6
 RECHECK_DELAY = 30
 
+# Установщик агента всегда держит SSH на порту 22 (installer/FleetManagerAgent.iss),
+# а новый агент порт не сообщает. Хосты, которым старый агент когда-то записал
+# другой порт (MR32-440-09: 44596), после обновления иначе стали бы недоступны.
+INSTALLER_SSH_PORT = 22
+
 UNINSTALL_KEYS = (
     r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
     r"HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
@@ -73,6 +78,26 @@ $service = Get-Service -Name FleetManagerAgent
 # Скачивает установщик с сервера агентским токеном самого хоста и ставит его
 # поверх текущей установки. Инсталлятор сохраняет agent.json (режим обновления),
 # поэтому повторная регистрация и enrollment-токен не нужны.
+#
+# Установщик запускается через WMI (Win32_Process.Create), то есть вне SSH-сессии.
+# Win32-OpenSSH держит все процессы сессии в одном job-объекте и завершает их
+# вместе с сессией: установщик, запущенный через Start-Process, погибал, как
+# только скрипт возвращал управление. На SU5-D206-TEMP он успел остановить
+# службу и скопировать файлы, а до своего скрипта установки не дошёл — агент
+# остался остановленным. Тот же job-объект — причина, по которой раньше
+# зависал Start-Process -Wait.
+#
+# Готово, когда процесс установщика завершился: заглушка Setup.exe ждёт
+# Setup.tmp, а тот выполняет всю установку, включая PowerShell-скрипт. Дескриптор
+# процесса берётся сразу, чтобы после выхода был доступен код возврата. Версию
+# в реестре ждать нельзя: при обновлении там с самого начала старая версия.
+#
+# Сессию всё равно может оборвать перезапуск sshd в конце установки; тогда
+# сервер перепроверяет версию новой сессией (_recheck_version).
+#
+# Комментарии — здесь, а не в скрипте: команда уходит как -EncodedCommand
+# (UTF-16 + base64, ~2,7 символа на символ скрипта), а длина команды по SSH
+# ограничена примерно 9 тыс. символов.
 UPDATE_SCRIPT = f"""
 $ErrorActionPreference = 'Stop'
 $configPath = Join-Path $env:ProgramData 'FleetManagerAgent\\agent.json'
@@ -87,33 +112,29 @@ $dest = Join-Path $env:TEMP '{INSTALLER_FILENAME}'
 $ProgressPreference = 'SilentlyContinue'
 Invoke-WebRequest -Uri "$base/api/agent/installer" -Headers @{{ Authorization = "Bearer $($config.AgentToken)" }} -OutFile $dest -UseBasicParsing -TimeoutSec 900
 
-$process = Start-Process -FilePath $dest -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -PassThru
-# Deliberately not -Wait: the installer's manifest requires elevation, and
-# Start-Process -Wait on a manifest-elevated exe launched over a non-interactive
-# SSH session is unreliable — observed on production hosts never returning even
-# though the install had already finished and the process itself had exited (no
-# child process left, nothing to wait for). Poll instead: HasExited/ExitCode are
-# plain non-blocking GetExitCodeProcess() calls, a different code path from the
-# blocking wait that hangs, and the registry entry is the authoritative signal
-# for "the install actually finished" regardless of the process handle anyway.
-$version = $null
-$deadline = (Get-Date).AddSeconds(300)
-do {{
-    Start-Sleep -Seconds 3
-    $entry = Get-ItemProperty '{UNINSTALL_KEYS[0]}','{UNINSTALL_KEYS[1]}' -ErrorAction SilentlyContinue |
-        Where-Object {{ $_.DisplayName -eq '{AGENT_DISPLAY_NAME}' }} |
-        Select-Object -First 1
-    $version = [string]$entry.DisplayVersion
-}} while (-not $version -and (Get-Date) -lt $deadline)
+$installed = {{ Get-ItemProperty '{UNINSTALL_KEYS[0]}','{UNINSTALL_KEYS[1]}' -ErrorAction SilentlyContinue |
+    Where-Object {{ $_.DisplayName -eq '{AGENT_DISPLAY_NAME}' }} | Select-Object -First 1 }}
+$previous = [string](& $installed).DisplayVersion
+$commandLine = '"' + $dest + '" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-'
+$created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{{ CommandLine = $commandLine }}
+if ($created.ReturnValue -ne 0) {{ throw "Win32_Process.Create failed with code $($created.ReturnValue)" }}
+$process = Get-Process -Id $created.ProcessId -ErrorAction SilentlyContinue
+if ($process) {{ $null = $process.Handle }}
 
+$deadline = (Get-Date).AddSeconds(900)
+while ($process -and -not $process.HasExited -and (Get-Date) -lt $deadline) {{ Start-Sleep -Seconds 3 }}
+$finished = (-not $process) -or $process.HasExited
 $exitCode = $null
-if ($process.HasExited) {{ $exitCode = $process.ExitCode }}
+if ($process -and $process.HasExited) {{ $exitCode = $process.ExitCode }}
+$version = [string](& $installed).DisplayVersion
 
 Remove-Item $dest -Force -ErrorAction SilentlyContinue
 $service = Get-Service -Name FleetManagerAgent -ErrorAction SilentlyContinue
 [pscustomobject]@{{
     version = $version
+    previous_version = $previous
     exit_code = $exitCode
+    finished = $finished
     service_status = [string]$service.Status
 }} | ConvertTo-Json -Compress
 """
@@ -191,6 +212,16 @@ def _recheck_version(inventory: dict, host: Host, available: str | None) -> str 
         if version and version_status(version, available) != STATUS_OUTDATED:
             return version
     return None
+
+
+def _adopt_installer_ssh_port(db, task: TaskRun, host: Host) -> bool:
+    """После установки SSH слушает INSTALLER_SSH_PORT; True — порт хоста изменён."""
+    if host.ssh_port == INSTALLER_SSH_PORT:
+        return False
+    _append_log(db, task, f"[{_label(host)}] SSH-порт {host.ssh_port} → {INSTALLER_SSH_PORT}: установщик агента держит SSH на {INSTALLER_SSH_PORT}")
+    host.ssh_port = INSTALLER_SSH_PORT
+    db.commit()
+    return True
 
 
 def _target_hosts(db, task: TaskRun) -> list[Host]:
@@ -306,6 +337,10 @@ def run_agent_update(task_run_id: str):
                     _store_version(db, host, version)
                 exit_code = result.get("exit_code")
 
+                if result.get("finished") is False:
+                    any_failure = True
+                    _append_log(db, task, f"[{label}] установщик не завершился за 15 минут, версия сейчас: {version or 'неизвестно'}")
+                    continue
                 if exit_code not in (0, None):
                     any_failure = True
                     _append_log(db, task, f"[{label}] установщик завершился с кодом {exit_code}")
@@ -322,10 +357,16 @@ def run_agent_update(task_run_id: str):
                     _append_log(db, task, f"[{label}] после установки версия {version} всё ещё старее {available}")
                 else:
                     _append_log(db, task, f"[{label}] обновлено: {previous or 'неизвестно'} → {version}, служба: {service}")
+                    _adopt_installer_ssh_port(db, task, host)
             except Exception as exc:  # noqa: BLE001
                 # Установщик перезапускает службу агента и может задеть SSH-сессию.
                 # Прежде чем считать хост упавшим, перепроверяем версию новой сессией.
                 _append_log(db, task, f"[{label}] связь потеряна во время установки ({exc}); проверяем результат")
+                # Сессию обрывает перезапуск sshd в конце установки — к этому
+                # моменту SSH уже на порту установщика.
+                port_changed = _adopt_installer_ssh_port(db, task, host)
+                if port_changed:
+                    inventory = build_full_inventory(db, [h.id for h in hosts])
                 confirmed = _recheck_version(inventory, host, available)
                 if confirmed:
                     _store_version(db, host, confirmed)
