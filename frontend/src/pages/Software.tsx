@@ -1,231 +1,225 @@
-import { useEffect, useState } from "react";
-import { Download, ScanLine, Search } from "lucide-react";
-import { apiClient, getAccessToken } from "../api/client";
-import { useAuth } from "../context/AuthContext";
-import SoftwareTable, { SoftwareItemRow } from "../components/SoftwareTable";
-import InstallerManager from "../components/InstallerManager";
+import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { Download, MoreHorizontal, Play } from "lucide-react";
+import { useCanEdit, useFleet, usePackageHosts, useSoftwarePackages } from "../api/queries";
+import type { Host, SoftwarePackage } from "../api/types";
+import PageHeader from "../components/ui/PageHeader";
+import SearchInput from "../components/ui/SearchInput";
+import Checkbox from "../components/ui/Checkbox";
 import Button from "../components/ui/Button";
+import Drawer from "../components/ui/Drawer";
+import Modal from "../components/ui/Modal";
+import Menu from "../components/ui/Menu";
+import Tabs from "../components/ui/Tabs";
+import { Empty, Loading } from "../components/ui/States";
+import PlaybookRunForm from "../components/PlaybookRunForm";
+import { StatusDot } from "./hosts/HostTable";
+import { downloadFromApi } from "../lib/download";
+import { hostLabel, pcCount } from "../lib/format";
+import { useDebounced } from "../lib/useDebounced";
 
-interface Host {
-  id: string;
-  hostname: string | null;
-  ip_address: string | null;
-  group_id: string | null;
-}
-
-interface HostGroup {
-  id: string;
-  name: string;
-}
-
-interface SummaryRow {
-  name: string;
-  version: string | null;
-  host_count: number;
-}
-
-type Tab = "registry" | "summary" | "installers";
-
-const TABS: { id: Tab; label: string }[] = [
-  { id: "registry", label: "Реестр" },
-  { id: "summary", label: "Сводка" },
-  { id: "installers", label: "Установочники" },
-];
+const PAGE = 150;
 
 export default function Software() {
-  const { user } = useAuth();
-  const canScan = user?.role === "admin" || user?.role === "operator";
+  const [params, setParams] = useSearchParams();
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounced(search.trim());
+  const [hideSystem, setHideSystem] = useState(true);
+  const [limit, setLimit] = useState(PAGE);
+  const { hosts } = useFleet();
+  const { data, isLoading, isFetching } = useSoftwarePackages({ name: debouncedSearch, exclude_system: hideSystem });
+  const agents = hosts.filter((h) => h.has_agent).length || 1;
+  const openName = params.get("package");
 
-  const [tab, setTab] = useState<Tab>("registry");
-  const [items, setItems] = useState<SoftwareItemRow[]>([]);
-  const [summary, setSummary] = useState<SummaryRow[]>([]);
-  const [hosts, setHosts] = useState<Host[]>([]);
-  const [groups, setGroups] = useState<HostGroup[]>([]);
-  const [nameFilter, setNameFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [excludeSystem, setExcludeSystem] = useState(true);
-  const [selectedHostIds, setSelectedHostIds] = useState<string[]>([]);
-  const [scanMessage, setScanMessage] = useState<string | null>(null);
-
-  async function loadItems() {
-    const { data } = await apiClient.get<SoftwareItemRow[]>("/software", {
-      params: {
-        name: nameFilter || undefined,
-        status_filter: statusFilter || undefined,
-        exclude_system: excludeSystem || undefined,
-      },
+  const setPackage = (name: string | null) =>
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (name) next.set("package", name);
+      else next.delete("package");
+      return next;
     });
-    setItems(data);
-  }
 
-  async function loadHostsAndGroups() {
-    const [{ data: hostData }, { data: groupData }] = await Promise.all([
-      apiClient.get<Host[]>("/hosts"),
-      apiClient.get<HostGroup[]>("/hosts/groups"),
-    ]);
-    setHosts(hostData);
-    setGroups(groupData);
-  }
-
-  useEffect(() => {
-    loadHostsAndGroups();
-  }, []);
-
-  useEffect(() => {
-    loadItems();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nameFilter, statusFilter, excludeSystem]);
-
-  useEffect(() => {
-    if (tab === "summary") {
-      apiClient.get<SummaryRow[]>("/software/summary").then((r) => setSummary(r.data));
-    }
-  }, [tab]);
-
-  function toggleHost(id: string) {
-    setSelectedHostIds((prev) => (prev.includes(id) ? prev.filter((h) => h !== id) : [...prev, id]));
-  }
-
-  async function triggerScan() {
-    if (selectedHostIds.length === 0) return;
-    const { data } = await apiClient.post("/software/scan", { host_ids: selectedHostIds });
-    setScanMessage(`Сканирование запущено, задача: ${data.task_run_id}`);
-  }
-
-  async function downloadExport(format: "csv" | "pdf") {
-    const token = getAccessToken();
-    const res = await fetch(`${apiClient.defaults.baseURL}/software/export.${format}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `software_inventory.${format}`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+  const packages = data ?? [];
 
   return (
     <div className="animate-fade-in space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">Мониторинг ПО</h1>
-        {tab === "registry" && (
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" size="sm" onClick={() => downloadExport("csv")}>
-              <Download className="h-3.5 w-3.5" />
-              CSV
-            </Button>
-            <Button variant="secondary" size="sm" onClick={() => downloadExport("pdf")}>
-              <Download className="h-3.5 w-3.5" />
-              PDF
-            </Button>
-          </div>
-        )}
+      <PageHeader
+        title="ПО"
+        description="Каталог установленного ПО по данным агентов: на скольких ПК стоит пакет и в каких версиях"
+        actions={
+          <Menu
+            trigger={({ toggle }) => (
+              <button className="btn-secondary btn-sm" onClick={toggle} aria-label="Экспорт">
+                <Download className="h-3.5 w-3.5" />
+                Экспорт
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </button>
+            )}
+            items={[
+              { label: "Полный реестр в CSV", onClick: () => downloadFromApi("/software/export.csv", "software_inventory.csv") },
+              { label: "Полный реестр в PDF", onClick: () => downloadFromApi("/software/export.pdf", "software_inventory.pdf") },
+            ]}
+          />
+        }
+      />
+
+      <div className="flex flex-wrap items-center gap-3">
+        <SearchInput value={search} onChange={(v) => { setSearch(v); setLimit(PAGE); }} placeholder="Название пакета" className="min-w-[240px] flex-1" />
+        <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+          <Checkbox checked={hideSystem} onChange={(e) => setHideSystem(e.target.checked)} />
+          Скрыть системное ПО Microsoft
+        </label>
+        <span className="text-sm text-muted-foreground">{isFetching && !isLoading ? "Обновление…" : `${packages.length} пакетов`}</span>
       </div>
 
-      <div role="tablist" className="inline-flex rounded-lg border border-border bg-muted/40 p-0.5">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            role="tab"
-            aria-selected={tab === t.id}
-            onClick={() => setTab(t.id)}
-            className={`cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 ${
-              tab === t.id
-                ? "bg-surface text-foreground shadow-panel"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {tab === "registry" && (
-        <>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-subtle" />
-              <input
-                aria-label="Поиск по названию ПО"
-                placeholder="Поиск по названию"
-                value={nameFilter}
-                onChange={(e) => setNameFilter(e.target.value)}
-                className="input-base w-auto py-2 pl-8 text-sm"
-              />
-            </div>
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="input-base w-auto py-2 text-sm">
-              <option value="">Любой статус</option>
-              <option value="installed">installed</option>
-              <option value="removed">removed</option>
-              <option value="unknown">unknown</option>
-            </select>
-            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:text-foreground">
-              <input
-                type="checkbox"
-                checked={excludeSystem}
-                onChange={(e) => setExcludeSystem(e.target.checked)}
-                className="h-3.5 w-3.5 accent-blue-500"
-              />
-              Скрыть системное ПО
-            </label>
-          </div>
-
-          {canScan && (
-            <div className="surface-panel">
-              <h2 className="mb-2 text-sm font-medium text-muted-foreground">Запустить сканирование ПО</h2>
-              <div className="mb-3 flex flex-wrap gap-2">
-                {hosts.map((h) => (
-                  <label key={h.id} className={selectedHostIds.includes(h.id) ? "chip-on" : "chip-off"}>
-                    <input type="checkbox" className="sr-only" checked={selectedHostIds.includes(h.id)} onChange={() => toggleHost(h.id)} />
-                    {h.hostname || h.ip_address || h.id}
-                  </label>
-                ))}
-              </div>
-              <Button onClick={triggerScan} disabled={selectedHostIds.length === 0}>
-                <ScanLine className="h-4 w-4" />
-                Сканировать выбранные ({selectedHostIds.length})
-              </Button>
-              {scanMessage && <p className="mt-2 text-sm text-muted-foreground">{scanMessage}</p>}
-            </div>
-          )}
-
-          <SoftwareTable items={items} hosts={hosts} groups={groups} />
-        </>
-      )}
-
-      {tab === "summary" && (
-        <div className="table-shell">
-          <table className="table-base">
-            <thead>
-              <tr>
-                <th>Название</th>
-                <th>Версия</th>
-                <th>Установлено на хостах</th>
+      <div className="table-shell">
+        <table className="table-base">
+          <thead>
+            <tr>
+              <th>Пакет</th>
+              <th className="w-56">Установлен</th>
+              <th>Версии</th>
+            </tr>
+          </thead>
+          <tbody>
+            {packages.slice(0, limit).map((p) => (
+              <tr key={p.name} className="is-interactive" tabIndex={0} onClick={() => setPackage(p.name)} onKeyDown={(e) => e.key === "Enter" && setPackage(p.name)}>
+                <td className="font-medium text-foreground">{p.name}</td>
+                <td>
+                  <div className="flex items-center gap-2">
+                    <div className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
+                      <div className="h-full rounded-full bg-blue-500" style={{ width: `${Math.min(100, (p.host_count / agents) * 100)}%` }} />
+                    </div>
+                    <span className="tabular-nums text-muted-foreground">{pcCount(p.host_count)}</span>
+                  </div>
+                </td>
+                <td>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {p.versions.slice(0, 3).map((v) => (
+                      <span key={v.version ?? "none"} className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground/80">
+                        {v.version ?? "без версии"} <span className="text-subtle">×{v.host_count}</span>
+                      </span>
+                    ))}
+                    {p.versions.length > 3 && <span className="text-xs text-subtle">+{p.versions.length - 3}</span>}
+                  </div>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {summary.map((s, i) => (
-                <tr key={i}>
-                  <td className="font-medium text-foreground">{s.name}</td>
-                  <td className="font-mono text-foreground/80">{s.version || "—"}</td>
-                  <td className="tabular-nums">{s.host_count}</td>
-                </tr>
-              ))}
-              {summary.length === 0 && (
-                <tr>
-                  <td colSpan={3} className="py-8 text-center text-subtle">
-                    Нет данных — запустите сканирование ПО
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+            ))}
+          </tbody>
+        </table>
+        {isLoading && <Loading />}
+        {!isLoading && packages.length === 0 && <Empty>{search ? "Ничего не найдено" : "Данных нет — агенты ещё не прислали инвентаризацию"}</Empty>}
+      </div>
+      {packages.length > limit && (
+        <div className="flex justify-center">
+          <Button variant="secondary" onClick={() => setLimit((l) => l + PAGE)}>Показать ещё ({packages.length - limit})</Button>
         </div>
       )}
 
-      {tab === "installers" && <InstallerManager />}
+      {openName && <PackageDrawer name={openName} summary={packages.find((p) => p.name === openName)} onClose={() => setPackage(null)} />}
     </div>
+  );
+}
+
+function PackageDrawer({ name, summary, onClose }: { name: string; summary?: SoftwarePackage; onClose: () => void }) {
+  const canEdit = useCanEdit();
+  const { hosts, hostById, tree } = useFleet();
+  const { data, isLoading } = usePackageHosts(name);
+  const [tab, setTab] = useState<"installed" | "missing">("installed");
+  const [version, setVersion] = useState<string>("");
+  const [runFor, setRunFor] = useState<string[] | null>(null);
+
+  const installed = useMemo(() => {
+    const rows: { host: Host; version: string | null }[] = [];
+    for (const item of data ?? []) {
+      const host = hostById.get(item.host_id);
+      if (host) rows.push({ host, version: item.version });
+    }
+    return rows.sort((a, b) => hostLabel(a.host).localeCompare(hostLabel(b.host), "ru", { numeric: true }));
+  }, [data, hostById]);
+
+  // ПК с агентом, где пакета нет: кандидаты на установку
+  const missing = useMemo(() => {
+    const has = new Set(installed.map((r) => r.host.id));
+    return hosts.filter((h) => h.has_agent && !has.has(h.id)).sort((a, b) => hostLabel(a).localeCompare(hostLabel(b), "ru", { numeric: true }));
+  }, [hosts, installed]);
+
+  const versions = useMemo(() => {
+    const counts = new Map<string, number>();
+    installed.forEach((r) => counts.set(r.version ?? "", (counts.get(r.version ?? "") ?? 0) + 1));
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  }, [installed]);
+
+  const list: { host: Host; version: string | null }[] =
+    tab === "installed" ? installed.filter((r) => !version || (r.version ?? "") === version) : missing.map((host) => ({ host, version: null }));
+
+  return (
+    <Drawer open onClose={onClose} title={name} subtitle={summary ? `Установлен на ${pcCount(summary.host_count)}` : undefined} width="lg">
+      {isLoading ? (
+        <Loading />
+      ) : (
+        <div className="space-y-4">
+          <Tabs
+            value={tab}
+            onChange={(t) => { setTab(t); setVersion(""); }}
+            tabs={[
+              { id: "installed", label: "Установлен", count: installed.length },
+              { id: "missing", label: "Не установлен (с агентом)", count: missing.length },
+            ]}
+          />
+          {tab === "installed" && versions.length > 1 && (
+            <div className="flex flex-wrap gap-1.5">
+              <button className={!version ? "chip-on" : "chip-off"} onClick={() => setVersion("")}>Все версии</button>
+              {versions.map(([v, count]) => (
+                <button key={v} className={version === v ? "chip-on" : "chip-off"} onClick={() => setVersion(v)}>
+                  <span className="font-mono">{v || "без версии"}</span>
+                  <span className="ml-1 text-subtle">×{count}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {canEdit && list.length > 0 && (
+            <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
+              <span className="text-muted-foreground">
+                {tab === "installed" ? "Обновить или удалить пакет на этих ПК" : "Установить пакет на эти ПК"}
+              </span>
+              <Button size="sm" onClick={() => setRunFor(list.map((r) => r.host.id))}>
+                <Play className="h-3.5 w-3.5" />
+                Плейбук на {pcCount(list.length)}
+              </Button>
+            </div>
+          )}
+          <div className="table-shell">
+            <table className="table-base">
+              <thead>
+                <tr>
+                  <th>Хост</th>
+                  <th>Группа</th>
+                  {tab === "installed" && <th>Версия</th>}
+                  <th>Статус</th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.slice(0, 500).map(({ host, version: v }) => (
+                  <tr key={host.id}>
+                    <td className="font-medium text-foreground">{hostLabel(host)}</td>
+                    <td className="max-w-[200px] truncate text-muted-foreground">{tree.pathOf(host.group_id)}</td>
+                    {tab === "installed" && <td className="font-mono text-xs">{v ?? "—"}</td>}
+                    <td><StatusDot status={host.status} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {list.length > 500 && <p className="px-4 py-2 text-xs text-subtle">Показаны первые 500 из {list.length}</p>}
+            {list.length === 0 && <Empty>Нет хостов</Empty>}
+          </div>
+        </div>
+      )}
+      {runFor && (
+        <Modal open onClose={() => setRunFor(null)} title={`Запуск плейбука: ${name}`} size="lg">
+          <PlaybookRunForm initialHostIds={runFor} onDone={() => setRunFor(null)} pickerHeight={260} />
+        </Modal>
+      )}
+    </Drawer>
   );
 }

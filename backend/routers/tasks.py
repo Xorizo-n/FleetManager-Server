@@ -1,8 +1,9 @@
 import asyncio
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import cast, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
@@ -22,6 +23,9 @@ TERMINAL_STATUSES = (TaskStatus.success, TaskStatus.failed)
 def list_tasks(
     task_type: TaskType | None = None,
     status_filter: TaskStatus | None = None,
+    host_id: uuid.UUID | None = None,
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -32,7 +36,22 @@ def list_tasks(
         query = query.where(TaskRun.task_type == task_type)
     if status_filter:
         query = query.where(TaskRun.status == status_filter)
-    return db.execute(query.order_by(TaskRun.created_at.desc()).limit(200)).scalars().all()
+    if host_id:
+        query = query.where(cast(TaskRun.host_ids, JSONB).contains([str(host_id)]))
+    tasks = db.execute(query.order_by(TaskRun.created_at.desc()).offset(offset).limit(limit)).scalars().all()
+    return with_author_names(db, tasks)
+
+
+def with_author_names(db: Session, tasks: list[TaskRun]) -> list[TaskRunOut]:
+    """Кто запустил задачу; у задач по расписанию автора нет."""
+    author_ids = {task.created_by for task in tasks if task.created_by}
+    names = dict(db.execute(select(User.id, User.username).where(User.id.in_(author_ids))).all()) if author_ids else {}
+    result = []
+    for task in tasks:
+        out = TaskRunOut.model_validate(task)
+        out.created_by_name = names.get(task.created_by)
+        result.append(out)
+    return result
 
 
 @router.get("/{task_id}", response_model=TaskRunDetailOut)
@@ -42,7 +61,9 @@ def get_task(task_id: uuid.UUID, db: Session = Depends(get_db), user: User = Dep
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задача не найдена")
     if not can_view_task_type(user.role, task_run.task_type):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient permissions")
-    return task_run
+    out = TaskRunDetailOut.model_validate(task_run)
+    out.created_by_name = with_author_names(db, [task_run])[0].created_by_name
+    return out
 
 
 @router.get("/{task_id}/stream")

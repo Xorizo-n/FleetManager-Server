@@ -1,9 +1,11 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from models.host import HostStatus, HostOS
+from schemas.task import TaskRunOut
 from services.host_target import normalize_host_address, resolve_host_target
 
 
@@ -23,6 +25,63 @@ class HostGroupOut(BaseModel):
     credential_id: uuid.UUID | None
     parent_id: uuid.UUID | None = None
     is_auto: bool = False
+
+
+class HostGroupUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    # null снимает учётку: тогда действует учётка родительской группы
+    credential_id: uuid.UUID | None = None
+
+    @field_validator("name", "description", mode="before")
+    @classmethod
+    def strip_text(cls, value: str | None) -> str | None:
+        return value.strip() if isinstance(value, str) else value
+
+
+class AccessChangeRequest(BaseModel):
+    """Смена учётки SSH с проверкой входа (services/access_change.py)."""
+
+    action: Literal["set_host_credential", "set_group_credential", "move_to_group"]
+    host_ids: list[uuid.UUID] = []
+    group_id: uuid.UUID | None = None
+    group_name: str | None = None
+    # null: «как у группы» для хоста, «наследовать от родителя» для группы
+    credential_id: uuid.UUID | None = None
+
+    @field_validator("group_name", mode="before")
+    @classmethod
+    def strip_name(cls, value: str | None) -> str | None:
+        return (value.strip() or None) if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def check_target(self):
+        if self.action in ("set_host_credential", "move_to_group") and not self.host_ids:
+            raise ValueError("Необходимо выбрать хотя бы один хост")
+        if self.action == "set_group_credential" and self.group_id is None:
+            raise ValueError("Не указана группа")
+        if self.action == "move_to_group" and self.group_id and self.group_name:
+            raise ValueError("Укажите существующую группу или имя новой, не оба")
+        return self
+
+
+class AccessChangeResult(BaseModel):
+    # Задача проверки входа; None — учётка ни у кого не менялась, изменение уже применено
+    task: TaskRunOut | None
+    applied: int
+    to_check: int
+    skipped: int
+
+
+class HostBulkDeleteRequest(BaseModel):
+    host_ids: list[uuid.UUID]
+
+    @field_validator("host_ids")
+    @classmethod
+    def require_hosts(cls, value: list[uuid.UUID]) -> list[uuid.UUID]:
+        if not value:
+            raise ValueError("Необходимо выбрать хотя бы один хост")
+        return value
 
 
 class HostGroupAssignRequest(BaseModel):
@@ -107,6 +166,14 @@ class HostOut(BaseModel):
     has_agent: bool = False
     agent_version: str | None = None
     agent_version_checked_at: datetime | None = None
+    last_seen_at: datetime | None = None
+    # Железо из heartbeat агента: реестр хостов показывает его колонками
+    hw_manufacturer: str | None = None
+    hw_model: str | None = None
+    hw_serial_number: str | None = None
+    hw_os_caption: str | None = None
+    hw_processor: str | None = None
+    hw_total_memory_bytes: int | None = None
     created_at: datetime
     updated_at: datetime
 

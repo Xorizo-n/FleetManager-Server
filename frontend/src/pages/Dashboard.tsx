@@ -1,321 +1,149 @@
-import { useEffect, useState } from "react";
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  Legend,
-} from "recharts";
-import { Download, RefreshCw, Server, CheckCircle2, XCircle, HelpCircle } from "lucide-react";
-import { apiClient, getAccessToken } from "../api/client";
+import { ReactNode, useMemo } from "react";
+import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { ArrowUpCircle, BellRing, ChevronRight, Clock, PlugZap, XCircle } from "lucide-react";
+import { apiClient } from "../api/client";
+import { useAlerts, useFleet, useTasks } from "../api/queries";
 import { useTheme } from "../context/ThemeContext";
-import { useAuth } from "../context/AuthContext";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
-import Button from "../components/ui/Button";
+import PageHeader from "../components/ui/PageHeader";
+import { useOpenTask } from "../components/TaskPanel";
+import { formatDateTime, pcCount, plural, STATUS_LABELS, taskTitle } from "../lib/format";
 
-interface HostsSummary {
-  total: number;
-  online: number;
-  offline: number;
-  unknown: number;
-}
-
-interface TaskRunOut {
-  id: string;
-  task_type: string;
-  playbook_name: string | null;
-  status: string;
-  created_at: string;
-}
-
-interface SoftwareSummaryItem {
-  name: string;
-  version: string | null;
-  host_count: number;
-}
-
-interface SoftwareHistoryOut {
-  id: string;
-  name: string;
-  old_version: string | null;
-  new_version: string | null;
-  change_type: string;
-  changed_at: string;
-}
-
-interface InstallerFile {
-  name: string;
-  size: number;
-  mtime: string;
-}
-
-interface AgentVersionOverview {
-  available_version: string | null;
-  installer_present: boolean;
-  total_agents: number;
-  up_to_date: number;
-  outdated: number;
-  unknown: number;
-  hosts: { host_id: string; hostname: string | null; agent_version: string | null; version_status: string }[];
-}
-
-const AGENT_INSTALLER_NAME = "FleetManagerAgent-Setup.exe";
-
-const STAT_CARDS: {
-  key: keyof HostsSummary;
-  label: string;
-  icon: typeof Server;
-  accent: string;
-}[] = [
-  { key: "total", label: "Всего хостов", icon: Server, accent: "text-foreground" },
-  { key: "online", label: "Online", icon: CheckCircle2, accent: "text-emerald-600 dark:text-emerald-400" },
-  { key: "offline", label: "Offline", icon: XCircle, accent: "text-rose-600 dark:text-rose-400" },
-  { key: "unknown", label: "Неизвестно", icon: HelpCircle, accent: "text-muted-foreground" },
-];
+const DAY = 86_400_000;
 
 export default function Dashboard() {
   const { theme } = useTheme();
-  const { user } = useAuth();
-  const canManage = user?.role === "admin" || user?.role === "operator";
-  const [loading, setLoading] = useState(true);
-  const [summary, setSummary] = useState<HostsSummary | null>(null);
-  const [recentTasks, setRecentTasks] = useState<TaskRunOut[]>([]);
-  const [topSoftware, setTopSoftware] = useState<SoftwareSummaryItem[]>([]);
-  const [staleHosts, setStaleHosts] = useState<string[]>([]);
-  const [recentChanges, setRecentChanges] = useState<SoftwareHistoryOut[]>([]);
-  const [onlineTimeline, setOnlineTimeline] = useState<{ hour: string; online: number }[]>([]);
-  const [weeklyStats, setWeeklyStats] = useState<{ day: string; success: number; failed: number }[]>([]);
-  const [agentInstaller, setAgentInstaller] = useState<InstallerFile | null>(null);
-  const [agentVersions, setAgentVersions] = useState<AgentVersionOverview | null>(null);
-  const [syncingAgent, setSyncingAgent] = useState(false);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const openTask = useOpenTask();
+  const { hosts, agentVersions, isLoading } = useFleet();
+  const timeline = useQuery({ queryKey: ["dashboard", "timeline"], queryFn: () => apiClient.get<{ hour: string; online: number }[]>("/dashboard/online-timeline").then((r) => r.data) });
+  const weekly = useQuery({ queryKey: ["dashboard", "weekly"], queryFn: () => apiClient.get<{ day: string; success: number; failed: number }[]>("/dashboard/weekly-run-stats").then((r) => r.data) });
+  const recent = useTasks({ limit: 50 }, 10_000);
+  const alerts = useAlerts();
+
+  const stats = useMemo(() => {
+    const now = Date.now();
+    return {
+      total: hosts.length,
+      online: hosts.filter((h) => h.status === "online").length,
+      offline: hosts.filter((h) => h.status === "offline").length,
+      withoutAgent: hosts.filter((h) => !h.has_agent).length,
+      stale: hosts.filter((h) => !h.last_checked_at || now - new Date(h.last_checked_at).getTime() > 7 * DAY).length,
+    };
+  }, [hosts]);
+
+  const failed24h = (recent.data ?? []).filter((t) => t.status === "failed" && Date.now() - new Date(t.created_at).getTime() < DAY).length;
+  const running = (recent.data ?? []).filter((t) => t.status === "running" || t.status === "queued").length;
+  const alerts7d = (alerts.data ?? []).filter((a) => Date.now() - new Date(a.created_at).getTime() < 7 * DAY).length;
+  const outdated = agentVersions?.outdated ?? 0;
 
   const isDark = theme === "dark";
   const chart = {
     grid: isDark ? "#1e293b" : "#e2e8f0",
     tick: isDark ? "#94a3b8" : "#64748b",
-    tooltip: {
-      background: isDark ? "#0f172a" : "#ffffff",
-      border: `1px solid ${isDark ? "#1e293b" : "#e2e8f0"}`,
-      borderRadius: 8,
-      fontSize: 12,
-      color: isDark ? "#f1f5f9" : "#0f172a",
-    },
-    cursorFill: isDark ? "rgba(148, 163, 184, 0.08)" : "rgba(100, 116, 139, 0.08)",
-    cursorStroke: isDark ? "#334155" : "#cbd5e1",
+    tooltip: { background: isDark ? "#0f172a" : "#ffffff", border: `1px solid ${isDark ? "#1e293b" : "#e2e8f0"}`, borderRadius: 8, fontSize: 12, color: isDark ? "#f1f5f9" : "#0f172a" },
   };
 
-  async function loadAgentInstaller() {
-    const { data } = await apiClient.get<InstallerFile[]>("/installers");
-    const installer = data.find((file) => file.name === AGENT_INSTALLER_NAME)
-      ?? data.find((file) => /^FleetManagerAgent-Setup(?:[-_].+)?\.exe$/i.test(file.name));
-    setAgentInstaller(installer ?? null);
-  }
+  const attention: { show: boolean; icon: ReactNode; text: string; to: string; tone: string }[] = [
+    { show: failed24h > 0, icon: <XCircle className="h-4 w-4" />, text: `${plural(failed24h, "задача завершилась", "задачи завершились", "задач завершились")} ошибкой за сутки`, to: "/tasks?status=failed", tone: "text-rose-600 dark:text-rose-400" },
+    { show: outdated > 0, icon: <ArrowUpCircle className="h-4 w-4" />, text: `Устаревший агент на ${pcCount(outdated)} (актуальная ${agentVersions?.available_version ?? "—"})`, to: "/hosts?agent=outdated", tone: "text-amber-600 dark:text-amber-400" },
+    { show: stats.stale > 0, icon: <Clock className="h-4 w-4" />, text: `${pcCount(stats.stale)} не проверялись больше 7 дней`, to: "/hosts?checked=older", tone: "text-amber-600 dark:text-amber-400" },
+    { show: alerts7d > 0, icon: <BellRing className="h-4 w-4" />, text: `${plural(alerts7d, "алерт", "алерта", "алертов")} от агентов за неделю (смена оборудования)`, to: "/hosts", tone: "text-amber-600 dark:text-amber-400" },
+    { show: stats.withoutAgent > 0, icon: <PlugZap className="h-4 w-4" />, text: `${pcCount(stats.withoutAgent)} без агента`, to: "/hosts?agent=without", tone: "text-muted-foreground" },
+  ];
+  const attentionItems = attention.filter((a) => a.show);
 
-  async function loadAgentVersions() {
-    const { data } = await apiClient.get<AgentVersionOverview>("/agent/versions");
-    setAgentVersions(data);
-  }
-
-  useEffect(() => {
-    setLoading(true);
-    Promise.all([
-      apiClient.get("/dashboard/hosts-summary").then((r) => setSummary(r.data)),
-      apiClient.get("/dashboard/recent-tasks", { params: { limit: 8 } }).then((r) => setRecentTasks(r.data)),
-      apiClient.get("/dashboard/top-software", { params: { limit: 8 } }).then((r) => setTopSoftware(r.data)),
-      apiClient.get("/dashboard/stale-hosts", { params: { days: 7 } }).then((r) => setStaleHosts(r.data)),
-      apiClient.get("/dashboard/recent-software-changes", { params: { limit: 8 } }).then((r) => setRecentChanges(r.data)),
-      apiClient.get("/dashboard/online-timeline").then((r) => setOnlineTimeline(r.data)),
-      apiClient.get("/dashboard/weekly-run-stats").then((r) => setWeeklyStats(r.data)),
-      loadAgentInstaller(),
-      loadAgentVersions(),
-    ]).finally(() => setLoading(false));
-  }, []);
-
-  async function downloadAgent() {
-    if (!agentInstaller) return;
-
-    const token = getAccessToken();
-    const response = await fetch(
-      `${apiClient.defaults.baseURL}/installers/${encodeURIComponent(agentInstaller.name)}/download`,
-      { headers: token ? { Authorization: `Bearer ${token}` } : {} },
-    );
-    if (!response.ok) return;
-
-    const url = URL.createObjectURL(await response.blob());
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = agentInstaller.name;
-    link.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function handleSyncAgent() {
-    setSyncingAgent(true);
-    setSyncMessage(null);
-    try {
-      const { data } = await apiClient.post<{ updated: boolean; version?: string; reason?: string }>(
-        "/installers/agent/sync",
-      );
-      setSyncMessage(
-        data.updated
-          ? `Установщик агента обновлён до ${data.version}`
-          : data.reason || "Обновлений не найдено",
-      );
-      if (data.updated) await Promise.all([loadAgentInstaller(), loadAgentVersions()]);
-    } catch (e: any) {
-      setSyncMessage(e.response?.data?.detail || "Не удалось проверить обновление агента");
-    } finally {
-      setSyncingAgent(false);
-    }
-  }
+  const tiles = [
+    { label: "Всего хостов", value: stats.total, to: "/hosts", accent: "text-foreground" },
+    { label: "Online", value: stats.online, to: "/hosts?status=online", accent: "text-emerald-600 dark:text-emerald-400" },
+    { label: "Offline", value: stats.offline, to: "/hosts?status=offline", accent: "text-rose-600 dark:text-rose-400" },
+    { label: "Выполняется задач", value: running, to: "/tasks?status=running", accent: running ? "text-sky-600 dark:text-sky-400" : "text-foreground" },
+  ];
 
   return (
     <div className="animate-fade-in space-y-6">
-      <div className="flex items-center justify-end gap-2">
-        {syncMessage && <span className="text-sm text-muted-foreground">{syncMessage}</span>}
-        {canManage && (
-          <Button variant="secondary" size="sm" onClick={handleSyncAgent} loading={syncingAgent}>
-            <RefreshCw className="h-3.5 w-3.5" />
-            Проверить обновление агента
-          </Button>
-        )}
-        {canManage && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={downloadAgent}
-            disabled={!agentInstaller}
-            title={agentInstaller ? `Скачать ${agentInstaller.name}` : "Установщик агента ещё не синхронизирован"}
-          >
-            <Download className="h-3.5 w-3.5" />
-            Скачать агент
-          </Button>
-        )}
-      </div>
-      <h1 className="text-2xl font-semibold tracking-tight">Дашборд</h1>
+      <PageHeader title="Обзор" />
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        {STAT_CARDS.map(({ key, label, icon: Icon, accent }) => (
-          <Card key={key}>
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-medium text-muted-foreground">{label}</h2>
-              <Icon className={`h-4 w-4 ${accent}`} />
+        {tiles.map((t) => (
+          <Link key={t.label} to={t.to} className="surface-panel group transition-colors hover:border-blue-500/40">
+            <div className="flex items-center justify-between text-sm font-medium text-muted-foreground">
+              {t.label}
+              <ChevronRight className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100" />
             </div>
-            <p className={`mt-2 text-3xl font-bold tabular-nums ${accent}`}>
-              {loading
-                ? <span className="inline-block h-8 w-12 animate-pulse rounded-md bg-muted" />
-                : (summary?.[key] ?? "—")}
+            <p className={`mt-2 text-3xl font-bold tabular-nums ${t.accent}`}>
+              {isLoading ? <span className="inline-block h-8 w-12 animate-pulse rounded-md bg-muted" /> : t.value}
             </p>
-          </Card>
+          </Link>
         ))}
       </div>
 
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+        <Card title="Требует внимания">
+          {attentionItems.length === 0 ? (
+            <p className="py-6 text-center text-sm text-subtle">Всё в порядке</p>
+          ) : (
+            <ul className="-mx-2">
+              {attentionItems.map((a) => (
+                <li key={a.to + a.text}>
+                  <Link to={a.to} className="flex items-center gap-3 rounded-lg px-2 py-2.5 text-sm hover:bg-muted">
+                    <span className={a.tone}>{a.icon}</span>
+                    <span className="flex-1 text-foreground">{a.text}</span>
+                    <ChevronRight className="h-4 w-4 text-subtle" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+
+        <Card title="Последние задачи" action={<Link to="/tasks" className="text-xs text-blue-600 hover:underline dark:text-blue-400">Все задачи</Link>}>
+          <ul className="-mx-2">
+            {(recent.data ?? []).slice(0, 7).map((t) => (
+              <li key={t.id}>
+                <button onClick={() => openTask(t.id)} className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm hover:bg-muted">
+                  <span className="min-w-0 flex-1 truncate text-foreground">{taskTitle(t)}</span>
+                  <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">{pcCount(t.host_ids.length)}</span>
+                  <span className="hidden shrink-0 text-xs text-muted-foreground md:inline">{t.created_by_name ?? "расписание"}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">{formatDateTime(t.created_at)}</span>
+                  <Badge status={t.status}>{STATUS_LABELS[t.status]}</Badge>
+                </button>
+              </li>
+            ))}
+            {recent.data?.length === 0 && <p className="py-6 text-center text-sm text-subtle">Задач ещё не было</p>}
+          </ul>
+        </Card>
+      </div>
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card title="Online хосты за последние 24 часа">
+        <Card title="Online за последние 24 часа">
           <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={onlineTimeline}>
+            <LineChart data={timeline.data ?? []}>
               <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
-              <XAxis dataKey="hour" tick={{ fontSize: 10, fill: chart.tick }} interval={3} />
+              <XAxis dataKey="hour" tick={{ fontSize: 10, fill: chart.tick }} interval={3} tickFormatter={(v: string) => v.slice(-5)} />
               <YAxis tick={{ fontSize: 10, fill: chart.tick }} allowDecimals={false} />
-              <Tooltip contentStyle={chart.tooltip} cursor={{ stroke: chart.cursorStroke }} />
+              <Tooltip contentStyle={chart.tooltip} formatter={(v) => [v, "online"]} />
               <Line type="monotone" dataKey="online" stroke="#3b82f6" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         </Card>
-
-        <Card title="Запуски плейбуков за неделю">
+        <Card title="Задачи за 7 дней">
           <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={weeklyStats}>
+            <BarChart data={weekly.data ?? []}>
               <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
               <XAxis dataKey="day" tick={{ fontSize: 10, fill: chart.tick }} />
               <YAxis tick={{ fontSize: 10, fill: chart.tick }} allowDecimals={false} />
-              <Tooltip contentStyle={chart.tooltip} cursor={{ fill: chart.cursorFill }} />
+              <Tooltip contentStyle={chart.tooltip} cursor={{ fill: isDark ? "rgba(148,163,184,0.08)" : "rgba(100,116,139,0.08)" }} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="success" fill="#10b981" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="failed" fill="#f43f5e" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="success" name="успешно" stackId="runs" fill="#10b981" />
+              <Bar dataKey="failed" name="с ошибкой" stackId="runs" fill="#f43f5e" radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card title="Последние запуски плейбуков">
-          <ul className="space-y-2 text-sm">
-            {recentTasks.map((t) => (
-              <li key={t.id} className="flex items-center justify-between border-b border-border/70 pb-2 last:border-0 last:pb-0">
-                <span className="truncate">{t.playbook_name || t.task_type}</span>
-                <Badge status={t.status} />
-              </li>
-            ))}
-            {recentTasks.length === 0 && <p className="text-subtle">Нет данных</p>}
-          </ul>
-        </Card>
-
-        <Card title="Топ устанавливаемого ПО">
-          <ul className="space-y-2 text-sm">
-            {topSoftware.map((s, i) => (
-              <li key={i} className="flex items-center justify-between border-b border-border/70 pb-2 last:border-0 last:pb-0">
-                <span className="truncate">{s.name} {s.version && <span className="text-subtle">{s.version}</span>}</span>
-                <span className="text-muted-foreground tabular-nums">{s.host_count} хост(ов)</span>
-              </li>
-            ))}
-            {topSoftware.length === 0 && <p className="text-subtle">Нет данных</p>}
-          </ul>
-        </Card>
-
-        <Card title={`Хосты без сканирования > 7 дней (${staleHosts.length})`}>
-          <ul className="flex flex-wrap gap-2 text-sm">
-            {staleHosts.map((h) => (
-              <li key={h}>
-                <Badge status="stale" tone="warning">{h}</Badge>
-              </li>
-            ))}
-            {staleHosts.length === 0 && <p className="text-subtle">Все хосты просканированы недавно</p>}
-          </ul>
-        </Card>
-
-        <Card title={`Версии агента (доступна ${agentVersions?.available_version ?? "—"})`}>
-          <div className="flex flex-wrap gap-4 text-sm">
-            <span className="text-emerald-600 dark:text-emerald-400">Актуальны: {agentVersions?.up_to_date ?? 0}</span>
-            <span className="text-amber-600 dark:text-amber-400">Устарели: {agentVersions?.outdated ?? 0}</span>
-            <span className="text-muted-foreground">Без данных: {agentVersions?.unknown ?? 0}</span>
-            <span className="text-muted-foreground">Всего с агентом: {agentVersions?.total_agents ?? 0}</span>
-          </div>
-          <ul className="mt-3 space-y-2 text-sm">
-            {agentVersions?.hosts
-              .filter((h) => h.version_status === "outdated")
-              .slice(0, 8)
-              .map((h) => (
-                <li key={h.host_id} className="flex items-center justify-between border-b border-border/70 pb-2 last:border-0 last:pb-0">
-                  <span className="truncate">{h.hostname || h.host_id}</span>
-                  <span className="font-mono text-muted-foreground">{h.agent_version ?? "—"}</span>
-                </li>
-              ))}
-            {(agentVersions?.outdated ?? 0) === 0 && <p className="text-subtle">Устаревших агентов нет</p>}
-          </ul>
-        </Card>
-
-        <Card title="Последние изменения в реестре ПО">
-          <ul className="space-y-2 text-sm">
-            {recentChanges.map((c) => (
-              <li key={c.id} className="flex items-center justify-between border-b border-border/70 pb-2 last:border-0 last:pb-0">
-                <span className="truncate">{c.name}</span>
-                <span className="text-muted-foreground">
-                  {c.change_type}: {c.old_version || "—"} → {c.new_version || "—"}
-                </span>
-              </li>
-            ))}
-            {recentChanges.length === 0 && <p className="text-subtle">Нет данных</p>}
-          </ul>
-        </Card>
-      </div>
     </div>
   );
 }

@@ -30,6 +30,9 @@ class PlaybookSchedule(Base):
     repo_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("playbook_repos.id", ondelete="CASCADE"), nullable=False)
     playbook_name: Mapped[str] = mapped_column(String(255), nullable=False)
     host_group_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("host_groups.id", ondelete="SET NULL"), nullable=True)
+    # Цели расписания: группы раскрываются при каждом запуске (с подгруппами),
+    # поэтому новый ПК в аудитории попадает в расписание сам.
+    host_group_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
     host_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
     extra_vars: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     cron_expression: Mapped[str] = mapped_column(String(64), nullable=False)

@@ -130,14 +130,18 @@ def online_timeline(db: Session = Depends(get_db), _: User = Depends(get_current
 
 @router.get("/weekly-run-stats", response_model=list[WeeklyRunStats])
 def weekly_run_stats(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    since = datetime.now(timezone.utc) - timedelta(days=7)
+    # Все 7 дней, включая дни без запусков, по локальному времени сервера
+    today = datetime.now().astimezone().date()
+    days = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
+    since = datetime.combine(days[0], datetime.min.time()).astimezone()
     rows = db.execute(select(TaskRun.created_at, TaskRun.status).where(TaskRun.created_at >= since)).all()
 
-    buckets: dict[str, dict[str, int]] = {}
+    buckets: dict = {day: {"success": 0, "failed": 0} for day in days}
     for created_at, status_value in rows:
-        day_key = created_at.strftime("%Y-%m-%d")
-        buckets.setdefault(day_key, {"success": 0, "failed": 0})
-        if status_value.value in ("success", "failed"):
-            buckets[day_key][status_value.value] += 1
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        day = created_at.astimezone().date()
+        if day in buckets and status_value.value in ("success", "failed"):
+            buckets[day][status_value.value] += 1
 
-    return [WeeklyRunStats(day=k, success=v["success"], failed=v["failed"]) for k, v in sorted(buckets.items())]
+    return [WeeklyRunStats(day=day.strftime("%d.%m"), success=v["success"], failed=v["failed"]) for day, v in buckets.items()]

@@ -127,9 +127,32 @@ def auto_group_host(db: Session, host: Host) -> HostGroup | None:
     floor = _ensure_group(db, parts.floor_group, building, f"{parts.building}, {parts.floor} этаж")
     room = _ensure_group(db, parts.room_group, floor, f"Аудитория {parts.room} ({parts.building}, {parts.floor} этаж)", adopt=True)
     if host.group_id != room.id:
+        if not keeps_ssh_access(host.credential_id, group_credential(current), group_credential(room)):
+            # ПК подключается учёткой своей группы; перенос сменил бы её без проверки входа
+            logger.warning("Host %s stays in %s: moving it to %s would change its SSH credential", host.hostname, current.name, room.name)
+            return None
         host.group = room
         logger.info("Host %s moved to group %s", host.hostname, room.name)
     return room
+
+
+def group_credential(group: HostGroup | None):
+    """Id of the credential the group gives its hosts: its own or the nearest parent's."""
+    seen: set = set()
+    while group is not None and group.id not in seen:
+        seen.add(group.id)
+        if group.credential_id:
+            return group.credential_id
+        group = group.parent
+    return None
+
+
+def keeps_ssh_access(own_credential_id, current_group_credential, new_group_credential) -> bool:
+    """An automatic move must not change a working SSH credential: hosts with their own
+    credential (every agent) are unaffected, hosts without any access cannot lose it."""
+    if own_credential_id is not None or current_group_credential is None:
+        return True
+    return current_group_credential == new_group_credential
 
 
 def apply_auto_group(db: Session, host: Host) -> None:

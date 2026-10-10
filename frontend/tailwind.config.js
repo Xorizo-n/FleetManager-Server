@@ -31,8 +31,13 @@ export default {
           from: { opacity: 0, transform: "scale(0.97)" },
           to: { opacity: 1, transform: "scale(1)" },
         },
+        "slide-in-right": {
+          from: { opacity: 0.6, transform: "translateX(24px)" },
+          to: { opacity: 1, transform: "translateX(0)" },
+        },
       },
       animation: {
+        "slide-in-right": "slide-in-right 200ms ease-out",
         "fade-in": "fade-in 200ms ease-out",
         "slide-up": "slide-up 220ms ease-out",
         "scale-in": "scale-in 180ms ease-out",
