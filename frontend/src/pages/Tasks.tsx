@@ -1,190 +1,110 @@
-import { useEffect, useRef, useState } from "react";
-import { apiClient } from "../api/client";
-import TaskLog from "../components/TaskLog";
+import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { useFleet, useTasks } from "../api/queries";
+import type { TaskRun } from "../api/types";
+import PageHeader from "../components/ui/PageHeader";
 import Badge from "../components/ui/Badge";
+import Button from "../components/ui/Button";
+import SearchInput from "../components/ui/SearchInput";
+import { Empty, Loading } from "../components/ui/States";
+import { useOpenTask } from "../components/TaskPanel";
+import { formatDateTime, formatDuration, hostLabel, STATUS_LABELS, TASK_TYPE_LABELS, taskTitle } from "../lib/format";
 
-interface TaskRunOut {
-  id: string;
-  task_type: string;
-  playbook_name: string | null;
-  host_ids: string[];
-  status: string;
-  created_at: string;
-  started_at: string | null;
-  finished_at: string | null;
-}
-
-interface TaskRunDetail extends TaskRunOut {
-  log_output: string | null;
-  extra_vars: Record<string, unknown> | null;
-}
-
-const RUNNING_STATUSES = new Set(["queued", "running"]);
-
-const TASK_TYPE_LABELS: Record<string, string> = {
-  host_diagnostic:   "Диагностика",
-  playbook:          "Плейбук",
-  agent_update:      "Обновление агента",
-  software_scan:     "Сканирование ПО",
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  queued:  "В очереди",
-  running: "Выполняется",
-  success: "Выполнена",
-  failed:  "Ошибка",
-};
-
-function taskLabel(t: TaskRunOut) {
-  return t.playbook_name || TASK_TYPE_LABELS[t.task_type] || t.task_type;
-}
+const PAGE = 100;
 
 export default function Tasks() {
-  const [tasks, setTasks] = useState<TaskRunOut[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<TaskRunDetail | null>(null);
-  const [statusFilter, setStatusFilter] = useState("");
-  const detailRef = useRef<TaskRunDetail | null>(null);
-  detailRef.current = detail;
+  const [params] = useSearchParams();
+  const [type, setType] = useState(params.get("type") ?? "");
+  const [status, setStatus] = useState(params.get("status") ?? "");
+  const [search, setSearch] = useState("");
+  const [limit, setLimit] = useState(PAGE);
+  const { hostById } = useFleet();
+  const openTask = useOpenTask();
+  const { data, isLoading, isFetching } = useTasks({ task_type: type || undefined, status_filter: status || undefined, limit });
 
-  async function loadTasks() {
-    const { data } = await apiClient.get<TaskRunOut[]>("/tasks", {
-      params: { status_filter: statusFilter || undefined },
-    });
-    setTasks(data);
-    return data;
-  }
+  const targetsOf = (t: TaskRun) => t.host_ids.map((id) => { const h = hostById.get(id); return h ? hostLabel(h) : "удалённый хост"; });
 
-  async function loadDetail(id: string) {
-    const { data } = await apiClient.get<TaskRunDetail>(`/tasks/${id}`);
-    setDetail(data);
-  }
-
-  useEffect(() => {
-    loadTasks();
-    const interval = setInterval(async () => {
-      const data = await loadTasks();
-      // If the selected task status changed to terminal → re-fetch detail
-      if (detailRef.current && RUNNING_STATUSES.has(detailRef.current.status)) {
-        const updated = data.find((t) => t.id === detailRef.current!.id);
-        if (updated && !RUNNING_STATUSES.has(updated.status)) {
-          loadDetail(updated.id);
-        }
-      }
-    }, 5000);
-    return () => clearInterval(interval);
+  const rows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return data ?? [];
+    return (data ?? []).filter((t) =>
+      [taskTitle(t), t.playbook_name, t.created_by_name, ...targetsOf(t)].filter(Boolean).join(" ").toLowerCase().includes(q),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter]);
+  }, [data, search, hostById]);
 
-  useEffect(() => {
-    if (!selectedId) {
-      setDetail(null);
-      return;
-    }
-    loadDetail(selectedId);
-  }, [selectedId]);
-
-  function handleDone(id: string) {
-    // SSE finished — reload detail to get final log_output from DB
-    loadDetail(id);
-  }
+  const running = (data ?? []).filter((t) => t.status === "running" || t.status === "queued").length;
 
   return (
     <div className="animate-fade-in space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">Задачи</h1>
-        <select
-          aria-label="Фильтр по статусу"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="input-base w-auto py-2 text-sm"
-        >
+      <PageHeader
+        title="Задачи"
+        description={running > 0 ? `Выполняется сейчас: ${running}` : "Журнал запусков плейбуков, сканирований, диагностик и обновлений агента"}
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <SearchInput value={search} onChange={setSearch} placeholder="Плейбук, хост или автор" className="min-w-[220px] flex-1" />
+        <select value={type} onChange={(e) => { setType(e.target.value); setLimit(PAGE); }} className="input-base w-auto py-2" aria-label="Тип задачи">
+          <option value="">Все типы</option>
+          {Object.entries(TASK_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+        <select value={status} onChange={(e) => { setStatus(e.target.value); setLimit(PAGE); }} className="input-base w-auto py-2" aria-label="Статус">
           <option value="">Любой статус</option>
-          <option value="queued">В очереди</option>
-          <option value="running">Выполняется</option>
-          <option value="success">Выполнена</option>
-          <option value="failed">Ошибка</option>
+          {["queued", "running", "success", "failed"].map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
         </select>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="table-shell">
-          <table className="table-base">
-            <thead>
-              <tr>
-                <th>Тип / Плейбук</th>
-                <th>Статус</th>
-                <th>Создана</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.map((t) => (
+      <div className="table-shell">
+        <table className="table-base">
+          <thead>
+            <tr>
+              <th>Задача</th>
+              <th>Цели</th>
+              <th>Запустил</th>
+              <th>Создана</th>
+              <th>Длительность</th>
+              <th>Статус</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((t) => {
+              const targets = targetsOf(t);
+              return (
                 <tr
                   key={t.id}
-                  role="row"
                   tabIndex={0}
-                  aria-selected={selectedId === t.id}
-                  onClick={() => setSelectedId(t.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setSelectedId(t.id);
-                    }
-                  }}
-                  className={`is-interactive ${selectedId === t.id ? "bg-muted/60" : ""}`}
+                  className="is-interactive"
+                  onClick={() => openTask(t.id)}
+                  onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), openTask(t.id))}
                 >
-                  <td>{taskLabel(t)}</td>
-                  <td>
-                    <Badge status={t.status}>{STATUS_LABELS[t.status] ?? t.status}</Badge>
+                  <td className="max-w-[320px]">
+                    <div className="truncate font-medium text-foreground">{taskTitle(t)}</div>
+                    {t.task_type === "playbook" && <div className="truncate text-xs text-subtle">{t.playbook_name}</div>}
                   </td>
-                  <td className="text-muted-foreground">
-                    {new Date(t.created_at).toLocaleString("ru-RU")}
+                  <td className="max-w-[260px] text-muted-foreground">
+                    <div className="truncate" title={targets.join(", ")}>
+                      {targets.length === 0 ? "—" : targets.slice(0, 2).join(", ")}
+                      {targets.length > 2 && <span className="text-subtle"> +{targets.length - 2}</span>}
+                    </div>
                   </td>
+                  <td className="text-muted-foreground">{t.created_by_name ?? (t.created_by ? "—" : "расписание")}</td>
+                  <td className="whitespace-nowrap text-muted-foreground">{formatDateTime(t.created_at)}</td>
+                  <td className="whitespace-nowrap text-muted-foreground">{formatDuration(t.started_at, t.finished_at)}</td>
+                  <td><Badge status={t.status}>{STATUS_LABELS[t.status] ?? t.status}</Badge></td>
                 </tr>
-              ))}
-              {tasks.length === 0 && (
-                <tr>
-                  <td colSpan={3} className="px-3 py-8 text-center text-subtle">
-                    Задач нет
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="surface-panel">
-          {!detail && (
-            <p className="text-subtle">Выберите задачу для просмотра лога</p>
-          )}
-          {detail && (
-            <div className="animate-fade-in space-y-3">
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-medium text-foreground">{taskLabel(detail)}</span>
-                <Badge status={detail.status}>
-                  {STATUS_LABELS[detail.status] ?? detail.status}
-                </Badge>
-              </div>
-              <p className="text-xs text-subtle">
-                Хостов: {detail.host_ids.length}
-                {detail.started_at && (
-                  <> · Старт: {new Date(detail.started_at).toLocaleTimeString("ru-RU")}</>
-                )}
-                {detail.finished_at && (
-                  <> · Завершена: {new Date(detail.finished_at).toLocaleTimeString("ru-RU")}</>
-                )}
-              </p>
-              {RUNNING_STATUSES.has(detail.status) ? (
-                <TaskLog taskId={detail.id} onDone={() => handleDone(detail.id)} />
-              ) : (
-                <pre className="console-block">
-                  {detail.log_output || "Лог пуст"}
-                </pre>
-              )}
-            </div>
-          )}
-        </div>
+              );
+            })}
+          </tbody>
+        </table>
+        {isLoading && <Loading />}
+        {!isLoading && rows.length === 0 && <Empty>{search ? "Ничего не найдено" : "Задач нет"}</Empty>}
       </div>
+      {(data?.length ?? 0) >= limit && (
+        <div className="flex justify-center">
+          <Button variant="secondary" onClick={() => setLimit((l) => l + PAGE)} loading={isFetching}>
+            Показать ещё
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
