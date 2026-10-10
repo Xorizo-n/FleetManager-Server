@@ -146,6 +146,21 @@ class AgentUpdateScriptTests(unittest.TestCase):
         for command in (PROBE_CMD, UPDATE_CMD):
             self.assertLess(len(command), 8000)
 
+    def test_host_takes_the_installer_ssh_port_after_update(self):
+        # Old agents reported random SSH ports (MR32-440-09: 44596); the installer
+        # moves sshd to 22 and the new agent no longer reports a port.
+        from types import SimpleNamespace
+
+        from services.agent_update import INSTALLER_SSH_PORT, _adopt_installer_ssh_port
+
+        db = SimpleNamespace(commit=lambda: None)
+        task = SimpleNamespace(log_output="")
+        host = SimpleNamespace(hostname="MR32-440-09", ip_address=None, id="h", ssh_port=44596)
+        self.assertTrue(_adopt_installer_ssh_port(db, task, host))
+        self.assertEqual(host.ssh_port, INSTALLER_SSH_PORT)
+        self.assertIn("44596 → 22", task.log_output)
+        self.assertFalse(_adopt_installer_ssh_port(db, task, host))
+
     def test_probe_script_reads_the_inno_setup_uninstall_entry(self):
         import base64
 

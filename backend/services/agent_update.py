@@ -51,6 +51,11 @@ TCP_CHECK_TIMEOUT = 5
 RECHECK_ATTEMPTS = 6
 RECHECK_DELAY = 30
 
+# Установщик агента всегда держит SSH на порту 22 (installer/FleetManagerAgent.iss),
+# а новый агент порт не сообщает. Хосты, которым старый агент когда-то записал
+# другой порт (MR32-440-09: 44596), после обновления иначе стали бы недоступны.
+INSTALLER_SSH_PORT = 22
+
 UNINSTALL_KEYS = (
     r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
     r"HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
@@ -209,6 +214,16 @@ def _recheck_version(inventory: dict, host: Host, available: str | None) -> str 
     return None
 
 
+def _adopt_installer_ssh_port(db, task: TaskRun, host: Host) -> bool:
+    """После установки SSH слушает INSTALLER_SSH_PORT; True — порт хоста изменён."""
+    if host.ssh_port == INSTALLER_SSH_PORT:
+        return False
+    _append_log(db, task, f"[{_label(host)}] SSH-порт {host.ssh_port} → {INSTALLER_SSH_PORT}: установщик агента держит SSH на {INSTALLER_SSH_PORT}")
+    host.ssh_port = INSTALLER_SSH_PORT
+    db.commit()
+    return True
+
+
 def _target_hosts(db, task: TaskRun) -> list[Host]:
     host_ids = [uuid.UUID(host_id) for host_id in task.host_ids]
     hosts = db.query(Host).filter(Host.id.in_(host_ids)).all() if host_ids else []
@@ -342,10 +357,16 @@ def run_agent_update(task_run_id: str):
                     _append_log(db, task, f"[{label}] после установки версия {version} всё ещё старее {available}")
                 else:
                     _append_log(db, task, f"[{label}] обновлено: {previous or 'неизвестно'} → {version}, служба: {service}")
+                    _adopt_installer_ssh_port(db, task, host)
             except Exception as exc:  # noqa: BLE001
                 # Установщик перезапускает службу агента и может задеть SSH-сессию.
                 # Прежде чем считать хост упавшим, перепроверяем версию новой сессией.
                 _append_log(db, task, f"[{label}] связь потеряна во время установки ({exc}); проверяем результат")
+                # Сессию обрывает перезапуск sshd в конце установки — к этому
+                # моменту SSH уже на порту установщика.
+                port_changed = _adopt_installer_ssh_port(db, task, host)
+                if port_changed:
+                    inventory = build_full_inventory(db, [h.id for h in hosts])
                 confirmed = _recheck_version(inventory, host, available)
                 if confirmed:
                     _store_version(db, host, confirmed)
