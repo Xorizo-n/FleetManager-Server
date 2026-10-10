@@ -3,6 +3,7 @@ import { QueryClient, useQuery } from "@tanstack/react-query";
 import { apiClient } from "./client";
 import type {
   AgentAlert,
+  AlertSummary,
   AgentVersionOverview,
   Credential,
   Host,
@@ -126,7 +127,7 @@ export const useInstallers = () =>
   });
 
 export const useAlertSummary = (days = 7) =>
-  useQuery({ queryKey: ["alerts-summary", days], queryFn: () => get<{ days: number; total: number; hosts: number }>("/agent/alerts/summary", { days }) });
+  useQuery({ queryKey: ["alerts-summary", days], queryFn: () => get<AlertSummary>("/agent/alerts/summary", { days }) });
 
 export const useAlerts = (hostId?: string) =>
   useQuery({ queryKey: keys.alerts(hostId), queryFn: () => get<AgentAlert[]>("/agent/alerts", { host_id: hostId, limit: 50 }) });

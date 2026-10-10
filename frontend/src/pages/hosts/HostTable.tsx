@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown, ArrowUp, DoorOpen } from "lucide-react";
+import { ArrowDown, ArrowUp, BellRing, DoorOpen } from "lucide-react";
 import type { Host, VersionStatus } from "../../api/types";
 import type { GroupTree } from "../../lib/groupTree";
 import Checkbox from "../../components/ui/Checkbox";
@@ -19,6 +19,7 @@ interface Props {
   selected: Set<string>;
   onToggle: (ids: string[]) => void;
   onOpen: (host: Host) => void;
+  alertCounts?: Map<string, number>;
 }
 
 type Row = { kind: "group"; key: string; label: string; hosts: Host[] } | { kind: "host"; host: Host };
@@ -41,7 +42,7 @@ const GRID: Record<ColumnSet, { wide: string; compact: string }> = {
 };
 
 /** Реестр хостов: одна виртуализованная таблица, разделители по аудиториям. */
-export default function HostTable({ hosts, tree, versionOf, columns, grouped, selectable, selected, onToggle, onOpen }: Props) {
+export default function HostTable({ hosts, tree, versionOf, columns, grouped, selectable, selected, onToggle, onOpen, alertCounts }: Props) {
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "name", desc: false });
   const listRef = useRef<HTMLDivElement>(null);
   const shellRef = useRef<HTMLDivElement>(null);
@@ -210,7 +211,15 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
                 {selectable && <Checkbox checked={checked} onChange={() => onToggle([h.id])} aria-label={`Выбрать ${hostLabel(h)}`} />}
               </div>
               <div className="min-w-0">
-                <div className="truncate font-medium text-foreground">{hostLabel(h)}</div>
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate font-medium text-foreground">{hostLabel(h)}</span>
+                  {!!alertCounts?.get(h.id) && (
+                    <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-amber-500/15 px-1 text-[11px] font-medium text-amber-700 dark:text-amber-300" title="Алерты агента — подробности в карточке, вкладка «Алерты»">
+                      <BellRing className="h-3 w-3" />
+                      {alertCounts.get(h.id)}
+                    </span>
+                  )}
+                </div>
                 {mobile ? (
                   <div className="truncate text-xs text-subtle">
                     <span className="font-mono">{h.ip_address ?? "—"}</span>

@@ -157,12 +157,16 @@ class AlertSummaryTests(unittest.TestCase):
     def test_counts_come_from_the_database_not_a_page_of_alerts(self):
         from routers.agent import alerts_summary
 
+        now = datetime.now(timezone.utc)
+        a, b = uuid.uuid4(), uuid.uuid4()
+
         class _Db:
             def execute(self, _query):
-                return SimpleNamespace(one=lambda: (788, 13))
+                return SimpleNamespace(all=lambda: [(a, 700, now), (b, 88, now)])
 
         summary = alerts_summary(days=7, db=_Db(), _=SimpleNamespace())
-        self.assertEqual((summary.days, summary.total, summary.hosts), (7, 788, 13))
+        self.assertEqual((summary.days, summary.total, summary.hosts), (7, 788, 2))
+        self.assertEqual({item.host_id: item.count for item in summary.by_host}, {a: 700, b: 88})
 
 
 class RouteTests(unittest.TestCase):

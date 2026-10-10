@@ -52,7 +52,7 @@ export default function Dashboard() {
     { show: failed24h > 0, icon: <XCircle className="h-4 w-4" />, text: `${plural(failed24h, "задача завершилась", "задачи завершились", "задач завершились")} ошибкой за сутки`, to: "/tasks?status=failed", tone: "text-rose-600 dark:text-rose-400" },
     { show: outdated > 0, icon: <ArrowUpCircle className="h-4 w-4" />, text: `Устаревший агент на ${pcCount(outdated)} (актуальная ${agentVersions?.available_version ?? "—"})`, to: "/hosts?agent=outdated", tone: "text-amber-600 dark:text-amber-400" },
     { show: stats.stale > 0, icon: <Clock className="h-4 w-4" />, text: `${pcCount(stats.stale)} не проверялись больше 7 дней`, to: "/hosts?checked=older", tone: "text-amber-600 dark:text-amber-400" },
-    { show: alerts7d > 0, icon: <BellRing className="h-4 w-4" />, text: `${plural(alerts7d, "алерт", "алерта", "алертов")} от агентов за неделю на ${pcCount(alertHosts)} (смена оборудования)`, to: "/hosts", tone: "text-amber-600 dark:text-amber-400" },
+    { show: alerts7d > 0, icon: <BellRing className="h-4 w-4" />, text: `${plural(alerts7d, "алерт", "алерта", "алертов")} от агентов за неделю на ${pcCount(alertHosts)} (смена оборудования)`, to: "/hosts?alerts=7", tone: "text-amber-600 dark:text-amber-400" },
     { show: stats.withoutAgent > 0, icon: <PlugZap className="h-4 w-4" />, text: `${pcCount(stats.withoutAgent)} без агента`, to: "/hosts?agent=without", tone: "text-muted-foreground" },
   ];
   const attentionItems = attention.filter((a) => a.show);

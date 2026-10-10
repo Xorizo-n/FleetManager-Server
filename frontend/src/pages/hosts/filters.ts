@@ -13,9 +13,10 @@ export interface HostFilters {
   agent: string;
   os: string;
   checked: string;
+  alerts: string;
 }
 
-const FILTER_KEYS: (keyof HostFilters)[] = ["q", "group", "status", "agent", "os", "checked"];
+const FILTER_KEYS: (keyof HostFilters)[] = ["q", "group", "status", "agent", "os", "checked", "alerts"];
 
 export const AGENT_FILTERS: { value: string; label: string }[] = [
   { value: "with", label: "С агентом" },
@@ -31,6 +32,15 @@ export const CHECKED_FILTERS: { value: string; label: string }[] = [
   { value: "older", label: "Давно (> 7 дней)" },
   { value: "never", label: "Никогда" },
 ];
+
+// Период фильтра «Алерты» в днях; «all» — за всё время
+export const ALERT_FILTERS: { value: string; label: string; days: number }[] = [
+  { value: "7", label: "Алерты за 7 дней", days: 7 },
+  { value: "30", label: "Алерты за 30 дней", days: 30 },
+  { value: "all", label: "Алерты за всё время", days: 3650 },
+];
+
+export const alertDays = (value: string) => ALERT_FILTERS.find((f) => f.value === value)?.days ?? 7;
 
 export function useHostFilters() {
   const [params, setParams] = useSearchParams();
@@ -61,7 +71,13 @@ export function useHostFilters() {
   return { filters, setFilter, reset, activeCount };
 }
 
-export function filterHosts(hosts: Host[], filters: HostFilters, tree: GroupTree, versionOf: (h: Host) => VersionStatus) {
+export function filterHosts(
+  hosts: Host[],
+  filters: HostFilters,
+  tree: GroupTree,
+  versionOf: (h: Host) => VersionStatus,
+  alertCounts: Map<string, number>,
+) {
   const q = filters.q.trim().toLowerCase();
   const groupSet = filters.group && filters.group !== NO_GROUP ? tree.descendants(filters.group) : null;
   const now = Date.now();
@@ -74,6 +90,7 @@ export function filterHosts(hosts: Host[], filters: HostFilters, tree: GroupTree
     if (filters.group === NO_GROUP && h.group_id && tree.byId.has(h.group_id)) return false;
     if (groupSet && (!h.group_id || !groupSet.has(h.group_id))) return false;
     if (filters.status && h.status !== filters.status) return false;
+    if (filters.alerts && !alertCounts.get(h.id)) return false;
     if (filters.os && h.os !== filters.os) return false;
     if (filters.agent) {
       if (filters.agent === "with" && !h.has_agent) return false;

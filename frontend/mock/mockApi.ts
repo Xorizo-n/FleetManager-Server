@@ -154,9 +154,21 @@ for (let i = 0; i < 14; i++) makeHost(chance(0.5) ? `DESKTOP-${Math.floor(rnd() 
 for (let i = 0; i < 18; i++) credentials.push({ id: uuid(), name: `Agent SSH — ${pick(hosts).hostname}`, type: "ssh_key", login: "fleetagent", created_at: minutesAgo(60 * 24 * 60), is_agent_managed: true });
 groups.find((g) => g.name === "MR32")!.credential_id = credentials[0].id;
 
-for (let i = 0; i < 25; i++) {
-  const h = pick(hosts.filter((x) => x.has_agent));
-  alerts.push({ id: uuid(), host_id: h.id, alert_type: "hardware_changed", message: "Изменилась конфигурация оборудования: объём памяти 16 ГБ → 8 ГБ", previous_fingerprint: "a1", current_fingerprint: "b2", created_at: minutesAgo(Math.floor(rnd() * 60 * 24 * 10)) });
+// Срабатывания в формате сервера (backend/services/hardware_change.py): что именно изменилось
+const withAgent = hosts.filter((x) => x.has_agent && x.hw_model);
+const hwAlert = (h: Host, message: string, minutes: number) =>
+  alerts.push({ id: uuid(), host_id: h.id, alert_type: "hardware_changed", message, previous_fingerprint: uuid().slice(0, 16), current_fingerprint: uuid().slice(0, 16), created_at: minutesAgo(minutes) });
+{
+  const [a, b, c, d, e] = withAgent.slice(40, 45);
+  hwAlert(a, "Память: 16 ГБ → 8 ГБ", 95);                                      // сняли планку
+  hwAlert(b, "Память: 8 ГБ → 16 ГБ", 60 * 26);                                  // добавили планку
+  hwAlert(c, `Процессор: ${c.hw_processor} → Intel(R) Core(TM) i3-10100`, 60 * 50); // заменили процессор
+  hwAlert(d, `Производитель: ${d.hw_manufacturer} → ASRock; Модель: ${d.hw_model} → B760 Pro RS/D4; Серийный номер: ${d.hw_serial_number} → M80-F3011200789`, 60 * 74); // заменили плату (или системный блок)
+  hwAlert(e, "Память: 32 ГБ → 16 ГБ", 60 * 24 * 12);                            // старше недели: видно только с фильтром «за 30 дней»
+  // Алерты старого формата, как оставшиеся на проде: агент присылал только хэши
+  for (const h of withAgent.slice(60, 63)) {
+    alerts.push({ id: uuid(), host_id: h.id, alert_type: "hardware_changed", message: "Hardware fingerprint changed.", previous_fingerprint: "315DCFF1A0B2C3D4", current_fingerprint: "2CB17C32E5F6A7B8", created_at: minutesAgo(60 * 24 * (15 + Math.floor(rnd() * 20))) });
+  }
 }
 for (let i = 0; i < 30; i++) {
   const s = pick(software);
@@ -469,7 +481,14 @@ route("POST", "/agent/update", (ctx) => { editor(ctx); return taskOut(startTask(
 route("GET", "/agent/alerts/summary", ({ query }) => {
   const days = Number(query.get("days") ?? 7);
   const recent = alerts.filter((a) => Date.now() - new Date(a.created_at).getTime() < days * 86400_000);
-  return { days, total: recent.length, hosts: new Set(recent.map((a) => a.host_id)).size };
+  const byHost = new Map<string, { host_id: string; count: number; last_at: string }>();
+  for (const a of recent) {
+    const entry = byHost.get(a.host_id) ?? { host_id: a.host_id, count: 0, last_at: a.created_at };
+    entry.count += 1;
+    if (a.created_at > entry.last_at) entry.last_at = a.created_at;
+    byHost.set(a.host_id, entry);
+  }
+  return { days, total: recent.length, hosts: byHost.size, by_host: [...byHost.values()] };
 });
 route("GET", "/agent/alerts", ({ query }) => alerts.filter((a) => !query.get("host_id") || a.host_id === query.get("host_id")).sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, Number(query.get("limit") ?? 100)));
 route("GET", "/agent/enrollment-tokens", (ctx) => { admin(ctx); return tokens; });

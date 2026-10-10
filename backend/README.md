@@ -44,4 +44,5 @@ The installer is started through WMI (`Win32_Process.Create`), not `Start-Proces
 | `GET /tasks?host_id=&limit=&offset=` | task history of a host and paging; tasks carry `created_by_name` |
 | `GET /software/packages`, `GET /software/package-hosts?name=` | software catalog (one row per package with versions) and the hosts of one package |
 | `GET /credentials` | metadata with `is_agent_managed` and usage counts (`host_count`, `group_count`, `repo_count`) |
-| `GET /agent/alerts?host_id=` | alerts reported by agents, newest first |
+| `GET /agent/alerts?host_id=` | alerts, newest first. `hardware_changed` alerts are created by the server on heartbeat (`services/hardware_change.py`) and name the changed parts; the agent's own `hardware_changed` alert (fingerprints only) is accepted but not stored |
+| `GET /agent/alerts/summary?days=` | number of alerts and PCs for a period, with per-host counts for the hosts filter |

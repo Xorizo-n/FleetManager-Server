@@ -20,6 +20,7 @@ from models.user import User, UserRole
 from schemas.agent import (
     AgentAlertOut,
     AgentAlertSummaryOut,
+    AgentAlertHostCount,
     AgentAlertRequest,
     AgentEnrollmentTokenCreate,
     AgentEnrollmentTokenOut,
@@ -49,9 +50,12 @@ from services.agent_version import (
     version_status,
 )
 from services.audit import record_audit
+from services.hardware_change import hardware_changes
 from services.host_grouping import apply_auto_group
 from services.crypto import decrypt_secret, encrypt_secret
 from services.installer_builder import agent_dist_ready, build_installer_exe, safe_filename
+
+HARDWARE_CHANGED = "hardware_changed"
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 bearer = HTTPBearer(auto_error=False)
@@ -314,6 +318,22 @@ def heartbeat(
     host.last_seen_at = now
     host.last_checked_at = now
     host.last_shutdown_at = None
+    # Версию присылают только свежие агенты. Для старых она достаётся из их же
+    # инвентаризации ПО: установщик регистрирует запись "FleetManager Agent".
+    reported_version = normalize_version(payload.agent_version) or agent_version_from_software(
+        (item.name, item.version) for item in payload.software
+    )
+    # Смену железа сервер определяет сам, сравнивая с прошлым отчётом той же версии агента
+    changes = hardware_changes(host, payload.hardware, reported_version)
+    if changes:
+        db.add(AgentAlert(
+            host_id=host.id,
+            alert_type=HARDWARE_CHANGED,
+            message="; ".join(changes),
+            previous_fingerprint=host.hardware_fingerprint,
+            current_fingerprint=payload.hardware.fingerprint,
+        ))
+    host.hw_agent_version = reported_version
     host.hardware_fingerprint = payload.hardware.fingerprint
     host.hw_manufacturer = payload.hardware.manufacturer
     host.hw_model = payload.hardware.model
@@ -328,11 +348,6 @@ def heartbeat(
         if credential is not None and credential.is_agent_managed:
             credential.login = payload.ssh_login
 
-    # Версию присылают только свежие агенты. Для старых она достаётся из их же
-    # инвентаризации ПО: установщик регистрирует запись "FleetManager Agent".
-    reported_version = normalize_version(payload.agent_version) or agent_version_from_software(
-        (item.name, item.version) for item in payload.software
-    )
     if reported_version:
         host.agent_version = reported_version
         host.agent_version_checked_at = now
@@ -378,8 +393,13 @@ def create_alert(
         previous_fingerprint=payload.previous_fingerprint,
         current_fingerprint=payload.current_fingerprint,
     )
-    if payload.current_fingerprint:
-        host.hardware_fingerprint = payload.current_fingerprint
+    if payload.alert_type == HARDWARE_CHANGED:
+        # Смену железа сервер находит сам по heartbeat и пишет, что именно изменилось
+        # (services/hardware_change.py). Алерт агента — только два хэша, а у старых
+        # агентов он срабатывал на смену языка названия ОС: принимается, но не хранится.
+        alert.id = uuid.uuid4()
+        alert.created_at = _now()
+        return alert
     db.add(alert)
     db.commit()
     db.refresh(alert)
@@ -388,16 +408,23 @@ def create_alert(
 
 @router.get("/alerts/summary", response_model=AgentAlertSummaryOut)
 def alerts_summary(
-    days: int = Query(default=7, ge=1, le=365),
+    days: int = Query(default=7, ge=1, le=3650),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
     """Сколько алертов пришло за период и от скольких ПК — для счётчика на обзоре."""
     since = _now() - timedelta(days=days)
-    total, hosts = db.execute(
-        select(func.count(), func.count(func.distinct(AgentAlert.host_id))).where(AgentAlert.created_at >= since)
-    ).one()
-    return AgentAlertSummaryOut(days=days, total=total, hosts=hosts)
+    rows = db.execute(
+        select(AgentAlert.host_id, func.count(), func.max(AgentAlert.created_at))
+        .where(AgentAlert.created_at >= since)
+        .group_by(AgentAlert.host_id)
+    ).all()
+    return AgentAlertSummaryOut(
+        days=days,
+        total=sum(count for _, count, _ in rows),
+        hosts=len(rows),
+        by_host=[AgentAlertHostCount(host_id=host_id, count=count, last_at=last_at) for host_id, count, last_at in rows],
+    )
 
 
 @router.get("/alerts", response_model=list[AgentAlertOut])

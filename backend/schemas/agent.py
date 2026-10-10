@@ -151,10 +151,17 @@ class AgentEnrollmentTokenOut(BaseModel):
     installer_available: bool = False
 
 
+class AgentAlertHostCount(BaseModel):
+    host_id: uuid.UUID
+    count: int
+    last_at: datetime
+
+
 class AgentAlertSummaryOut(BaseModel):
     days: int
     total: int
     hosts: int
+    by_host: list[AgentAlertHostCount] = []
 
 
 class AgentAlertOut(BaseModel):

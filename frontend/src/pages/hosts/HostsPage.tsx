@@ -5,7 +5,7 @@ import {
   Activity, ArrowUpCircle, ChevronDown, Download, FolderInput, KeyRound, MoreHorizontal, Play, Plus, RefreshCw, ScanLine, Trash2, Upload, X, XCircle,
 } from "lucide-react";
 import { apiClient } from "../../api/client";
-import { keys, useCanEdit, useFleet } from "../../api/queries";
+import { keys, useAlertSummary, useCanEdit, useFleet } from "../../api/queries";
 import type { Host } from "../../api/types";
 import PageHeader from "../../components/ui/PageHeader";
 import Button from "../../components/ui/Button";
@@ -20,7 +20,7 @@ import GroupSidebar from "./GroupSidebar";
 import HostTable, { ColumnSet } from "./HostTable";
 import HostDrawer from "./HostDrawer";
 import { AddHostDialog, CredentialDialog, GroupDialog } from "./dialogs";
-import { AGENT_FILTERS, CHECKED_FILTERS, filterHosts, useHostFilters } from "./filters";
+import { AGENT_FILTERS, ALERT_FILTERS, alertDays, CHECKED_FILTERS, filterHosts, useHostFilters } from "./filters";
 import { downloadFromApi } from "../../lib/download";
 import { apiError, OS_OPTIONS, osLabel, pcCount } from "../../lib/format";
 
@@ -50,7 +50,10 @@ export default function HostsPage() {
   const [adding, setAdding] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const visible = useMemo(() => filterHosts(hosts, filters, tree, versionOf), [hosts, filters, tree, versionOf]);
+  // Значок у ПК и фильтр «Алерты» — за выбранный в фильтре период, без фильтра — за неделю
+  const alertSummary = useAlertSummary(alertDays(filters.alerts));
+  const alertCounts = useMemo(() => new Map((alertSummary.data?.by_host ?? []).map((a) => [a.host_id, a.count])), [alertSummary.data]);
+  const visible = useMemo(() => filterHosts(hosts, filters, tree, versionOf, alertCounts), [hosts, filters, tree, versionOf, alertCounts]);
   const openHost = params.get("host") ? hostById.get(params.get("host")!) : undefined;
   const stats = useMemo(() => ({ online: hosts.filter((h) => h.status === "online").length }), [hosts]);
   const selectedHosts = useMemo(() => [...selected].map((id) => hostById.get(id)).filter((h): h is Host => !!h), [selected, hostById]);
@@ -211,6 +214,10 @@ export default function HostsPage() {
               <option value="">Проверен</option>
               {CHECKED_FILTERS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
+            <select value={filters.alerts} onChange={(e) => setFilter("alerts", e.target.value)} className="input-base w-auto py-2" aria-label="Алерты">
+              <option value="">Алерты</option>
+              {ALERT_FILTERS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
             {(activeCount > 0 || filters.group) && (
               <button className="btn-ghost btn-sm" onClick={reset}>
                 <XCircle className="h-3.5 w-3.5" />
@@ -262,6 +269,7 @@ export default function HostsPage() {
               selected={selected}
               onToggle={toggle}
               onOpen={(h) => setHostParam(h.id)}
+              alertCounts={alertCounts}
             />
           )}
         </div>

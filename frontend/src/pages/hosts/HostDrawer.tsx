@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Activity, ArrowUpCircle, KeyRound, Play, Trash2 } from "lucide-react";
 import { apiClient } from "../../api/client";
 import { keys, useAlerts, useCanEdit, useCredentials, useFleet, useHostSoftware, useTasks } from "../../api/queries";
-import type { Host } from "../../api/types";
+import type { AgentAlert, Host } from "../../api/types";
 import Drawer from "../../components/ui/Drawer";
 import Tabs from "../../components/ui/Tabs";
 import Button from "../../components/ui/Button";
@@ -34,6 +34,7 @@ export default function HostDrawer({ host, onClose, onRunPlaybook }: Props) {
   const toast = useToast();
   const openTask = useOpenTask();
   const { tree } = useFleet();
+  const alerts = useAlerts(host.id);
 
   async function diagnose() {
     try {
@@ -109,7 +110,7 @@ export default function HostDrawer({ host, onClose, onRunPlaybook }: Props) {
           { id: "overview", label: "Обзор" },
           { id: "software", label: "ПО" },
           { id: "tasks", label: "Задачи" },
-          { id: "alerts", label: "Алерты" },
+          { id: "alerts", label: "Алерты", count: alerts.data?.length || undefined },
         ]}
       />
       <div className="pt-4">
@@ -360,6 +361,11 @@ function HostTasks({ hostId }: { hostId: string }) {
   );
 }
 
+const ALERT_TYPE_LABELS: Record<string, string> = { hardware_changed: "Смена оборудования" };
+
+// До определения смены железа сервером агент присылал только хэши отпечатков
+const isLegacyHardwareAlert = (a: AgentAlert) => a.alert_type === "hardware_changed" && a.message.startsWith("Hardware fingerprint changed");
+
 function HostAlerts({ hostId }: { hostId: string }) {
   const { data, isLoading } = useAlerts(hostId);
   if (isLoading) return <Loading />;
@@ -369,10 +375,18 @@ function HostAlerts({ hostId }: { hostId: string }) {
       {data.map((a) => (
         <li key={a.id} className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm">
           <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-            <span className="font-mono">{a.alert_type}</span>
+            <span>{ALERT_TYPE_LABELS[a.alert_type] ?? a.alert_type}</span>
             <span>{formatDateTime(a.created_at)}</span>
           </div>
-          <p className="mt-1 text-foreground">{a.message}</p>
+          {isLegacyHardwareAlert(a) ? (
+            <p className="mt-1 text-muted-foreground">
+              Изменился отпечаток железа — алерт старого формата, без подробностей о том, что изменилось
+            </p>
+          ) : (
+            <ul className="mt-1 space-y-0.5 text-foreground">
+              {a.message.split("; ").map((part) => <li key={part}>{part}</li>)}
+            </ul>
+          )}
         </li>
       ))}
     </ul>

@@ -138,6 +138,13 @@ export interface InstallerFile {
   mtime: string;
 }
 
+export interface AlertSummary {
+  days: number;
+  total: number;
+  hosts: number;
+  by_host: { host_id: string; count: number; last_at: string }[];
+}
+
 export interface AgentAlert {
   id: string;
   host_id: string;
