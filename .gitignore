@@ -1,6 +1,8 @@
 # Secrets — never commit real values, only .env.example
 .env
 *.env.local
+# TLS certificate and private key of the site (frontend/nginx)
+certs/
 
 # Python
 __pycache__/
