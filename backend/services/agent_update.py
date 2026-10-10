@@ -73,6 +73,26 @@ $service = Get-Service -Name FleetManagerAgent
 # Скачивает установщик с сервера агентским токеном самого хоста и ставит его
 # поверх текущей установки. Инсталлятор сохраняет agent.json (режим обновления),
 # поэтому повторная регистрация и enrollment-токен не нужны.
+#
+# Установщик запускается через WMI (Win32_Process.Create), то есть вне SSH-сессии.
+# Win32-OpenSSH держит все процессы сессии в одном job-объекте и завершает их
+# вместе с сессией: установщик, запущенный через Start-Process, погибал, как
+# только скрипт возвращал управление. На SU5-D206-TEMP он успел остановить
+# службу и скопировать файлы, а до своего скрипта установки не дошёл — агент
+# остался остановленным. Тот же job-объект — причина, по которой раньше
+# зависал Start-Process -Wait.
+#
+# Готово, когда процесс установщика завершился: заглушка Setup.exe ждёт
+# Setup.tmp, а тот выполняет всю установку, включая PowerShell-скрипт. Дескриптор
+# процесса берётся сразу, чтобы после выхода был доступен код возврата. Версию
+# в реестре ждать нельзя: при обновлении там с самого начала старая версия.
+#
+# Сессию всё равно может оборвать перезапуск sshd в конце установки; тогда
+# сервер перепроверяет версию новой сессией (_recheck_version).
+#
+# Комментарии — здесь, а не в скрипте: команда уходит как -EncodedCommand
+# (UTF-16 + base64, ~2,7 символа на символ скрипта), а длина команды по SSH
+# ограничена примерно 9 тыс. символов.
 UPDATE_SCRIPT = f"""
 $ErrorActionPreference = 'Stop'
 $configPath = Join-Path $env:ProgramData 'FleetManagerAgent\\agent.json'
@@ -87,33 +107,29 @@ $dest = Join-Path $env:TEMP '{INSTALLER_FILENAME}'
 $ProgressPreference = 'SilentlyContinue'
 Invoke-WebRequest -Uri "$base/api/agent/installer" -Headers @{{ Authorization = "Bearer $($config.AgentToken)" }} -OutFile $dest -UseBasicParsing -TimeoutSec 900
 
-$process = Start-Process -FilePath $dest -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' -PassThru
-# Deliberately not -Wait: the installer's manifest requires elevation, and
-# Start-Process -Wait on a manifest-elevated exe launched over a non-interactive
-# SSH session is unreliable — observed on production hosts never returning even
-# though the install had already finished and the process itself had exited (no
-# child process left, nothing to wait for). Poll instead: HasExited/ExitCode are
-# plain non-blocking GetExitCodeProcess() calls, a different code path from the
-# blocking wait that hangs, and the registry entry is the authoritative signal
-# for "the install actually finished" regardless of the process handle anyway.
-$version = $null
-$deadline = (Get-Date).AddSeconds(300)
-do {{
-    Start-Sleep -Seconds 3
-    $entry = Get-ItemProperty '{UNINSTALL_KEYS[0]}','{UNINSTALL_KEYS[1]}' -ErrorAction SilentlyContinue |
-        Where-Object {{ $_.DisplayName -eq '{AGENT_DISPLAY_NAME}' }} |
-        Select-Object -First 1
-    $version = [string]$entry.DisplayVersion
-}} while (-not $version -and (Get-Date) -lt $deadline)
+$installed = {{ Get-ItemProperty '{UNINSTALL_KEYS[0]}','{UNINSTALL_KEYS[1]}' -ErrorAction SilentlyContinue |
+    Where-Object {{ $_.DisplayName -eq '{AGENT_DISPLAY_NAME}' }} | Select-Object -First 1 }}
+$previous = [string](& $installed).DisplayVersion
+$commandLine = '"' + $dest + '" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-'
+$created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{{ CommandLine = $commandLine }}
+if ($created.ReturnValue -ne 0) {{ throw "Win32_Process.Create failed with code $($created.ReturnValue)" }}
+$process = Get-Process -Id $created.ProcessId -ErrorAction SilentlyContinue
+if ($process) {{ $null = $process.Handle }}
 
+$deadline = (Get-Date).AddSeconds(900)
+while ($process -and -not $process.HasExited -and (Get-Date) -lt $deadline) {{ Start-Sleep -Seconds 3 }}
+$finished = (-not $process) -or $process.HasExited
 $exitCode = $null
-if ($process.HasExited) {{ $exitCode = $process.ExitCode }}
+if ($process -and $process.HasExited) {{ $exitCode = $process.ExitCode }}
+$version = [string](& $installed).DisplayVersion
 
 Remove-Item $dest -Force -ErrorAction SilentlyContinue
 $service = Get-Service -Name FleetManagerAgent -ErrorAction SilentlyContinue
 [pscustomobject]@{{
     version = $version
+    previous_version = $previous
     exit_code = $exitCode
+    finished = $finished
     service_status = [string]$service.Status
 }} | ConvertTo-Json -Compress
 """
@@ -306,6 +322,10 @@ def run_agent_update(task_run_id: str):
                     _store_version(db, host, version)
                 exit_code = result.get("exit_code")
 
+                if result.get("finished") is False:
+                    any_failure = True
+                    _append_log(db, task, f"[{label}] установщик не завершился за 15 минут, версия сейчас: {version or 'неизвестно'}")
+                    continue
                 if exit_code not in (0, None):
                     any_failure = True
                     _append_log(db, task, f"[{label}] установщик завершился с кодом {exit_code}")

@@ -118,21 +118,33 @@ class AgentUpdateScriptTests(unittest.TestCase):
         self.assertIn("/VERYSILENT", script)
         self.assertNotIn("EnrollmentToken", script)
 
-    def test_update_script_does_not_block_on_start_process_wait(self):
-        # Start-Process -Wait on the (manifest-elevated) installer, run over a
-        # non-interactive SSH session, was observed hanging indefinitely in
-        # production even after the install had already finished and the
-        # process had exited — completion must be polled instead (registry
-        # entry + non-blocking HasExited), never a blocking -Wait.
+    def test_installer_runs_outside_the_ssh_session(self):
+        # Win32-OpenSSH kills every process of a session when it ends. An installer
+        # started with Start-Process died as soon as the script returned and left
+        # SU5-D206-TEMP with the service stopped; it has to be started through WMI.
         import base64
-        import re
 
         script = base64.b64decode(UPDATE_CMD.rsplit(" ", 1)[1]).decode("utf-16le")
-        launch_line = next(line for line in script.splitlines() if "Start-Process" in line and "$dest" in line)
-        self.assertNotIn("-Wait", launch_line)
-        self.assertIn("-PassThru", launch_line)
-        self.assertIn("HasExited", script)
-        self.assertRegex(script, r"deadline\s*=\s*\(Get-Date\)\.AddSeconds\(300\)")
+        self.assertNotIn("Start-Process", script)
+        self.assertIn("Invoke-CimMethod -ClassName Win32_Process -MethodName Create", script)
+
+    def test_update_waits_for_the_installer_not_for_the_registry(self):
+        # An Inno install already has the old version in the registry, so waiting
+        # for "a version to appear" returned at once, before the installer ran.
+        import base64
+
+        script = base64.b64decode(UPDATE_CMD.rsplit(" ", 1)[1]).decode("utf-16le")
+        self.assertIn("$process.HasExited", script)
+        self.assertIn("$null = $process.Handle", script)
+        self.assertRegex(script, r"deadline\s*=\s*\(Get-Date\)\.AddSeconds\(900\)")
+        self.assertNotIn("while (-not $version", script)
+        for field in ("previous_version", "finished", "exit_code"):
+            self.assertIn(field, script)
+
+    def test_commands_fit_the_ssh_command_line(self):
+        # Over SSH a command of ~14k characters is dropped as "unreachable", 9k still passes.
+        for command in (PROBE_CMD, UPDATE_CMD):
+            self.assertLess(len(command), 8000)
 
     def test_probe_script_reads_the_inno_setup_uninstall_entry(self):
         import base64
