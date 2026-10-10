@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { ChevronDown, LogOut, Menu as MenuIcon, Server, Settings, X } from "lucide-react";
 import { UserRole, useAuth } from "../context/AuthContext";
 import ThemeToggle from "./ui/ThemeToggle";
 import Menu from "./ui/Menu";
 import { TaskPanelProvider } from "./TaskPanel";
+import { Loading } from "./ui/States";
 
 const EDITORS: UserRole[] = ["admin", "operator"];
 
@@ -129,7 +130,9 @@ export default function Layout() {
         </header>
 
         <main className="mx-auto max-w-[96rem] px-4 py-6">
-          <Outlet />
+          <Suspense fallback={<Loading />}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
     </TaskPanelProvider>

@@ -1,3 +1,4 @@
+import { lazy } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider, UserRole } from "./context/AuthContext";
@@ -7,16 +8,18 @@ import { ToastProvider } from "./components/ui/Toast";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
-import Dashboard from "./pages/Dashboard";
-import HostsPage from "./pages/hosts/HostsPage";
-import Software from "./pages/Software";
-import Automation from "./pages/Automation";
-import Tasks from "./pages/Tasks";
-import Users from "./pages/admin/Users";
-import Credentials from "./pages/admin/Credentials";
-import Groups from "./pages/admin/Groups";
-import Agent from "./pages/admin/Agent";
-import Files from "./pages/admin/Files";
+
+// Страницы грузятся по мере перехода: графики дашборда и админка не тянутся в первый бандл
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const HostsPage = lazy(() => import("./pages/hosts/HostsPage"));
+const Software = lazy(() => import("./pages/Software"));
+const Automation = lazy(() => import("./pages/Automation"));
+const Tasks = lazy(() => import("./pages/Tasks"));
+const Users = lazy(() => import("./pages/admin/Users"));
+const Credentials = lazy(() => import("./pages/admin/Credentials"));
+const Groups = lazy(() => import("./pages/admin/Groups"));
+const Agent = lazy(() => import("./pages/admin/Agent"));
+const Files = lazy(() => import("./pages/admin/Files"));
 
 const EDITORS: UserRole[] = ["admin", "operator"];
 

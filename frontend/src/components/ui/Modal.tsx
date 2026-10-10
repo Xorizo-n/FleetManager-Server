@@ -23,7 +23,7 @@ export default function Modal({ open, onClose, title, children, footer, size = "
 
   if (!open) return null;
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:pt-[6vh]">
+    <div data-modal className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:pt-[6vh]">
       <div className="fixed inset-0 animate-fade-in bg-slate-950/50" onClick={onClose} />
       <div
         role="dialog"

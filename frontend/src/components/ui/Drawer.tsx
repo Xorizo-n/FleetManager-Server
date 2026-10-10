@@ -1,4 +1,4 @@
-import { ReactNode, useEffect } from "react";
+import { ReactNode, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
@@ -16,16 +16,22 @@ const WIDTHS = { md: "max-w-xl", lg: "max-w-3xl", xl: "max-w-5xl" };
 
 /** Панель справа поверх страницы: карточка хоста, лог задачи. Закрывается Esc и кликом по фону. */
 export default function Drawer({ open, onClose, title, subtitle, actions, children, width = "lg" }: DrawerProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    // Esc закрывает только верхний слой: модальное окно или последнюю открытую панель
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || document.querySelector("[data-modal]")) return;
+      const drawers = document.querySelectorAll("[data-drawer]");
+      if (drawers[drawers.length - 1] === rootRef.current) onClose();
+    };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
   if (!open) return null;
   return createPortal(
-    <div className="fixed inset-0 z-40 flex justify-end">
+    <div ref={rootRef} data-drawer className="fixed inset-0 z-40 flex justify-end">
       <div className="absolute inset-0 animate-fade-in bg-slate-950/40" onClick={onClose} />
       <aside
         role="dialog"
