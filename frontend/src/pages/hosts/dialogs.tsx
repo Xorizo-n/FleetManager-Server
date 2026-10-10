@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../api/client";
 import { keys, useCredentials, useFleet } from "../../api/queries";
@@ -7,6 +7,7 @@ import Button from "../../components/ui/Button";
 import { ErrorText } from "../../components/ui/States";
 import { useToast } from "../../components/ui/Toast";
 import { apiError, OS_OPTIONS, osLabel, pcCount } from "../../lib/format";
+import { effectiveCredential, isSshAssignable } from "../../lib/credentials";
 
 export function AddHostDialog({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
@@ -75,7 +76,7 @@ export function AddHostDialog({ onClose }: { onClose: () => void }) {
           <label className="field-label" htmlFor="add-cred">Учётные данные SSH</label>
           <select id="add-cred" value={form.credential_id} onChange={(e) => setForm({ ...form, credential_id: e.target.value })} className="input-base">
             <option value="">Наследовать от группы</option>
-            {(credentials.data ?? []).filter((c) => !c.is_agent_managed).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {(credentials.data ?? []).filter(isSshAssignable).map((c) => <option key={c.id} value={c.id}>{c.name} · {c.login}</option>)}
           </select>
         </div>
         <div>
@@ -95,7 +96,8 @@ export function AddHostDialog({ onClose }: { onClose: () => void }) {
 export function GroupDialog({ hostIds, onClose, onDone }: { hostIds: string[]; onClose: () => void; onDone: () => void }) {
   const queryClient = useQueryClient();
   const toast = useToast();
-  const { tree } = useFleet();
+  const { tree, hostById } = useFleet();
+  const credentials = useCredentials();
   const [mode, setMode] = useState<"existing" | "new" | "none">("existing");
   const [groupId, setGroupId] = useState("");
   const [name, setName] = useState("");
@@ -119,6 +121,26 @@ export function GroupDialog({ hostIds, onClose, onDone }: { hostIds: string[]; o
   }
 
   const valid = mode === "none" || (mode === "existing" ? !!groupId : !!name.trim());
+
+  // ПК без своей учётки подключаются учёткой группы: смена группы может её поменять
+  const credentialImpact = useMemo(() => {
+    let changed = 0;
+    let lost = 0;
+    const target = mode === "existing" ? groupId || null : null;
+    for (const id of hostIds) {
+      const host = hostById.get(id);
+      if (!host || host.credential_id) continue;
+      const before = effectiveCredential(host, tree, credentials.data);
+      const after = effectiveCredential({ credential_id: null, group_id: target }, tree, credentials.data);
+      const beforeId = before.source === "group" ? before.credentialId : null;
+      const afterId = after.source === "group" ? after.credentialId : null;
+      if (beforeId !== afterId) {
+        changed += 1;
+        if (!afterId) lost += 1;
+      }
+    }
+    return { changed, lost };
+  }, [mode, groupId, hostIds, hostById, tree, credentials.data]);
   return (
     <Modal
       open
@@ -154,6 +176,12 @@ export function GroupDialog({ hostIds, onClose, onDone }: { hostIds: string[]; o
           Убрать из группы
         </label>
         <p className="text-xs text-subtle">ПК с именем по схеме (КОРПУС-АУДИТОРИЯ-ТИП) сервер раскладывает по аудиториям сам; ручная группа с другим именем сохраняется.</p>
+        {credentialImpact.changed > 0 && (
+          <p className={`rounded-lg px-3 py-2 text-xs ${credentialImpact.lost ? "bg-rose-500/10 text-rose-700 dark:text-rose-300" : "bg-amber-500/10 text-amber-700 dark:text-amber-300"}`}>
+            У {pcCount(credentialImpact.changed)} нет своей учётки — они подключаются учёткой группы, и она сменится.
+            {credentialImpact.lost > 0 && ` ${pcCount(credentialImpact.lost)} останутся без учётных данных: SSH к ним перестанет работать.`}
+          </p>
+        )}
       </div>
     </Modal>
   );

@@ -132,8 +132,9 @@ export default function Credentials() {
       {tab === "agent" && !credentials.isLoading && (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Сервер выпускает SSH-ключ каждому агенту при регистрации. Ключ, который не привязан ни к одному хосту, остался от
-            перерегистрации ПК — его можно удалить.
+            Сервер выпускает SSH-ключ каждому агенту при регистрации и подключается к ПК только им. Ключ используемого ПК
+            удаляется вместе с агентом или хостом. Ключ, не привязанный ни к одному хосту, остался от удалённого или
+            перерегистрированного ПК: сервер его больше не использует, и его можно удалить.
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <SearchInput value={search} onChange={setSearch} placeholder="Имя ПК" className="min-w-[200px] flex-1" />
@@ -170,9 +171,13 @@ export default function Credentials() {
                       <td className="text-muted-foreground">{formatDateTime(c.created_at)}</td>
                       {isAdmin && (
                         <td className="text-right">
-                          <button className="action-danger" onClick={() => remove([c])} aria-label={`Удалить ${c.name}`}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          {host ? (
+                            <span className="text-xs text-subtle" title="Ключ удаляется вместе с агентом или хостом">используется</span>
+                          ) : (
+                            <button className="action-danger" onClick={() => remove([c])} aria-label={`Удалить ${c.name}`}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                         </td>
                       )}
                     </tr>

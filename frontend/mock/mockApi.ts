@@ -276,6 +276,17 @@ function credentialOut(c: Credential) {
   };
 }
 
+// Те же правила, что в backend/services/credential_rules.py
+function sshCredentialError(id: string | null | undefined) {
+  if (!id) return null;
+  const c = credentials.find((x) => x.id === id);
+  if (!c) throw new HttpError(404, "Credential не найден");
+  if (c.is_agent_managed) return "Ключ агента принадлежит одному ПК: сервер выпускает его при регистрации, вручную он не назначается";
+  if (c.type !== "ssh_key" && c.type !== "password") return "Для входа по SSH подходит только SSH-ключ или логин с паролем";
+  if (!c.login) return "У учётных данных не указан логин: без него SSH-подключение не работает";
+  return null;
+}
+
 // ---------- HTTP ----------
 class HttpError extends Error { constructor(public status: number, message: string) { super(message); } }
 type Ctx = { method: string; path: string; query: URLSearchParams; body: any; user: (typeof users)[number] | null; res: ServerResponse };
@@ -310,6 +321,10 @@ route("PATCH", "/hosts/groups/{id}", (ctx, p) => {
   editor(ctx);
   const g = find(groups, p.id, "Группа");
   if ("name" in ctx.body && g.is_auto) throw new HttpError(400, "Автоматическую группу переименовать нельзя: имя задаёт схема имён ПК");
+  if ("credential_id" in ctx.body && ctx.body.credential_id !== g.credential_id) {
+    const error = sshCredentialError(ctx.body.credential_id);
+    if (error) throw new HttpError(400, error);
+  }
   Object.assign(g, ctx.body);
   return g;
 });
@@ -330,7 +345,19 @@ route("POST", "/hosts/groups/assign", (ctx) => {
 });
 route("POST", "/hosts/groups/unassign", (ctx) => { editor(ctx); ctx.body.host_ids.forEach((id: string) => { const h = hostById(id); if (h) h.group_id = null; }); return { unassigned: ctx.body.host_ids.length }; });
 route("POST", "/hosts", (ctx) => { editor(ctx); const h = makeHost(ctx.body.hostname || ctx.body.ip_address, ctx.body.group_id); Object.assign(h, { ...ctx.body, has_agent: false, status: "unknown", agent_version: null }); return h; });
-route("PATCH", "/hosts/{id}", (ctx, p) => { editor(ctx); const h = find(hosts, p.id, "Хост"); Object.assign(h, ctx.body, { updated_at: now().toISOString() }); return h; });
+route("PATCH", "/hosts/{id}", (ctx, p) => {
+  editor(ctx);
+  const h = find(hosts, p.id, "Хост");
+  if ("credential_id" in ctx.body && ctx.body.credential_id !== h.credential_id) {
+    if (credentials.find((c) => c.id === h.credential_id)?.is_agent_managed) {
+      throw new HttpError(409, "ПК подключается ключом, который сервер выпустил агенту при регистрации. Заменить его нельзя");
+    }
+    const error = sshCredentialError(ctx.body.credential_id);
+    if (error) throw new HttpError(400, error);
+  }
+  Object.assign(h, ctx.body, { updated_at: now().toISOString() });
+  return h;
+});
 route("DELETE", "/hosts/{id}", (ctx, p) => { editor(ctx); hosts.splice(hosts.indexOf(find(hosts, p.id, "Хост")), 1); return null; });
 route("POST", "/hosts/delete", (ctx) => { editor(ctx); const ids = new Set(ctx.body.host_ids); const before = hosts.length; for (let i = hosts.length - 1; i >= 0; i--) if (ids.has(hosts[i].id)) hosts.splice(i, 1); return { deleted: before - hosts.length }; });
 route("POST", "/hosts/import-csv", (ctx) => { editor(ctx); return { created: 0, skipped: 0, errors: ["Импорт CSV в мок-режиме не поддерживается"] }; });
@@ -353,7 +380,13 @@ route("GET", "/agent/enrollment-tokens/{id}/installer", (ctx) => { admin(ctx); r
 // credentials
 route("GET", "/credentials", (ctx) => { editor(ctx); return [...credentials].sort((a, b) => a.name.localeCompare(b.name)).map(credentialOut); });
 route("POST", "/credentials", (ctx) => { admin(ctx); const c: Credential = { id: uuid(), name: ctx.body.name, type: ctx.body.type, login: ctx.body.login || null, created_at: now().toISOString(), is_agent_managed: false }; credentials.push(c); return credentialOut(c); });
-route("DELETE", "/credentials/{id}", (ctx, p) => { admin(ctx); const c = find(credentials, p.id, "Credential"); credentials.splice(credentials.indexOf(c), 1); hosts.forEach((h) => { if (h.credential_id === c.id) h.credential_id = null; }); return null; });
+route("DELETE", "/credentials/{id}", (ctx, p) => {
+  admin(ctx);
+  const owner = hosts.find((h) => h.credential_id === p.id);
+  if (owner && credentials.find((c) => c.id === p.id)?.is_agent_managed) {
+    throw new HttpError(409, `Ключом подключается ПК ${owner.hostname}; ключ агента удаляется только вместе с агентом или хостом`);
+  }
+  const c = find(credentials, p.id, "Credential"); credentials.splice(credentials.indexOf(c), 1); hosts.forEach((h) => { if (h.credential_id === c.id) h.credential_id = null; }); return null; });
 
 // dashboard
 route("GET", "/dashboard/hosts-summary", () => ({ total: hosts.length, online: hosts.filter((h) => h.status === "online").length, offline: hosts.filter((h) => h.status === "offline").length, unknown: hosts.filter((h) => h.status === "unknown").length }));

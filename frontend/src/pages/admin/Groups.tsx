@@ -12,17 +12,23 @@ import SearchInput from "../../components/ui/SearchInput";
 import { Empty, ErrorText, Loading } from "../../components/ui/States";
 import { useToast } from "../../components/ui/Toast";
 import { apiError, pcCount } from "../../lib/format";
+import { hostsUsingGroupCredential, isSshAssignable } from "../../lib/credentials";
 
 /** Группы хостов: учётка группы (наследуется вниз по дереву), ручные группы. */
 export default function Groups() {
   const queryClient = useQueryClient();
   const toast = useToast();
-  const { tree, isLoading } = useFleet();
+  const { tree, hostById, isLoading } = useFleet();
   const credentials = useCredentials();
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
-  const credentialOptions = (credentials.data ?? []).filter((c) => !c.is_agent_managed);
+  const credentialOptions = (credentials.data ?? []).filter(isSshAssignable);
   const credentialName = (id: string | null) => (id ? credentials.data?.find((c) => c.id === id)?.name ?? "—" : null);
+  // ПК с агентом подключаются своим ключом: учётка группы действует только на ПК без своей
+  const usingGroup = (node: TreeNode) => {
+    const count = hostsUsingGroupCredential(node, hostById).length;
+    return count === 0 ? <span className="text-subtle">—</span> : pcCount(count);
+  };
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -38,6 +44,9 @@ export default function Groups() {
   }, [tree, search]);
 
   async function setCredential(node: TreeNode, credentialId: string) {
+    const affected = hostsUsingGroupCredential(node, hostById).length;
+    const target = credentialId ? `«${credentialName(credentialId)}»` : "учётку родительской группы (если она есть)";
+    if (affected > 0 && !window.confirm(`${node.path}: ${pcCount(affected)} без своей учётки начнут подключаться по SSH через ${target}. ПК с агентом не затронуты. Продолжить?`)) return;
     try {
       await apiClient.patch(`/hosts/groups/${node.id}`, { credential_id: credentialId || null });
       queryClient.invalidateQueries({ queryKey: keys.groups });
@@ -64,7 +73,7 @@ export default function Groups() {
     <div className="animate-fade-in space-y-4">
       <PageHeader
         title="Группы хостов"
-        description="Корпуса, этажи и аудитории сервер создаёт сам по имени ПК. Учётка группы действует для всех ПК внутри, если у ПК нет своей."
+        description="Корпуса, этажи и аудитории сервер создаёт сам по имени ПК. Учётка группы действует на ПК внутри, у которых нет своей; ПК с агентом всегда подключаются своим ключом."
         actions={
           <Button size="sm" onClick={() => setCreating(true)}>
             <FolderPlus className="h-3.5 w-3.5" />
@@ -82,6 +91,7 @@ export default function Groups() {
               <tr>
                 <th>Группа</th>
                 <th>ПК</th>
+                <th title="ПК без своей учётки: они подключаются учёткой этой группы (или родительской), и их затронет её смена">ПК без своей учётки</th>
                 <th className="w-[22rem]">Учётные данные SSH</th>
                 <th className="w-12" />
               </tr>
@@ -97,6 +107,7 @@ export default function Groups() {
                     {node.group!.description && <div className="text-xs text-subtle" style={{ paddingLeft: node.depth * 18 }}>{node.group!.description}</div>}
                   </td>
                   <td className="tabular-nums text-muted-foreground">{pcCount(node.hostIds.length)}</td>
+                  <td className="tabular-nums text-muted-foreground">{usingGroup(node)}</td>
                   <td>
                     <select value={node.group!.credential_id ?? ""} onChange={(e) => setCredential(node, e.target.value)} className="input-base py-1.5" aria-label={`Учётка группы ${node.path}`}>
                       <option value="">{inherited ? `Наследуется: ${credentialName(inherited.credentialId)}` : "Не задана"}</option>

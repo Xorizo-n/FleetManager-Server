@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowUpCircle, Play, Trash2 } from "lucide-react";
+import { Activity, ArrowUpCircle, KeyRound, Play, Trash2 } from "lucide-react";
 import { apiClient } from "../../api/client";
 import { keys, useAlerts, useCanEdit, useCredentials, useFleet, useHostSoftware, useTasks } from "../../api/queries";
 import type { Host } from "../../api/types";
@@ -16,6 +16,7 @@ import { useOpenTask } from "../../components/TaskPanel";
 import { AgentCell, StatusDot } from "./HostTable";
 import { apiError, formatDateTime, formatRam, hostLabel, osLabel, relativeTime, STATUS_LABELS, taskTitle } from "../../lib/format";
 import { isSystemSoftware } from "../../lib/software";
+import { effectiveCredential, EffectiveCredential, isSshAssignable } from "../../lib/credentials";
 
 type Tab = "overview" | "software" | "tasks" | "alerts";
 
@@ -145,30 +146,24 @@ function Overview({ host }: { host: Host }) {
 
   const dirty = form.group_id !== (host.group_id ?? "") || form.credential_id !== (host.credential_id ?? "") || form.comment !== (host.comment ?? "");
 
-  // Учётка, которая действует, если у хоста своей нет: ближайшая вверх по дереву групп
-  const inherited = useMemo(() => {
-    let node = form.group_id ? tree.byId.get(form.group_id) : undefined;
-    while (node?.group) {
-      if (node.group.credential_id) return { group: node.path, credential: credentials.data?.find((c) => c.id === node!.group!.credential_id)?.name ?? "учётка группы" };
-      node = node.group.parent_id ? tree.byId.get(node.group.parent_id) : undefined;
-    }
-    return null;
-  }, [form.group_id, tree, credentials.data]);
-
-  const credentialOptions = useMemo(() => {
-    const list = credentials.data ?? [];
-    // Служебный ключ агента показываем только свой, чтобы не листать тысячу чужих
-    return list.filter((c) => !c.is_agent_managed || c.id === host.credential_id);
-  }, [credentials.data, host.credential_id]);
+  const credentialName = (id: string) => credentials.data?.find((c) => c.id === id)?.name ?? "учётка";
+  // Чем сервер подключается сейчас и чем будет подключаться после сохранения
+  const current = effectiveCredential(host, tree, credentials.data);
+  const next = effectiveCredential({ credential_id: form.credential_id || null, group_id: form.group_id || null }, tree, credentials.data);
+  const usesAgentKey = current.source === "agent";
+  const credentialChanges = dirty && (current.source !== next.source || ("credentialId" in current ? current.credentialId : null) !== ("credentialId" in next ? next.credentialId : null));
+  const inheritedFromGroup = effectiveCredential({ credential_id: null, group_id: form.group_id || null }, tree, credentials.data);
+  const credentialOptions = useMemo(() => (credentials.data ?? []).filter(isSshAssignable), [credentials.data]);
 
   async function save() {
     setSaving(true);
     setError(null);
     try {
-      await apiClient.patch(`/hosts/${host.id}`, {
-        comment: form.comment.trim() || null,
-        credential_id: form.credential_id || null,
-      });
+      // Отправляются только изменённые поля: учётку агента сервер менять не даёт
+      const patch: Record<string, string | null> = {};
+      if (form.comment !== (host.comment ?? "")) patch.comment = form.comment.trim() || null;
+      if (form.credential_id !== (host.credential_id ?? "")) patch.credential_id = form.credential_id || null;
+      if (Object.keys(patch).length) await apiClient.patch(`/hosts/${host.id}`, patch);
       if (form.group_id !== (host.group_id ?? "")) {
         if (form.group_id) await apiClient.post("/hosts/groups/assign", { host_ids: [host.id], group_id: form.group_id });
         else await apiClient.post("/hosts/groups/unassign", { host_ids: [host.id] });
@@ -182,7 +177,15 @@ function Overview({ host }: { host: Host }) {
     }
   }
 
-  const usesAgentKey = !!credentials.data?.find((c) => c.id === host.credential_id)?.is_agent_managed;
+  const describe = (e: EffectiveCredential) =>
+    e.source === "agent"
+      ? "ключ агента (выпущен при регистрации)"
+      : e.source === "own"
+        ? credentialName(e.credentialId)
+        : e.source === "group"
+          ? `${credentialName(e.credentialId)} — от группы ${e.groupPath}`
+          : "учётные данные не заданы";
+
   const status = versionOf(host);
   return (
     <div className="space-y-6">
@@ -224,19 +227,32 @@ function Overview({ host }: { host: Host }) {
           </div>
           <div>
             <label className="field-label" htmlFor="host-cred">Учётные данные SSH</label>
-            <select id="host-cred" disabled={!canEdit} value={form.credential_id} onChange={(e) => setForm({ ...form, credential_id: e.target.value })} className="input-base">
-              <option value="">{inherited ? `Наследовать от группы (${inherited.credential})` : "Не заданы"}</option>
-              {credentialOptions.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.is_agent_managed ? "Ключ агента (выпущен при регистрации)" : c.name}
+            {usesAgentKey ? (
+              <>
+                <div className="input-base flex items-center gap-2 bg-muted/40 text-muted-foreground">
+                  <KeyRound className="h-3.5 w-3.5 shrink-0" />
+                  Ключ агента (выпущен при регистрации)
+                </div>
+                <p className="mt-1 text-xs text-subtle">Ключ привязан к агенту на этом ПК и не меняется вручную; учётка группы на ПК с агентом не действует.</p>
+              </>
+            ) : (
+              <select id="host-cred" disabled={!canEdit} value={form.credential_id} onChange={(e) => setForm({ ...form, credential_id: e.target.value })} className="input-base">
+                <option value="">
+                  {inheritedFromGroup.source === "group" ? `Как у группы: ${credentialName(inheritedFromGroup.credentialId)}` : "Не заданы (у группы тоже нет)"}
                 </option>
-              ))}
-            </select>
-            {!form.credential_id && inherited && <p className="mt-1 text-xs text-subtle">Действует учётка группы {inherited.group}</p>}
-            {usesAgentKey && form.credential_id !== host.credential_id && (
-              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                Хост перестанет использовать ключ, выпущенный агенту: SSH-доступ будет работать только с выбранной учёткой
-              </p>
+                {credentialOptions.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.login}</option>)}
+              </select>
+            )}
+          </div>
+          <div className="sm:col-span-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
+            <span className="text-muted-foreground">Подключение по SSH: </span>
+            <span className="text-foreground">{describe(current)}</span>
+            {credentialChanges && (
+              <span className={next.source === "none" ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"}>
+                {" → после сохранения: "}
+                {describe(next)}
+                {next.source === "none" && " — SSH-подключение к ПК перестанет работать"}
+              </span>
             )}
           </div>
           <div className="sm:col-span-2">

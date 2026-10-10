@@ -71,6 +71,15 @@ def delete_credential(
     credential = db.get(Credential, credential_id)
     if credential is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Credential не найден")
+    if credential.is_agent_managed:
+        # Ключ агента удаляется вместе с агентом (POST /agent/uninstall); пока ПК им
+        # подключается, удаление оборвало бы SSH до следующей регистрации агента.
+        owner = db.execute(select(Host.hostname).where(Host.credential_id == credential.id)).scalars().first()
+        if owner is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Ключом подключается ПК {owner}; ключ агента удаляется только вместе с агентом или хостом",
+            )
 
     db.delete(credential)
     db.commit()

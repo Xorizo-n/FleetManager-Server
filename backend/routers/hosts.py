@@ -31,8 +31,21 @@ from services.inventory_generator import build_inventory_ini
 from services.host_target import normalize_host_address, resolve_host_target
 from services.host_diagnostics import run_host_diagnostic
 from services.host_grouping import find_group_by_name
+from services.credential_rules import host_credential_change_error, ssh_credential_error
 
 router = APIRouter(prefix="/hosts", tags=["hosts"])
+
+
+def _require_ssh_credential(db: Session, credential_id) -> None:
+    """A credential assigned to a host or group must work for SSH (see services/credential_rules.py)."""
+    if credential_id is None:
+        return
+    credential = db.get(Credential, credential_id)
+    if credential is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Credential не найден")
+    error = ssh_credential_error(credential)
+    if error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
 
 EDITOR_ROLES = (UserRole.admin, UserRole.operator)
 
@@ -119,8 +132,8 @@ def update_group(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Автоматическую группу переименовать нельзя: имя задаёт схема имён ПК")
         if not values["name"]:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Имя группы не может быть пустым")
-    if values.get("credential_id") is not None and db.get(Credential, values["credential_id"]) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Credential не найден")
+    if "credential_id" in values and values["credential_id"] != group.credential_id:
+        _require_ssh_credential(db, values["credential_id"])
     for field, value in values.items():
         setattr(group, field, value)
 
@@ -209,6 +222,7 @@ def create_host(
 ):
     host_values = payload.model_dump()
     resolve_host_target(host_values.get("hostname"), host_values.get("ip_address"))
+    _require_ssh_credential(db, host_values.get("credential_id"))
     host = Host(**host_values)
     db.add(host)
     db.commit()
@@ -231,6 +245,12 @@ def update_host(
 
     values = payload.model_dump(exclude_unset=True)
     resolve_host_target(values.get("hostname", host.hostname), values.get("ip_address", host.ip_address))
+    if "credential_id" in values and values["credential_id"] != host.credential_id:
+        current = db.get(Credential, host.credential_id) if host.credential_id else None
+        error = host_credential_change_error(current, values["credential_id"])
+        if error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error)
+        _require_ssh_credential(db, values["credential_id"])
     for field, value in values.items():
         setattr(host, field, value)
 
