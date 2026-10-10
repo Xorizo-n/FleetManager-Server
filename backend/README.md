@@ -38,7 +38,8 @@ The installer is started through WMI (`Win32_Process.Create`), not `Start-Proces
 | --- | --- |
 | `POST /playbooks/run` | `host_ids` plus `host_group_ids`; a group includes all its subgroups (a building means every PC in its rooms) |
 | `GET/POST/PATCH/DELETE /playbooks/schedules` | schedules keep target groups in `host_group_ids` and resolve them on every run; the list returns targets and `next_run_at`, cron is validated |
-| `PATCH/DELETE /hosts/groups/{id}` | group credential (inherited down the tree) and description; manual groups can be renamed or deleted, automatic ones cannot |
+| `POST /hosts/access-changes` | the only way to change the SSH credential of hosts: `set_host_credential`, `set_group_credential` or `move_to_group`. Hosts whose effective credential changes are first checked with an SSH login in an `access_change` task; the change is kept only where the login succeeds (failed hosts keep their credential, stay in their group, or are pinned to their previous credential when a group credential changes). Without such hosts the change is applied at once and no task is created |
+| `PATCH/DELETE /hosts/groups/{id}` | description; manual groups can be renamed or deleted, automatic ones cannot. The credential is changed through `/hosts/access-changes` |
 | `POST /hosts/delete` | bulk deletion of the selected hosts |
 | `GET /tasks?host_id=&limit=&offset=` | task history of a host and paging; tasks carry `created_by_name` |
 | `GET /software/packages`, `GET /software/package-hosts?name=` | software catalog (one row per package with versions) and the hosts of one package |

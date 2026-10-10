@@ -249,9 +249,10 @@ function startTask(type: string, hostIds: string[], userId: string | null, extra
   tasks.unshift(task);
   let step = 0;
   const timer = setInterval(() => {
+    const steps = task._plan ?? plan;
     if (task.status === "queued") { task.status = "running"; task.started_at = now().toISOString(); return; }
-    if (step < plan.length) { task.log_output += plan[step]; step += 1; return; }
-    task.status = fail ? "failed" : "success";
+    if (step < steps.length) { task.log_output += steps[step]; step += 1; return; }
+    task.status = (task._fail ?? fail) ? "failed" : "success";
     task.finished_at = now().toISOString();
     if (type === "agent_update" && !fail) hostIds.forEach((id) => { const h = hostById(id); if (h) h.agent_version = AVAILABLE_AGENT; });
     clearInterval(timer);
@@ -321,10 +322,7 @@ route("PATCH", "/hosts/groups/{id}", (ctx, p) => {
   editor(ctx);
   const g = find(groups, p.id, "Группа");
   if ("name" in ctx.body && g.is_auto) throw new HttpError(400, "Автоматическую группу переименовать нельзя: имя задаёт схема имён ПК");
-  if ("credential_id" in ctx.body && ctx.body.credential_id !== g.credential_id) {
-    const error = sshCredentialError(ctx.body.credential_id);
-    if (error) throw new HttpError(400, error);
-  }
+  if ("credential_id" in ctx.body && ctx.body.credential_id !== g.credential_id) throw new HttpError(400, "Учётка SSH меняется через POST /hosts/access-changes: он сначала проверяет вход новыми данными");
   Object.assign(g, ctx.body);
   return g;
 });
@@ -337,24 +335,121 @@ route("DELETE", "/hosts/groups/{id}", (ctx, p) => {
   groups.splice(groups.indexOf(g), 1);
   return null;
 });
+// ---- смена доступа с проверкой входа (backend/services/access_change.py) ----
+function effective(own: string | null, groupId: string | null, override?: [string, string | null]) {
+  if (own) return own;
+  const seen = new Set<string>();
+  let id = groupId;
+  while (id && !seen.has(id)) {
+    seen.add(id);
+    const g = groups.find((x) => x.id === id);
+    if (!g) break;
+    const cred = override && override[0] === g.id ? override[1] : g.credential_id;
+    if (cred) return cred;
+    id = g.parent_id;
+  }
+  return null;
+}
+type Plan = { host: Host; old: string | null; next: string | null; check: boolean; skip?: string };
+function accessPlan(body: any): Plan[] {
+  const agentKeys = new Set(credentials.filter((c) => c.is_agent_managed).map((c) => c.id));
+  const selected = (body.host_ids ?? []).map((id: string) => find(hosts, id, "Хост"));
+  if (body.action === "set_host_credential") {
+    return selected.map((h: Host) => {
+      const old = effective(h.credential_id, h.group_id);
+      if (h.credential_id && agentKeys.has(h.credential_id)) return { host: h, old, next: old, check: false, skip: "подключается ключом агента, он не меняется" };
+      const next = effective(body.credential_id ?? null, h.group_id);
+      return { host: h, old, next, check: next !== old };
+    });
+  }
+  if (body.action === "move_to_group") {
+    return selected.map((h: Host) => {
+      const old = effective(h.credential_id, h.group_id);
+      const next = effective(h.credential_id, body.group_id ?? null);
+      return { host: h, old, next, check: next !== old };
+    });
+  }
+  const below = descendants([body.group_id]);
+  return hosts
+    .filter((h) => h.group_id && below.has(h.group_id))
+    .map((h) => ({ host: h, old: effective(h.credential_id, h.group_id), next: effective(h.credential_id, h.group_id, [body.group_id, body.credential_id ?? null]), check: true }))
+    .filter((p) => p.old !== p.next);
+}
+function applyAccess(body: any, plans: Plan[], passed: Set<string>) {
+  const ok = plans.filter((p) => !p.skip && (!p.check || passed.has(p.host.id)));
+  const failed = plans.filter((p) => p.check && !passed.has(p.host.id));
+  let pinned = 0;
+  if (body.action === "set_host_credential") ok.forEach((p) => (p.host.credential_id = body.credential_id ?? null));
+  if (body.action === "move_to_group") {
+    let target = body.group_id ?? null;
+    if (ok.length && body.group_name && !target) target = (groups.find((g) => g.name === body.group_name) ?? addGroup(body.group_name, null, false)).id;
+    ok.forEach((p) => (p.host.group_id = target));
+  }
+  if (body.action === "set_group_credential") {
+    find(groups, body.group_id, "Группа").credential_id = body.credential_id ?? null;
+    failed.forEach((p) => { if (p.old && !p.host.credential_id) { p.host.credential_id = p.old; pinned += 1; } });
+  }
+  return { applied: ok.length, failed: failed.length, pinned };
+}
+route("POST", "/hosts/access-changes", (ctx) => {
+  editor(ctx);
+  const body = ctx.body;
+  if (body.action !== "move_to_group") {
+    const error = sshCredentialError(body.credential_id);
+    if (error) throw new HttpError(400, error);
+  }
+  const plans = accessPlan(body);
+  const skipped = plans.filter((p) => p.skip).length;
+  const checks = plans.filter((p) => p.check);
+  if (!checks.length) {
+    const summary = applyAccess(body, plans, new Set());
+    return { task: null, applied: summary.applied, to_check: 0, skipped };
+  }
+  const credName = (id: string | null) => (id ? `«${credentials.find((c) => c.id === id)?.name ?? id}»` : "без учётных данных");
+  const passed = new Set<string>();
+  const lines: string[] = [`Учётка меняется у ${checks.length} ПК, проверяем вход новыми данными\n`];
+  for (const p of checks) {
+    // Мок: вход проходит на online-ПК; «Deploy key GitLab» не подходит ни к одному ПК
+    const cred = credentials.find((c) => c.id === p.next);
+    const error = !p.next ? "после смены у ПК не останется учётных данных"
+      : p.host.status !== "online" ? "Failed to connect to the host via ssh: Connection timed out"
+      : cred?.name.startsWith("Deploy key") ? "Permission denied (publickey,password)" : null;
+    if (!error) passed.add(p.host.id);
+    lines.push(error
+      ? `[${p.host.hostname}] вход с ${credName(p.next)} не удался: ${error}; остаётся ${credName(p.old)}\n`
+      : `[${p.host.hostname}] вход с ${credName(p.next)} — успешно\n`);
+  }
+  plans.filter((p) => p.skip).forEach((p) => lines.push(`[${p.host.hostname}] пропущен: ${p.skip}\n`));
+  const task = startTask("access_change", checks.map((p) => p.host.id), ctx.user!.id, { extra_vars: body });
+  task._plan = lines;
+  task._fail = passed.size < checks.length;
+  const finish = setInterval(() => {
+    if (task.status === "success" || task.status === "failed") {
+      clearInterval(finish);
+      const summary = applyAccess(body, plans, passed);
+      task.log_output += `Применено на ${summary.applied} ПК, не применено на ${summary.failed}${summary.pinned ? `; ${summary.pinned} ПК оставлены на прежней учётке (назначена им напрямую)` : ""}\n`;
+    }
+  }, 200);
+  return { task: taskOut(task), applied: 0, to_check: checks.length, skipped };
+});
+
+function refuseUnverifiedMove(hostIds: string[], groupId: string | null) {
+  const changing = accessPlan({ action: "move_to_group", host_ids: hostIds, group_id: groupId }).filter((p) => p.check).length;
+  if (changing) throw new HttpError(409, `У ${changing} ПК при переносе сменится учётка SSH: перенос идёт через POST /hosts/access-changes, он проверяет вход`);
+}
 route("POST", "/hosts/groups/assign", (ctx) => {
   editor(ctx);
+  refuseUnverifiedMove(ctx.body.host_ids, ctx.body.group_id ?? null);
   const g = ctx.body.group_id ? find(groups, ctx.body.group_id, "Группа") : groups.find((x) => x.name === ctx.body.group_name) ?? addGroup(ctx.body.group_name, null, false);
   ctx.body.host_ids.forEach((id: string) => { const h = hostById(id); if (h) h.group_id = g.id; });
   return g;
 });
-route("POST", "/hosts/groups/unassign", (ctx) => { editor(ctx); ctx.body.host_ids.forEach((id: string) => { const h = hostById(id); if (h) h.group_id = null; }); return { unassigned: ctx.body.host_ids.length }; });
+route("POST", "/hosts/groups/unassign", (ctx) => { editor(ctx); refuseUnverifiedMove(ctx.body.host_ids, null); ctx.body.host_ids.forEach((id: string) => { const h = hostById(id); if (h) h.group_id = null; }); return { unassigned: ctx.body.host_ids.length }; });
 route("POST", "/hosts", (ctx) => { editor(ctx); const h = makeHost(ctx.body.hostname || ctx.body.ip_address, ctx.body.group_id); Object.assign(h, { ...ctx.body, has_agent: false, status: "unknown", agent_version: null }); return h; });
 route("PATCH", "/hosts/{id}", (ctx, p) => {
   editor(ctx);
   const h = find(hosts, p.id, "Хост");
-  if ("credential_id" in ctx.body && ctx.body.credential_id !== h.credential_id) {
-    if (credentials.find((c) => c.id === h.credential_id)?.is_agent_managed) {
-      throw new HttpError(409, "ПК подключается ключом, который сервер выпустил агенту при регистрации. Заменить его нельзя");
-    }
-    const error = sshCredentialError(ctx.body.credential_id);
-    if (error) throw new HttpError(400, error);
-  }
+  if ("credential_id" in ctx.body && ctx.body.credential_id !== h.credential_id) throw new HttpError(400, "Учётка SSH меняется через POST /hosts/access-changes: он сначала проверяет вход новыми данными");
   Object.assign(h, ctx.body, { updated_at: now().toISOString() });
   return h;
 });

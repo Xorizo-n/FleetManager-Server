@@ -72,7 +72,11 @@ def run_raw_command(inventory: dict, inventory_host: str, command: str, *, timeo
 
 
 def _resolve_credential_vars(host: Host) -> dict:
-    credential = host.credential or host_group_credential(host)
+    return credential_vars(host.credential or host_group_credential(host))
+
+
+def credential_vars(credential) -> dict:
+    """Ansible connection vars for a credential (the key is written to a file once)."""
     if credential is None:
         return {}
 

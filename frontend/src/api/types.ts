@@ -67,7 +67,7 @@ export interface Credential {
   repo_count?: number;
 }
 
-export type TaskType = "playbook" | "software_scan" | "host_diagnostic" | "agent_version_scan" | "agent_update";
+export type TaskType = "playbook" | "software_scan" | "host_diagnostic" | "agent_version_scan" | "agent_update" | "access_change";
 export type TaskStatus = "queued" | "running" | "success" | "failed";
 
 export interface TaskRun {

@@ -13,6 +13,7 @@ import { Empty, ErrorText, Loading } from "../../components/ui/States";
 import { useToast } from "../../components/ui/Toast";
 import { apiError, pcCount } from "../../lib/format";
 import { hostsUsingGroupCredential, isSshAssignable } from "../../lib/credentials";
+import { useAccessChange } from "../../components/useAccessChange";
 
 /** Группы хостов: учётка группы (наследуется вниз по дереву), ручные группы. */
 export default function Groups() {
@@ -20,6 +21,7 @@ export default function Groups() {
   const toast = useToast();
   const { tree, hostById, isLoading } = useFleet();
   const credentials = useCredentials();
+  const runAccessChange = useAccessChange();
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
   const credentialOptions = (credentials.data ?? []).filter(isSshAssignable);
@@ -46,12 +48,16 @@ export default function Groups() {
   async function setCredential(node: TreeNode, credentialId: string) {
     const affected = hostsUsingGroupCredential(node, hostById).length;
     const target = credentialId ? `«${credentialName(credentialId)}»` : "учётку родительской группы (если она есть)";
-    if (affected > 0 && !window.confirm(`${node.path}: ${pcCount(affected)} без своей учётки начнут подключаться по SSH через ${target}. ПК с агентом не затронуты. Продолжить?`)) return;
+    if (
+      affected > 0 &&
+      !window.confirm(
+        `${node.path}: ${pcCount(affected)} без своей учётки начнут подключаться через ${target}.\n\n` +
+          "Сервер сначала войдёт на эти ПК новыми данными. ПК, на которых вход не пройдёт (в том числе выключенные), останутся на прежней учётке — она будет назначена им напрямую. ПК с агентом не затронуты.\n\nПродолжить?",
+      )
+    )
+      return;
     try {
-      await apiClient.patch(`/hosts/groups/${node.id}`, { credential_id: credentialId || null });
-      queryClient.invalidateQueries({ queryKey: keys.groups });
-      queryClient.invalidateQueries({ queryKey: keys.credentials });
-      toast({ tone: "success", message: `${node.path}: учётка ${credentialId ? "назначена" : "снята"}` });
+      await runAccessChange({ action: "set_group_credential", group_id: node.id, credential_id: credentialId || null });
     } catch (err) {
       toast({ tone: "error", message: apiError(err, "Не удалось изменить группу") });
     }

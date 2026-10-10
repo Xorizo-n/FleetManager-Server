@@ -8,6 +8,7 @@ import { ErrorText } from "../../components/ui/States";
 import { useToast } from "../../components/ui/Toast";
 import { apiError, OS_OPTIONS, osLabel, pcCount } from "../../lib/format";
 import { effectiveCredential, isSshAssignable } from "../../lib/credentials";
+import { useAccessChange } from "../../components/useAccessChange";
 
 export function AddHostDialog({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
@@ -98,6 +99,7 @@ export function GroupDialog({ hostIds, onClose, onDone }: { hostIds: string[]; o
   const toast = useToast();
   const { tree, hostById } = useFleet();
   const credentials = useCredentials();
+  const runAccessChange = useAccessChange();
   const [mode, setMode] = useState<"existing" | "new" | "none">("existing");
   const [groupId, setGroupId] = useState("");
   const [name, setName] = useState("");
@@ -108,10 +110,11 @@ export function GroupDialog({ hostIds, onClose, onDone }: { hostIds: string[]; o
     setBusy(true);
     setError(null);
     try {
-      if (mode === "none") await apiClient.post("/hosts/groups/unassign", { host_ids: hostIds });
-      else await apiClient.post("/hosts/groups/assign", { host_ids: hostIds, ...(mode === "existing" ? { group_id: groupId } : { group_name: name.trim() }) });
-      await Promise.all([queryClient.invalidateQueries({ queryKey: keys.hosts }), queryClient.invalidateQueries({ queryKey: keys.groups })]);
-      toast({ tone: "success", message: mode === "none" ? `${pcCount(hostIds.length)} убраны из групп` : `Группа назначена: ${pcCount(hostIds.length)}` });
+      await runAccessChange({
+        action: "move_to_group",
+        host_ids: hostIds,
+        ...(mode === "existing" ? { group_id: groupId } : mode === "new" ? { group_name: name.trim() } : { group_id: null }),
+      });
       onDone();
     } catch (err) {
       setError(apiError(err, "Не удалось изменить группу"));
@@ -178,8 +181,68 @@ export function GroupDialog({ hostIds, onClose, onDone }: { hostIds: string[]; o
         <p className="text-xs text-subtle">ПК с именем по схеме (КОРПУС-АУДИТОРИЯ-ТИП) сервер раскладывает по аудиториям сам; ручная группа с другим именем сохраняется.</p>
         {credentialImpact.changed > 0 && (
           <p className={`rounded-lg px-3 py-2 text-xs ${credentialImpact.lost ? "bg-rose-500/10 text-rose-700 dark:text-rose-300" : "bg-amber-500/10 text-amber-700 dark:text-amber-300"}`}>
-            У {pcCount(credentialImpact.changed)} нет своей учётки — они подключаются учёткой группы, и она сменится.
-            {credentialImpact.lost > 0 && ` ${pcCount(credentialImpact.lost)} останутся без учётных данных: SSH к ним перестанет работать.`}
+            У {pcCount(credentialImpact.changed)} нет своей учётки — они подключаются учёткой группы, и она сменится. Перед переносом сервер
+            проверит вход новыми данными; ПК, на которых вход не пройдёт, останутся в прежней группе.
+            {credentialImpact.lost > 0 && ` ${pcCount(credentialImpact.lost)} останутся без учётных данных — их перенос не пройдёт.`}
+          </p>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+/** Массовая смена учётки SSH у выбранных ПК: проверяется входом, ПК с агентом пропускаются. */
+export function CredentialDialog({ hostIds, onClose, onDone }: { hostIds: string[]; onClose: () => void; onDone: () => void }) {
+  const credentials = useCredentials();
+  const { hostById } = useFleet();
+  const runAccessChange = useAccessChange();
+  const [credentialId, setCredentialId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const agentKeys = useMemo(() => new Set((credentials.data ?? []).filter((c) => c.is_agent_managed).map((c) => c.id)), [credentials.data]);
+  const withAgentKey = hostIds.filter((id) => agentKeys.has(hostById.get(id)?.credential_id ?? "")).length;
+  const changeable = hostIds.length - withAgentKey;
+
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    try {
+      await runAccessChange({ action: "set_host_credential", host_ids: hostIds, credential_id: credentialId === "__group__" ? null : credentialId });
+      onDone();
+    } catch (err) {
+      setError(apiError(err, "Не удалось изменить учётные данные"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="sm"
+      title={`Учётные данные SSH для ${pcCount(hostIds.length)}`}
+      footer={
+        <>
+          <ErrorText>{error}</ErrorText>
+          <Button variant="secondary" onClick={onClose}>Отмена</Button>
+          <Button onClick={submit} loading={busy} disabled={!credentialId || changeable === 0}>Проверить вход и применить</Button>
+        </>
+      }
+    >
+      <div className="space-y-3 text-sm">
+        <select value={credentialId} onChange={(e) => setCredentialId(e.target.value)} className="input-base" autoFocus aria-label="Учётные данные">
+          <option value="">Выберите учётные данные</option>
+          <option value="__group__">Как у группы (убрать собственную учётку)</option>
+          {(credentials.data ?? []).filter(isSshAssignable).map((c) => <option key={c.id} value={c.id}>{c.name} · {c.login}</option>)}
+        </select>
+        <p className="text-muted-foreground">
+          Сервер войдёт на каждый ПК новыми данными. Где вход пройдёт — учётка сменится, где нет (неверные данные или ПК выключен) —
+          останется прежней. Итог по каждому ПК будет в логе задачи.
+        </p>
+        {withAgentKey > 0 && (
+          <p className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
+            {pcCount(withAgentKey)} подключаются ключом агента — он не меняется, эти ПК будут пропущены.
           </p>
         )}
       </div>

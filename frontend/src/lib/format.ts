@@ -28,6 +28,7 @@ export const TASK_TYPE_LABELS: Record<string, string> = {
   host_diagnostic: "Диагностика",
   agent_version_scan: "Проверка версий агента",
   agent_update: "Обновление агента",
+  access_change: "Смена учётных данных SSH",
 };
 
 export const VERSION_LABELS: Record<string, string> = {

@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Activity, ArrowUpCircle, ChevronDown, Download, FolderInput, MoreHorizontal, Play, Plus, RefreshCw, ScanLine, Trash2, Upload, X, XCircle,
+  Activity, ArrowUpCircle, ChevronDown, Download, FolderInput, KeyRound, MoreHorizontal, Play, Plus, RefreshCw, ScanLine, Trash2, Upload, X, XCircle,
 } from "lucide-react";
 import { apiClient } from "../../api/client";
 import { keys, useCanEdit, useFleet } from "../../api/queries";
@@ -19,7 +19,7 @@ import PlaybookRunForm from "../../components/PlaybookRunForm";
 import GroupSidebar from "./GroupSidebar";
 import HostTable, { ColumnSet } from "./HostTable";
 import HostDrawer from "./HostDrawer";
-import { AddHostDialog, GroupDialog } from "./dialogs";
+import { AddHostDialog, CredentialDialog, GroupDialog } from "./dialogs";
 import { AGENT_FILTERS, CHECKED_FILTERS, filterHosts, useHostFilters } from "./filters";
 import { downloadFromApi } from "../../lib/download";
 import { apiError, OS_OPTIONS, osLabel, pcCount } from "../../lib/format";
@@ -46,6 +46,7 @@ export default function HostsPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [runFor, setRunFor] = useState<string[] | null>(null);
   const [groupFor, setGroupFor] = useState<string[] | null>(null);
+  const [credentialFor, setCredentialFor] = useState<string[] | null>(null);
   const [adding, setAdding] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -314,6 +315,7 @@ export default function HostsPage() {
                 },
                 "divider",
                 { label: "Назначить группу…", icon: <FolderInput className="h-4 w-4" />, onClick: () => setGroupFor([...selected]) },
+                { label: "Учётные данные SSH…", icon: <KeyRound className="h-4 w-4" />, onClick: () => setCredentialFor([...selected]) },
                 { label: "Удалить из реестра", icon: <Trash2 className="h-4 w-4" />, danger: true, onClick: bulkDelete },
               ]}
             />
@@ -331,6 +333,7 @@ export default function HostsPage() {
         </Modal>
       )}
       {groupFor && <GroupDialog hostIds={groupFor} onClose={() => setGroupFor(null)} onDone={() => { setGroupFor(null); setSelected(new Set()); }} />}
+      {credentialFor && <CredentialDialog hostIds={credentialFor} onClose={() => setCredentialFor(null)} onDone={() => { setCredentialFor(null); setSelected(new Set()); }} />}
       {adding && <AddHostDialog onClose={() => setAdding(false)} />}
     </div>
   );

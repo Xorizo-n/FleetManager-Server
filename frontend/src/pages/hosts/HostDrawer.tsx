@@ -13,6 +13,7 @@ import SearchInput from "../../components/ui/SearchInput";
 import { Empty, ErrorText, Loading } from "../../components/ui/States";
 import { useToast } from "../../components/ui/Toast";
 import { useOpenTask } from "../../components/TaskPanel";
+import { useAccessChange } from "../../components/useAccessChange";
 import { AgentCell, StatusDot } from "./HostTable";
 import { apiError, formatDateTime, formatRam, hostLabel, osLabel, relativeTime, STATUS_LABELS, taskTitle } from "../../lib/format";
 import { isSystemSoftware } from "../../lib/software";
@@ -136,6 +137,7 @@ function Overview({ host }: { host: Host }) {
   const toast = useToast();
   const { tree, versionOf, agentVersions } = useFleet();
   const credentials = useCredentials();
+  const runAccessChange = useAccessChange();
   const [form, setForm] = useState({ group_id: host.group_id ?? "", credential_id: host.credential_id ?? "", comment: host.comment ?? "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -155,21 +157,25 @@ function Overview({ host }: { host: Host }) {
   const inheritedFromGroup = effectiveCredential({ credential_id: null, group_id: form.group_id || null }, tree, credentials.data);
   const credentialOptions = useMemo(() => (credentials.data ?? []).filter(isSshAssignable), [credentials.data]);
 
+  const groupChanged = form.group_id !== (host.group_id ?? "");
+  const credentialChanged = form.credential_id !== (host.credential_id ?? "");
+  // Каждая смена доступа проверяется входом на ПК отдельно — группа и учётка сохраняются по очереди
+  const bothAccessChanges = groupChanged && credentialChanged;
+
   async function save() {
     setSaving(true);
     setError(null);
     try {
-      // Отправляются только изменённые поля: учётку агента сервер менять не даёт
-      const patch: Record<string, string | null> = {};
-      if (form.comment !== (host.comment ?? "")) patch.comment = form.comment.trim() || null;
-      if (form.credential_id !== (host.credential_id ?? "")) patch.credential_id = form.credential_id || null;
-      if (Object.keys(patch).length) await apiClient.patch(`/hosts/${host.id}`, patch);
-      if (form.group_id !== (host.group_id ?? "")) {
-        if (form.group_id) await apiClient.post("/hosts/groups/assign", { host_ids: [host.id], group_id: form.group_id });
-        else await apiClient.post("/hosts/groups/unassign", { host_ids: [host.id] });
+      if (form.comment !== (host.comment ?? "")) {
+        await apiClient.patch(`/hosts/${host.id}`, { comment: form.comment.trim() || null });
+        await queryClient.invalidateQueries({ queryKey: keys.hosts });
+        if (!groupChanged && !credentialChanged) toast({ tone: "success", message: "Комментарий сохранён" });
       }
-      await queryClient.invalidateQueries({ queryKey: keys.hosts });
-      toast({ tone: "success", message: "Изменения сохранены" });
+      if (groupChanged) {
+        await runAccessChange({ action: "move_to_group", host_ids: [host.id], group_id: form.group_id || null });
+      } else if (credentialChanged) {
+        await runAccessChange({ action: "set_host_credential", host_ids: [host.id], credential_id: form.credential_id || null });
+      }
     } catch (err) {
       setError(apiError(err, "Не удалось сохранить хост"));
     } finally {
@@ -262,7 +268,9 @@ function Overview({ host }: { host: Host }) {
         </div>
         {canEdit && (
           <div className="flex items-center gap-3">
-            <Button size="sm" onClick={save} loading={saving} disabled={!dirty}>Сохранить</Button>
+            <Button size="sm" onClick={save} loading={saving} disabled={!dirty || bothAccessChanges}>
+              {credentialChanges ? "Проверить вход и сохранить" : "Сохранить"}
+            </Button>
             {dirty && (
               <button className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setForm({ group_id: host.group_id ?? "", credential_id: host.credential_id ?? "", comment: host.comment ?? "" })}>
                 Отменить изменения
@@ -270,6 +278,12 @@ function Overview({ host }: { host: Host }) {
             )}
             <ErrorText>{error}</ErrorText>
           </div>
+        )}
+        {canEdit && bothAccessChanges && (
+          <p className="text-xs text-amber-600 dark:text-amber-400">Группа и учётка проверяются входом на ПК по отдельности: сохраните сначала одно, потом другое.</p>
+        )}
+        {canEdit && credentialChanges && !bothAccessChanges && (
+          <p className="text-xs text-subtle">Сервер сначала войдёт на ПК новыми данными; если вход не пройдёт, изменение не применится.</p>
         )}
       </section>
     </div>

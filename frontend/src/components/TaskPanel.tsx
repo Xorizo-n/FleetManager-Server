@@ -63,9 +63,16 @@ function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }
       queryClient.invalidateQueries({ queryKey: keys.hosts });
       queryClient.invalidateQueries({ queryKey: keys.agentVersions });
     }
+    // Смена доступа применяется в конце задачи: учётки и группы хостов изменились
+    if (task?.task_type === "access_change") {
+      queryClient.invalidateQueries({ queryKey: keys.hosts });
+      queryClient.invalidateQueries({ queryKey: keys.groups });
+      queryClient.invalidateQueries({ queryKey: keys.credentials });
+    }
   }
 
-  const vars = Object.entries(task?.extra_vars ?? {});
+  // У смены доступа в extra_vars лежит описание изменения, а не переменные плейбука
+  const vars = task?.task_type === "access_change" ? [] : Object.entries(task?.extra_vars ?? {});
 
   return (
     <Drawer

@@ -14,6 +14,7 @@ celery_app = Celery(
         "services.agent_installer_sync",
         "services.agent_update",
         "services.host_grouping",
+        "services.access_change",
     ],
 )
 
