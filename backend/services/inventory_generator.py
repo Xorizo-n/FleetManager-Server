@@ -120,5 +120,35 @@ def build_inventory_ini(db: Session) -> str:
     return "\n".join(lines)
 
 
+def group_with_descendants(db: Session, group_ids) -> set:
+    """The groups and every group below them: a building includes its floors and rooms."""
+    pending = {group_id for group_id in group_ids if group_id}
+    if not pending:
+        return set()
+    children: dict = {}
+    for group_id, parent_id in db.execute(select(HostGroup.id, HostGroup.parent_id)).all():
+        children.setdefault(parent_id, []).append(group_id)
+    result: set = set()
+    stack = list(pending)
+    while stack:
+        current = stack.pop()
+        if current in result:
+            continue
+        result.add(current)
+        stack.extend(children.get(current, []))
+    return result
+
+
 def resolve_host_group_members(db: Session, host_group_id: uuid.UUID) -> list[Host]:
-    return db.execute(select(Host).where(Host.group_id == host_group_id)).scalars().all()
+    """Hosts of the group and of all its subgroups (selecting a building means all its PCs)."""
+    group_ids = group_with_descendants(db, [host_group_id])
+    return db.execute(select(Host).where(Host.group_id.in_(group_ids))).scalars().all()
+
+
+def resolve_target_host_ids(db: Session, host_ids=(), group_ids=()) -> list[str]:
+    """Explicit hosts plus every host of the groups (with subgroups), without duplicates."""
+    result = [str(host_id) for host_id in host_ids]
+    expanded = group_with_descendants(db, group_ids)
+    if expanded:
+        result += [str(host_id) for host_id in db.execute(select(Host.id).where(Host.group_id.in_(expanded))).scalars().all()]
+    return list(dict.fromkeys(result))

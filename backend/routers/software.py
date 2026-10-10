@@ -16,6 +16,8 @@ from schemas.software import (
     SoftwareItemOut,
     SoftwareHistoryOut,
     SoftwareSummaryItem,
+    SoftwarePackageOut,
+    SoftwareVersionCount,
     ScanTriggerRequest,
     ScanTriggerResponse,
     SoftwareIngestRequest,
@@ -72,6 +74,13 @@ _SYSTEM_PREFIXES = [
 _GUID_REGEX = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 
 
+def without_system_software(query):
+    """Скрывает системное ПО Microsoft/Windows и AppX-пакеты с GUID вместо имени."""
+    for prefix in _SYSTEM_PREFIXES:
+        query = query.where(~SoftwareItem.name.ilike(f"{prefix}%"))
+    return query.where(~SoftwareItem.name.op("~*")(_GUID_REGEX))
+
+
 @router.get("", response_model=list[SoftwareItemOut])
 def list_software(
     host_id: uuid.UUID | None = None,
@@ -92,21 +101,71 @@ def list_software(
     if status_filter:
         query = query.where(SoftwareItem.status == status_filter)
     if exclude_system:
-        for prefix in _SYSTEM_PREFIXES:
-            query = query.where(~SoftwareItem.name.ilike(f"{prefix}%"))
-        query = query.where(~SoftwareItem.name.op("~*")(_GUID_REGEX))
+        query = without_system_software(query)
     return db.execute(query.order_by(SoftwareItem.name)).scalars().all()
 
 
 @router.get("/summary", response_model=list[SoftwareSummaryItem])
-def software_summary(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    rows = db.execute(
+def software_summary(
+    name: str | None = None,
+    exclude_system: bool = False,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    query = (
         select(SoftwareItem.name, SoftwareItem.version, func.count(func.distinct(SoftwareItem.host_id)))
         .where(SoftwareItem.status == SoftwareStatus.installed)
         .group_by(SoftwareItem.name, SoftwareItem.version)
         .order_by(func.count(func.distinct(SoftwareItem.host_id)).desc())
-    ).all()
+    )
+    if name:
+        query = query.where(SoftwareItem.name.ilike(f"%{name}%"))
+    if exclude_system:
+        query = without_system_software(query)
+    rows = db.execute(query).all()
     return [SoftwareSummaryItem(name=r[0], version=r[1], host_count=r[2]) for r in rows]
+
+
+@router.get("/packages", response_model=list[SoftwarePackageOut])
+def software_packages(
+    name: str | None = None,
+    exclude_system: bool = True,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Каталог ПО: один пакет — одна строка, с числом хостов и разбивкой по версиям."""
+    query = (
+        select(SoftwareItem.name, SoftwareItem.version, func.count(func.distinct(SoftwareItem.host_id)))
+        .where(SoftwareItem.status == SoftwareStatus.installed)
+        .group_by(SoftwareItem.name, SoftwareItem.version)
+    )
+    if name:
+        query = query.where(SoftwareItem.name.ilike(f"%{name}%"))
+    if exclude_system:
+        query = without_system_software(query)
+    totals = dict(
+        db.execute(
+            select(SoftwareItem.name, func.count(func.distinct(SoftwareItem.host_id)))
+            .where(SoftwareItem.status == SoftwareStatus.installed)
+            .group_by(SoftwareItem.name)
+        ).all()
+    )
+    packages: dict[str, SoftwarePackageOut] = {}
+    for package_name, version, host_count in db.execute(query).all():
+        package = packages.setdefault(
+            package_name, SoftwarePackageOut(name=package_name, host_count=totals.get(package_name, 0), versions=[])
+        )
+        package.versions.append(SoftwareVersionCount(version=version, host_count=host_count))
+    for package in packages.values():
+        package.versions.sort(key=lambda item: item.host_count, reverse=True)
+    return sorted(packages.values(), key=lambda item: (-item.host_count, item.name.lower()))
+
+
+@router.get("/package-hosts", response_model=list[SoftwareItemOut])
+def software_package_hosts(name: str, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """Хосты, на которых установлен пакет с точно таким именем."""
+    query = select(SoftwareItem).where(SoftwareItem.name == name, SoftwareItem.status == SoftwareStatus.installed)
+    return db.execute(query.order_by(SoftwareItem.version)).scalars().all()
 
 
 @router.get("/history", response_model=list[SoftwareHistoryOut])

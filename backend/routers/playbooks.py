@@ -20,11 +20,13 @@ from schemas.playbook import (
     PlaybookRunRequest,
     PlaybookScheduleCreate,
     PlaybookScheduleOut,
+    PlaybookScheduleUpdate,
 )
 from services.audit import record_audit
 from services.crypto import encrypt_secret, decrypt_secret
 from services.git_ssh import build_git_ssh_command
-from services.inventory_generator import resolve_host_group_members
+from services.inventory_generator import resolve_target_host_ids
+from services.schedule_targets import schedule_group_ids, schedule_out
 
 
 def _resolve_ssh_credential(db: Session, credential_id) -> Credential | None:
@@ -174,10 +176,10 @@ def run_playbook(
     if repo is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Репозиторий не найден")
 
-    host_ids = [str(h) for h in payload.host_ids]
+    group_ids = list(payload.host_group_ids)
     if payload.host_group_id:
-        host_ids += [str(h.id) for h in resolve_host_group_members(db, payload.host_group_id)]
-    host_ids = list(dict.fromkeys(host_ids))
+        group_ids.append(payload.host_group_id)
+    host_ids = resolve_target_host_ids(db, payload.host_ids, group_ids)
 
     if not host_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Не выбраны хосты")
@@ -202,7 +204,8 @@ def run_playbook(
 
 @router.get("/schedules", response_model=list[PlaybookScheduleOut])
 def list_schedules(db: Session = Depends(get_db), _: User = Depends(require_roles(*EDITOR_ROLES))):
-    return db.execute(select(PlaybookSchedule).order_by(PlaybookSchedule.created_at.desc())).scalars().all()
+    schedules = db.execute(select(PlaybookSchedule).order_by(PlaybookSchedule.created_at.desc())).scalars().all()
+    return [schedule_out(schedule) for schedule in schedules]
 
 
 @router.post("/schedules", response_model=PlaybookScheduleOut, status_code=status.HTTP_201_CREATED)
@@ -212,10 +215,17 @@ def create_schedule(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*EDITOR_ROLES)),
 ):
+    if db.get(PlaybookRepo, payload.repo_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Репозиторий не найден")
+    group_ids = list(payload.host_group_ids)
+    if payload.host_group_id:
+        group_ids.append(payload.host_group_id)
+    if not group_ids and not payload.host_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Не выбраны хосты")
     schedule = PlaybookSchedule(
         repo_id=payload.repo_id,
         playbook_name=payload.playbook_name,
-        host_group_id=payload.host_group_id,
+        host_group_ids=list(dict.fromkeys(str(g) for g in group_ids)),
         host_ids=[str(h) for h in payload.host_ids],
         extra_vars=payload.extra_vars,
         cron_expression=payload.cron_expression,
@@ -225,7 +235,38 @@ def create_schedule(
     db.commit()
     db.refresh(schedule)
     record_audit(db, user.id, "playbook_schedule.create", schedule.playbook_name, request)
-    return schedule
+    return schedule_out(schedule)
+
+
+@router.patch("/schedules/{schedule_id}", response_model=PlaybookScheduleOut)
+def update_schedule(
+    schedule_id: uuid.UUID,
+    payload: PlaybookScheduleUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*EDITOR_ROLES)),
+):
+    schedule = db.get(PlaybookSchedule, schedule_id)
+    if schedule is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Расписание не найдено")
+
+    changes = payload.model_dump(exclude_unset=True)
+    if "host_group_ids" in changes or "host_ids" in changes:
+        group_ids = changes.get("host_group_ids", schedule_group_ids(schedule)) or []
+        host_ids = changes.get("host_ids", schedule.host_ids) or []
+        if not group_ids and not host_ids:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Не выбраны хосты")
+        schedule.host_group_ids = list(dict.fromkeys(str(g) for g in group_ids))
+        schedule.host_group_id = None  # цели теперь целиком в host_group_ids
+        schedule.host_ids = [str(h) for h in host_ids]
+    for field in ("playbook_name", "extra_vars", "cron_expression", "enabled"):
+        if changes.get(field) is not None:
+            setattr(schedule, field, changes[field])
+
+    db.commit()
+    db.refresh(schedule)
+    record_audit(db, user.id, "playbook_schedule.update", str(schedule_id), request)
+    return schedule_out(schedule)
 
 
 @router.delete("/schedules/{schedule_id}", status_code=status.HTTP_204_NO_CONTENT)

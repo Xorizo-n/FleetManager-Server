@@ -385,6 +385,20 @@ def create_alert(
     return alert
 
 
+@router.get("/alerts", response_model=list[AgentAlertOut])
+def list_alerts(
+    host_id: uuid.UUID | None = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Алерты агентов (например, смена железа), новые сверху."""
+    query = select(AgentAlert)
+    if host_id:
+        query = query.where(AgentAlert.host_id == host_id)
+    return db.execute(query.order_by(AgentAlert.created_at.desc()).limit(max(1, min(limit, 500)))).scalars().all()
+
+
 @router.post("/offline")
 def mark_offline(
     payload: AgentOfflineRequest,

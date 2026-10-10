@@ -25,6 +25,29 @@ class HostGroupOut(BaseModel):
     is_auto: bool = False
 
 
+class HostGroupUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    # null снимает учётку: тогда действует учётка родительской группы
+    credential_id: uuid.UUID | None = None
+
+    @field_validator("name", "description", mode="before")
+    @classmethod
+    def strip_text(cls, value: str | None) -> str | None:
+        return value.strip() if isinstance(value, str) else value
+
+
+class HostBulkDeleteRequest(BaseModel):
+    host_ids: list[uuid.UUID]
+
+    @field_validator("host_ids")
+    @classmethod
+    def require_hosts(cls, value: list[uuid.UUID]) -> list[uuid.UUID]:
+        if not value:
+            raise ValueError("Необходимо выбрать хотя бы один хост")
+        return value
+
+
 class HostGroupAssignRequest(BaseModel):
     host_ids: list[uuid.UUID]
     group_id: uuid.UUID | None = None
@@ -107,6 +130,14 @@ class HostOut(BaseModel):
     has_agent: bool = False
     agent_version: str | None = None
     agent_version_checked_at: datetime | None = None
+    last_seen_at: datetime | None = None
+    # Железо из heartbeat агента: реестр хостов показывает его колонками
+    hw_manufacturer: str | None = None
+    hw_model: str | None = None
+    hw_serial_number: str | None = None
+    hw_os_caption: str | None = None
+    hw_processor: str | None = None
+    hw_total_memory_bytes: int | None = None
     created_at: datetime
     updated_at: datetime
 

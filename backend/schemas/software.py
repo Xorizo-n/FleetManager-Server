@@ -36,6 +36,17 @@ class SoftwareSummaryItem(BaseModel):
     host_count: int
 
 
+class SoftwareVersionCount(BaseModel):
+    version: str | None
+    host_count: int
+
+
+class SoftwarePackageOut(BaseModel):
+    name: str
+    host_count: int
+    versions: list[SoftwareVersionCount]
+
+
 class ScanTriggerRequest(BaseModel):
     host_ids: list[uuid.UUID]
 

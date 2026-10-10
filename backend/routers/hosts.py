@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from dependencies import get_current_user, require_roles
+from models.credential import Credential
 from models.host import Host, HostGroup, HostOS
 from models.task import TaskRun, TaskStatus, TaskType
 from models.user import User, UserRole
@@ -20,6 +21,8 @@ from schemas.host import (
     HostGroupOut,
     HostGroupAssignRequest,
     HostGroupUnassignRequest,
+    HostGroupUpdate,
+    HostBulkDeleteRequest,
     CsvImportResult,
 )
 from schemas.task import TaskRunOut
@@ -96,6 +99,53 @@ def create_group(
     db.refresh(group)
     record_audit(db, user.id, "host_group.create", group.name, request)
     return group
+
+
+@router.patch("/groups/{group_id}", response_model=HostGroupOut)
+def update_group(
+    group_id: uuid.UUID,
+    payload: HostGroupUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*EDITOR_ROLES)),
+):
+    group = db.get(HostGroup, group_id)
+    if group is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Группа не найдена")
+
+    values = payload.model_dump(exclude_unset=True)
+    if "name" in values:
+        if group.is_auto:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Автоматическую группу переименовать нельзя: имя задаёт схема имён ПК")
+        if not values["name"]:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Имя группы не может быть пустым")
+    if values.get("credential_id") is not None and db.get(Credential, values["credential_id"]) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Credential не найден")
+    for field, value in values.items():
+        setattr(group, field, value)
+
+    db.commit()
+    db.refresh(group)
+    record_audit(db, user.id, "host_group.update", group.name, request)
+    return group
+
+
+@router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_group(
+    group_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*EDITOR_ROLES)),
+):
+    group = db.get(HostGroup, group_id)
+    if group is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Группа не найдена")
+    if group.is_auto:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Автоматическую группу удалить нельзя: сервер создаст её заново")
+    # ПК группы остаются без группы, подгруппы поднимаются на уровень выше (ondelete SET NULL)
+    db.delete(group)
+    db.commit()
+    record_audit(db, user.id, "host_group.delete", group.name, request)
 
 
 @router.post("/groups/assign", response_model=HostGroupOut)
@@ -204,6 +254,21 @@ def delete_host(
     db.delete(host)
     db.commit()
     record_audit(db, user.id, "host.delete", host.hostname, request)
+
+
+@router.post("/delete", status_code=status.HTTP_200_OK)
+def delete_hosts(
+    payload: HostBulkDeleteRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*EDITOR_ROLES)),
+):
+    hosts = db.execute(select(Host).where(Host.id.in_(payload.host_ids))).scalars().all()
+    for host in hosts:
+        db.delete(host)
+    db.commit()
+    record_audit(db, user.id, "host.delete_bulk", f"hosts={len(hosts)}", request)
+    return {"deleted": len(hosts)}
 
 
 @router.post("/import-csv", response_model=CsvImportResult)

@@ -12,7 +12,8 @@ from models.host import Host
 from models.playbook import PlaybookRepo, PlaybookSchedule
 from models.task import TaskRun, TaskStatus, TaskType
 from services.crypto import decrypt_secret
-from services.inventory_generator import build_inventory_dict, host_group_credential, resolve_host_group_members
+from services.inventory_generator import build_inventory_dict, host_group_credential, resolve_target_host_ids
+from services.schedule_targets import schedule_group_ids
 
 
 def run_ansible(**kwargs):
@@ -222,9 +223,7 @@ def dispatch_scheduled_playbooks():
             if next_fire > now:
                 continue  # ничего не должно было сработать за последнюю минуту
 
-            host_ids = list(schedule.host_ids or [])
-            if schedule.host_group_id:
-                host_ids += [str(h.id) for h in resolve_host_group_members(db, schedule.host_group_id)]
+            host_ids = resolve_target_host_ids(db, schedule.host_ids or [], schedule_group_ids(schedule))
 
             task_run = TaskRun(
                 task_type=TaskType.playbook,

@@ -17,6 +17,8 @@ class TaskRunOut(BaseModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+    created_by: uuid.UUID | None = None
+    created_by_name: str | None = None
 
 
 class TaskRunDetailOut(TaskRunOut):

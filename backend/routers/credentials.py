@@ -1,12 +1,14 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from database import get_db
 from dependencies import require_roles
 from models.credential import Credential
+from models.host import Host, HostGroup
+from models.playbook import PlaybookRepo
 from models.user import User, UserRole
 from schemas.credential import CredentialCreate, CredentialOut
 from services.audit import record_audit
@@ -19,8 +21,24 @@ EDITOR_ROLES = (UserRole.admin, UserRole.operator)
 
 @router.get("", response_model=list[CredentialOut])
 def list_credentials(db: Session = Depends(get_db), _: User = Depends(require_roles(*EDITOR_ROLES))):
-    """Секреты никогда не возвращаются — только метаданные."""
-    return db.execute(select(Credential).order_by(Credential.name)).scalars().all()
+    """Секреты никогда не возвращаются — только метаданные и число использований."""
+    credentials = db.execute(select(Credential).order_by(Credential.name)).scalars().all()
+    usage = {
+        "host_count": _usage_counts(db, Host.credential_id),
+        "group_count": _usage_counts(db, HostGroup.credential_id),
+        "repo_count": _usage_counts(db, PlaybookRepo.credential_id),
+    }
+    result = []
+    for credential in credentials:
+        out = CredentialOut.model_validate(credential)
+        for field, counts in usage.items():
+            setattr(out, field, counts.get(credential.id, 0))
+        result.append(out)
+    return result
+
+
+def _usage_counts(db: Session, column) -> dict:
+    return dict(db.execute(select(column, func.count()).where(column.is_not(None)).group_by(column)).all())
 
 
 @router.post("", response_model=CredentialOut, status_code=status.HTTP_201_CREATED)
