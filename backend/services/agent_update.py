@@ -184,7 +184,7 @@ def _ssh_port(host: Host) -> int:
     return host.ssh_port or settings.ansible_ssh_port
 
 
-def _is_reachable(host: Host) -> bool:
+def _is_reachable(host: Host, port: int | None = None) -> bool:
     """TCP-проверка перед SSH — детерминированно укладывается в TCP_CHECK_TIMEOUT,
     в отличие от ожидания на уровне SSH/ansible при недоступном хосте."""
     try:
@@ -192,18 +192,27 @@ def _is_reachable(host: Host) -> bool:
     except ValueError:
         return False
     try:
-        with socket.create_connection((target, _ssh_port(host)), timeout=TCP_CHECK_TIMEOUT):
+        with socket.create_connection((target, port or _ssh_port(host)), timeout=TCP_CHECK_TIMEOUT):
             return True
     except OSError:
         return False
 
 
-def _recheck_version(inventory: dict, host: Host, available: str | None) -> str | None:
-    """Повторно опрашивает хост после обрыва сессии; None — обновление не подтвердилось."""
+def _recheck_version(db, task: TaskRun, inventory: dict, host: Host, available: str | None) -> str | None:
+    """Повторно опрашивает хост после обрыва сессии; None — обновление не подтвердилось.
+
+    Сессию обычно обрывает перезапуск sshd в конце установки, и у хоста со старым
+    нестандартным портом SSH к этому моменту уже на порту установщика. Но обрыв
+    бывает и до установки, поэтому порт меняется, только когда старый закрылся,
+    а INSTALLER_SSH_PORT открыт.
+    """
     for _ in range(RECHECK_ATTEMPTS):
         time.sleep(RECHECK_DELAY)
         if not _is_reachable(host):
-            continue
+            if host.ssh_port == INSTALLER_SSH_PORT or not _is_reachable(host, INSTALLER_SSH_PORT):
+                continue
+            _adopt_installer_ssh_port(db, task, host)
+            inventory = build_full_inventory(db, [host.id])
         try:
             probe = parse_probe_output(run_raw_command(inventory, str(host.id), PROBE_CMD, timeout=PROBE_TIMEOUT))
         except Exception:  # noqa: BLE001
@@ -362,12 +371,7 @@ def run_agent_update(task_run_id: str):
                 # Установщик перезапускает службу агента и может задеть SSH-сессию.
                 # Прежде чем считать хост упавшим, перепроверяем версию новой сессией.
                 _append_log(db, task, f"[{label}] связь потеряна во время установки ({exc}); проверяем результат")
-                # Сессию обрывает перезапуск sshd в конце установки — к этому
-                # моменту SSH уже на порту установщика.
-                port_changed = _adopt_installer_ssh_port(db, task, host)
-                if port_changed:
-                    inventory = build_full_inventory(db, [h.id for h in hosts])
-                confirmed = _recheck_version(inventory, host, available)
+                confirmed = _recheck_version(db, task, inventory, host, available)
                 if confirmed:
                     _store_version(db, host, confirmed)
                     _append_log(db, task, f"[{label}] обновлено: {previous or 'неизвестно'} → {confirmed}")
