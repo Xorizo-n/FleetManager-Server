@@ -1,5 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "@fontsource-variable/golos-text";
+import "@fontsource-variable/jetbrains-mono";
 import App from "./App";
 import "./index.css";
 

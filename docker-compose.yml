@@ -134,8 +134,16 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+    environment:
+      # Для временного самоподписанного сертификата, пока в ./certs нет настоящего
+      TLS_SELF_SIGNED_SAN: ${TLS_SELF_SIGNED_SAN:-IP:10.40.240.154,DNS:localhost}
+    volumes:
+      # fleet.crt + fleet.key (в git не попадают). Сертификат от УЦ кладётся сюда же.
+      - ./certs:/etc/nginx/certs
     ports:
-      - "8080:80"
+      - "443:443"   # сайт и API по HTTPS
+      - "80:80"     # перенаправление на HTTPS
+      - "8080:8080" # API для агентов по HTTP: в agent.json у них http://<сервер>:8080
 
 volumes:
   postgres_data:

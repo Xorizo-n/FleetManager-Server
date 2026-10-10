@@ -14,8 +14,10 @@ export default {
         subtle: "rgb(var(--c-subtle) / <alpha-value>)",
       },
       fontFamily: {
-        sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
-        mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "monospace"],
+        // Шрифты лежат в сборке (@fontsource-variable, импорт в main.tsx), без Google Fonts.
+        // Golos Text (ParaType) рисовался под русскоязычные интерфейсы, кириллица в нём родная.
+        sans: ["Golos Text Variable", "ui-sans-serif", "system-ui", "sans-serif"],
+        mono: ["JetBrains Mono Variable", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       boxShadow: {
         panel: "var(--shadow-panel)",

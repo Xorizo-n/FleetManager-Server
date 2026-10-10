@@ -43,7 +43,6 @@
 @layer base {
   body {
     @apply bg-background font-sans text-foreground antialiased;
-    font-feature-settings: "cv11", "ss01";
   }
 
   ::selection {
