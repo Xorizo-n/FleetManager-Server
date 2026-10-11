@@ -19,6 +19,8 @@ class TaskRunOut(BaseModel):
     finished_at: datetime | None
     created_by: uuid.UUID | None = None
     created_by_name: str | None = None
+    # Ответ на запуск: задачи, созданные для выключенных ПК (ждут их появления в сети)
+    waiting_task_ids: list[uuid.UUID] = []
 
 
 class TaskRunDetailOut(TaskRunOut):

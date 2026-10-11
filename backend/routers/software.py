@@ -10,7 +10,7 @@ from database import get_db
 from dependencies import get_current_user, require_roles
 from models.host import Host
 from models.software import SoftwareItem, SoftwareHistory, SoftwareStatus
-from models.task import TaskRun, TaskType, TaskStatus
+from models.task import TaskType
 from models.user import User, UserRole
 from schemas.software import (
     SoftwareItemOut,
@@ -25,6 +25,7 @@ from schemas.software import (
 from services.audit import record_audit
 from services.software_parse import parse_get_package, parse_choco_list
 from services.software_sync import sync_host_software
+from services.waiting_tasks import create_task_runs
 from models.software import InstallMethod
 
 router = APIRouter(prefix="/software", tags=["software"])
@@ -191,19 +192,19 @@ def trigger_scan(
 ):
     from services.software_scanner import scan_software_task
 
-    task_run = TaskRun(
+    if not payload.host_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Не выбраны хосты")
+    now_task, waiting = create_task_runs(
+        db,
         task_type=TaskType.software_scan,
         host_ids=[str(h) for h in payload.host_ids],
-        status=TaskStatus.queued,
         created_by=user.id,
+        defer_offline=payload.defer_offline,
     )
-    db.add(task_run)
-    db.commit()
-    db.refresh(task_run)
-
-    scan_software_task.delay(str(task_run.id))
-    record_audit(db, user.id, "software.scan", f"hosts={len(payload.host_ids)}")
-    return ScanTriggerResponse(task_run_id=task_run.id)
+    if now_task is not None:
+        scan_software_task.delay(str(now_task.id))
+    record_audit(db, user.id, "software.scan", f"hosts={len(payload.host_ids)} waiting={len(waiting)}")
+    return ScanTriggerResponse(task_run_id=(now_task or waiting[0]).id, waiting_task_ids=[task.id for task in waiting])
 
 
 @router.post("/ingest", status_code=status.HTTP_204_NO_CONTENT)

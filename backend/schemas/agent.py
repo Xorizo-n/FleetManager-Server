@@ -202,6 +202,8 @@ class AgentHostSelection(BaseModel):
     """Хосты для обслуживания агента; пустой список — все хосты с агентом."""
 
     host_ids: list[uuid.UUID] = Field(default_factory=list, max_length=1000)
+    # Выключенные ПК получают отдельные задачи, которые запустятся при их появлении в сети
+    defer_offline: bool = True
 
 
 class AgentStatusOut(BaseModel):

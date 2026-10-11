@@ -4,6 +4,7 @@ from celery_app import celery_app
 from database import SessionLocal
 from models.host import Host, HostStatus, HostStatusHistory
 from services.ansible_runner import build_full_inventory, run_ansible
+from services.waiting_tasks import release_waiting_tasks
 
 
 @celery_app.task(name="services.host_health.ping_hosts")
@@ -46,5 +47,10 @@ def ping_hosts():
             db.add(HostStatusHistory(host_id=host.id, status=new_status, recorded_at=now))
 
         db.commit()
+
+        # У ПК без агента heartbeat нет: ожидающие задачи запускает проверка по SSH
+        for host in hosts:
+            if str(host.id) in reachable_hosts:
+                release_waiting_tasks(db, host.id, reason="проверка по SSH")
     finally:
         db.close()

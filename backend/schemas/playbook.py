@@ -46,6 +46,8 @@ class PlaybookRunRequest(BaseModel):
     host_group_ids: list[uuid.UUID] = []
     host_group_id: uuid.UUID | None = None  # прежний клиент: одна группа
     extra_vars: dict = {}
+    # Выключенные ПК получают отдельные задачи, которые запустятся при их появлении в сети
+    defer_offline: bool = True
 
 
 class PlaybookScheduleCreate(BaseModel):

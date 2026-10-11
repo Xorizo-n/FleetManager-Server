@@ -11,7 +11,7 @@ from database import get_db
 from dependencies import require_roles
 from models.credential import Credential, CredentialType
 from models.playbook import PlaybookRepo, PlaybookSchedule
-from models.task import TaskRun, TaskType, TaskStatus
+from models.task import TaskType
 from models.user import User, UserRole
 from schemas.playbook import (
     PlaybookRepoCreate,
@@ -27,6 +27,7 @@ from services.crypto import encrypt_secret, decrypt_secret
 from services.git_ssh import build_git_ssh_command
 from services.inventory_generator import resolve_target_host_ids
 from services.schedule_targets import schedule_group_ids, schedule_out
+from services.waiting_tasks import create_task_runs
 
 
 def _resolve_ssh_credential(db: Session, credential_id) -> Credential | None:
@@ -184,22 +185,20 @@ def run_playbook(
     if not host_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Не выбраны хосты")
 
-    task_run = TaskRun(
+    now_task, waiting = create_task_runs(
+        db,
         task_type=TaskType.playbook,
+        host_ids=host_ids,
+        created_by=user.id,
+        defer_offline=payload.defer_offline,
         repo_id=repo.id,
         playbook_name=payload.playbook_name,
-        host_ids=host_ids,
         extra_vars=payload.extra_vars,
-        status=TaskStatus.queued,
-        created_by=user.id,
     )
-    db.add(task_run)
-    db.commit()
-    db.refresh(task_run)
-
-    run_playbook_task.delay(str(task_run.id))
-    record_audit(db, user.id, "playbook.run", f"{payload.playbook_name} hosts={len(host_ids)}", request)
-    return {"task_run_id": task_run.id}
+    if now_task is not None:
+        run_playbook_task.delay(str(now_task.id))
+    record_audit(db, user.id, "playbook.run", f"{payload.playbook_name} hosts={len(host_ids)} waiting={len(waiting)}", request)
+    return {"task_run_id": (now_task or waiting[0]).id, "waiting_task_ids": [task.id for task in waiting]}
 
 
 @router.get("/schedules", response_model=list[PlaybookScheduleOut])

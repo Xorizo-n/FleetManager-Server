@@ -68,7 +68,8 @@ export interface Credential {
 }
 
 export type TaskType = "playbook" | "software_scan" | "host_diagnostic" | "agent_version_scan" | "agent_update" | "access_change";
-export type TaskStatus = "queued" | "running" | "success" | "failed";
+// waiting — ПК был не в сети, задача запустится при его появлении; cancelled — так и не дождалась
+export type TaskStatus = "queued" | "running" | "success" | "failed" | "waiting" | "cancelled";
 
 export interface TaskRun {
   id: string;
@@ -81,6 +82,8 @@ export interface TaskRun {
   finished_at: string | null;
   created_by?: string | null;
   created_by_name?: string | null;
+  /** Ответ на запуск: задачи, созданные для выключенных ПК */
+  waiting_task_ids?: string[];
 }
 
 export interface TaskRunDetail extends TaskRun {

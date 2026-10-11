@@ -23,6 +23,10 @@ class TaskStatus(str, enum.Enum):
     running = "running"
     success = "success"
     failed = "failed"
+    # ПК был не в сети: задача запустится, когда он появится (services/waiting_tasks.py)
+    waiting = "waiting"
+    # Ожидающая задача отменена вручную или ПК не появился за waiting_task_ttl_days
+    cancelled = "cancelled"
 
 
 class TaskRun(Base):
