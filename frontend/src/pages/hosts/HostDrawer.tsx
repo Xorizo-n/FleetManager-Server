@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Activity, ArrowUpCircle, KeyRound, Play, Trash2 } from "lucide-react";
 import { apiClient } from "../../api/client";
 import { keys, useAlerts, useCanEdit, useCredentials, useFleet, useHostSoftware, useTasks } from "../../api/queries";
-import type { AgentAlert, Host } from "../../api/types";
+import type { AgentAlert, Host, TaskRun } from "../../api/types";
 import Drawer from "../../components/ui/Drawer";
 import Tabs from "../../components/ui/Tabs";
 import Button from "../../components/ui/Button";
@@ -48,7 +48,8 @@ export default function HostDrawer({ host, onClose, onRunPlaybook }: Props) {
   async function updateAgent() {
     if (!window.confirm(`Обновить агент на ${hostLabel(host)}?`)) return;
     try {
-      const { data } = await apiClient.post("/agent/update", { host_ids: [host.id] });
+      const { data } = await apiClient.post<TaskRun>("/agent/update", { host_ids: [host.id] });
+      if (data.status === "waiting") toast({ tone: "info", message: "ПК не в сети — агент обновится, когда он появится" });
       openTask(data.id);
     } catch (err) {
       toast({ tone: "error", message: apiError(err, "Не удалось запустить обновление агента") });

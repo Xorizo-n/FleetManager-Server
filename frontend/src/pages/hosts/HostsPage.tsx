@@ -22,7 +22,7 @@ import HostDrawer from "./HostDrawer";
 import { AddHostDialog, CredentialDialog, GroupDialog } from "./dialogs";
 import { AGENT_FILTERS, ALERT_FILTERS, alertDays, CHECKED_FILTERS, filterHosts, useHostFilters } from "./filters";
 import { downloadFromApi } from "../../lib/download";
-import { apiError, OS_OPTIONS, osLabel, pcCount } from "../../lib/format";
+import { apiError, OS_OPTIONS, osLabel, pcCount, waitingNotice } from "../../lib/format";
 
 const VIEW_KEY = "fm.hosts.view";
 
@@ -89,11 +89,14 @@ export default function HostsPage() {
     });
   }
 
-  async function startTask(request: Promise<{ data: { id?: string; task_run_id?: string } }>, fallback: string) {
+  async function startTask(request: Promise<{ data: { id?: string; task_run_id?: string; waiting_task_ids?: string[] } }>, fallback: string) {
     try {
       const { data } = await request;
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
-      openTask((data.id ?? data.task_run_id)!);
+      const opened = (data.id ?? data.task_run_id)!;
+      const waiting = data.waiting_task_ids ?? [];
+      if (waiting.length > 0) toast({ tone: "info", message: waitingNotice(waiting.length, !waiting.includes(opened)) });
+      openTask(opened);
     } catch (err) {
       toast({ tone: "error", message: apiError(err, fallback) });
     }

@@ -1,3 +1,4 @@
+import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -15,7 +16,7 @@ from models.agent import AgentAlert, AgentEnrollmentToken
 from models.credential import Credential, CredentialType
 from models.host import Host, HostStatus
 from models.software import InstallMethod, SoftwareItem, SoftwareStatus
-from models.task import TaskRun, TaskStatus, TaskType
+from models.task import TaskType
 from models.user import User, UserRole
 from schemas.agent import (
     AgentAlertOut,
@@ -38,7 +39,6 @@ from schemas.agent import (
 from schemas.task import TaskRunOut
 from services.agent_auth import hash_agent_token, is_machine_id_clone, issue_agent_token
 from services.agent_ssh import generate_agent_keypair
-from services.agent_update import run_agent_update, run_agent_version_scan
 from services.agent_version import (
     INSTALLER_FILENAME,
     STATUS_OUTDATED,
@@ -52,10 +52,13 @@ from services.agent_version import (
 from services.audit import record_audit
 from services.hardware_change import hardware_changes
 from services.host_grouping import apply_auto_group
+from services.waiting_tasks import create_task_runs, enqueue, release_waiting_tasks
 from services.crypto import decrypt_secret, encrypt_secret
 from services.installer_builder import agent_dist_ready, build_installer_exe, safe_filename
 
 HARDWARE_CHANGED = "hardware_changed"
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 bearer = HTTPBearer(auto_error=False)
@@ -359,6 +362,14 @@ def heartbeat(
     # Группа по имени: после переименования ПК переходит в группу своей аудитории.
     apply_auto_group(db, host)
 
+    # ПК в сети — задачи, которые ждали его включения, уходят в очередь.
+    # Ошибка здесь не должна сорвать heartbeat.
+    try:
+        release_waiting_tasks(db, host.id)
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.exception("Failed to release waiting tasks for host %s", host.id)
+
     stored = 0
     try:
         db.execute(delete(SoftwareItem).where(SoftwareItem.host_id == host.id))
@@ -562,18 +573,23 @@ def _queue_agent_task(
     hosts: list[Host],
     task_type: TaskType,
     audit_action: str,
-) -> TaskRun:
-    task = TaskRun(
+    defer_offline: bool,
+) -> TaskRunOut:
+    """Запускает задачу для ПК в сети; выключенным — ожидающие задачи. Возвращает
+    задачу для ПК в сети, а если все выключены — первую из ожидающих."""
+    now_task, waiting = create_task_runs(
+        db,
         task_type=task_type,
         host_ids=[str(host.id) for host in hosts],
-        status=TaskStatus.queued,
         created_by=user.id,
+        defer_offline=defer_offline,
     )
-    db.add(task)
-    db.commit()
-    db.refresh(task)
-    record_audit(db, user.id, audit_action, f"hosts={len(hosts)}", request)
-    return task
+    if now_task is not None:
+        enqueue(now_task)
+    record_audit(db, user.id, audit_action, f"hosts={len(hosts)} waiting={len(waiting)}", request)
+    out = TaskRunOut.model_validate(now_task or waiting[0])
+    out.waiting_task_ids = [task.id for task in waiting]
+    return out
 
 
 @router.post("/version-scan", response_model=TaskRunOut, status_code=status.HTTP_202_ACCEPTED)
@@ -585,9 +601,7 @@ def start_agent_version_scan(
 ):
     """Проверяет по SSH, какая версия агента реально установлена на хостах."""
     hosts = _agent_hosts_for(db, payload.host_ids)
-    task = _queue_agent_task(db, user, request, hosts, TaskType.agent_version_scan, "agent.version_scan")
-    run_agent_version_scan.delay(str(task.id))
-    return task
+    return _queue_agent_task(db, user, request, hosts, TaskType.agent_version_scan, "agent.version_scan", payload.defer_offline)
 
 
 @router.post("/update", response_model=TaskRunOut, status_code=status.HTTP_202_ACCEPTED)
@@ -604,9 +618,7 @@ def start_agent_update(
             detail="Установщик агента отсутствует: сначала синхронизируйте его с GitHub Releases",
         )
     hosts = _agent_hosts_for(db, payload.host_ids)
-    task = _queue_agent_task(db, user, request, hosts, TaskType.agent_update, "agent.update")
-    run_agent_update.delay(str(task.id))
-    return task
+    return _queue_agent_task(db, user, request, hosts, TaskType.agent_update, "agent.update", payload.defer_offline)
 
 
 @router.get("/status/{agent_id}", response_model=AgentStatusOut)

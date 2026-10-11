@@ -15,6 +15,7 @@ celery_app = Celery(
         "services.agent_update",
         "services.host_grouping",
         "services.access_change",
+        "services.waiting_tasks",
     ],
 )
 
@@ -33,6 +34,11 @@ celery_app.conf.update(
         "ping-hosts": {
             "task": "services.host_health.ping_hosts",
             "schedule": 300.0,
+        },
+        # Отменяет задачи, чей ПК так и не появился в сети за waiting_task_ttl_days
+        "expire-waiting-tasks": {
+            "task": "services.waiting_tasks.expire_waiting_tasks",
+            "schedule": 3600.0,
         },
         "sync-agent-installer": {
             "task": "services.agent_installer_sync.sync_agent_installer_task",

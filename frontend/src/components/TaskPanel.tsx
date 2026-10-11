@@ -1,12 +1,16 @@
-import { createContext, ReactNode, useCallback, useContext, useMemo } from "react";
+import { createContext, ReactNode, useCallback, useContext, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import Drawer from "./ui/Drawer";
 import Badge from "./ui/Badge";
+import Button from "./ui/Button";
+import { useToast } from "./ui/Toast";
+import { Clock } from "lucide-react";
+import { apiClient } from "../api/client";
 import TaskLog from "./TaskLog";
 import { Loading } from "./ui/States";
-import { keys, useFleet, useTask } from "../api/queries";
-import { formatDateTime, formatDuration, hostLabel, STATUS_LABELS, TASK_TYPE_LABELS, taskTitle } from "../lib/format";
+import { keys, useCanEdit, useFleet, useTask } from "../api/queries";
+import { apiError, formatDateTime, formatDuration, hostLabel, STATUS_LABELS, TASK_TYPE_LABELS, taskTitle } from "../lib/format";
 
 const TaskPanelContext = createContext<(taskId: string) => void>(() => {});
 
@@ -49,6 +53,23 @@ function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }
   const { data: task, isLoading, error } = useTask(taskId);
   const { hostById } = useFleet();
   const running = task && ["queued", "running"].includes(task.status);
+  const canEdit = useCanEdit();
+  const toast = useToast();
+  const [cancelling, setCancelling] = useState(false);
+
+  async function cancel() {
+    if (!window.confirm("Отменить задачу? Она не запустится, даже когда ПК появится в сети.")) return;
+    setCancelling(true);
+    try {
+      await apiClient.post(`/tasks/${taskId}/cancel`);
+      queryClient.invalidateQueries({ queryKey: keys.task(taskId) });
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    } catch (err) {
+      toast({ tone: "error", message: apiError(err, "Не удалось отменить задачу") });
+    } finally {
+      setCancelling(false);
+    }
+  }
 
   const hostNames = useMemo(
     () => (task?.host_ids ?? []).map((id) => { const h = hostById.get(id); return h ? hostLabel(h) : id.slice(0, 8); }),
@@ -106,6 +127,19 @@ function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }
                   {k}={String(v)}
                 </span>
               ))}
+            </div>
+          )}
+          {task.status === "waiting" && (
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-violet-500/30 bg-violet-500/5 px-3 py-2.5 text-sm">
+              <Clock className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" />
+              <span className="min-w-0 flex-1 text-foreground/90">
+                ПК не в сети. Задача запустится сама, как только он пришлёт heartbeat или ответит по SSH.
+              </span>
+              {canEdit && (
+                <Button size="sm" variant="secondary" onClick={cancel} loading={cancelling}>
+                  Отменить
+                </Button>
+              )}
             </div>
           )}
           {running ? (

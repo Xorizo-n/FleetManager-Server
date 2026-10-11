@@ -95,7 +95,11 @@ export const useTask = (id: string | null) =>
     queryKey: keys.task(id ?? ""),
     queryFn: () => get<TaskRunDetail>(`/tasks/${id}`),
     enabled: !!id,
-    refetchInterval: (query) => (["queued", "running"].includes(query.state.data?.status ?? "") ? 2000 : false),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status ?? "";
+      if (["queued", "running"].includes(status)) return 2000;
+      return status === "waiting" ? 15000 : false; // ждёт включения ПК — проверяем реже
+    },
   });
 
 export const useRepos = () => {

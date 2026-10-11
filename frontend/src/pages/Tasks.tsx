@@ -34,12 +34,14 @@ export default function Tasks() {
   }, [data, search, hostById]);
 
   const running = (data ?? []).filter((t) => t.status === "running" || t.status === "queued").length;
+  const waiting = (data ?? []).filter((t) => t.status === "waiting").length;
+  const summary = [running > 0 && `Выполняется сейчас: ${running}`, waiting > 0 && `ждут включения ПК: ${waiting}`].filter(Boolean).join(" · ");
 
   return (
     <div className="animate-fade-in space-y-4">
       <PageHeader
         title="Задачи"
-        description={running > 0 ? `Выполняется сейчас: ${running}` : "Журнал запусков плейбуков, сканирований, диагностик и обновлений агента"}
+        description={summary || "Журнал запусков плейбуков, сканирований, диагностик и обновлений агента"}
       />
       <div className="flex flex-wrap items-center gap-2">
         <SearchInput value={search} onChange={setSearch} placeholder="Плейбук, хост или автор" className="min-w-[220px] flex-1" />
@@ -49,7 +51,7 @@ export default function Tasks() {
         </select>
         <select value={status} onChange={(e) => { setStatus(e.target.value); setLimit(PAGE); }} className="input-base w-auto py-2" aria-label="Статус">
           <option value="">Любой статус</option>
-          {["queued", "running", "success", "failed"].map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
+          {["waiting", "queued", "running", "success", "failed", "cancelled"].map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
         </select>
       </div>
 

@@ -49,10 +49,14 @@ class SoftwarePackageOut(BaseModel):
 
 class ScanTriggerRequest(BaseModel):
     host_ids: list[uuid.UUID]
+    # Выключенные ПК получают отдельные задачи, которые запустятся при их появлении в сети
+    defer_offline: bool = True
 
 
 class ScanTriggerResponse(BaseModel):
+    # Задача для ПК в сети, а если все выключены — первая из ожидающих
     task_run_id: uuid.UUID
+    waiting_task_ids: list[uuid.UUID] = []
 
 
 class SoftwareIngestRequest(BaseModel):

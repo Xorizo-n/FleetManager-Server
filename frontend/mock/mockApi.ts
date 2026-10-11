@@ -217,6 +217,16 @@ for (let i = 0; i < 260; i++) {
   });
 }
 
+// Задачи, ждущие включения ПК (и одна, так и не дождавшаяся)
+for (const [i, host] of hosts.filter((h) => h.status === "offline").slice(0, 6).entries()) {
+  const created = minutesAgo(15 + i * 90);
+  tasks.unshift({
+    id: uuid(), task_type: i % 3 === 2 ? "agent_update" : "playbook", playbook_name: i % 3 === 2 ? null : pick(playbookFiles).path, host_ids: [host.id],
+    status: i === 5 ? "cancelled" : "waiting", created_at: created, started_at: null, finished_at: i === 5 ? minutesAgo(5) : null,
+    created_by: pick(users.slice(0, 2)).id, log_output: "ПК не в сети. Задача запустится, когда он появится, но не позже 18.10.2026 12:00 UTC." + (i === 5 ? "\nОтменена пользователем admin." : ""), extra_vars: {},
+  });
+}
+
 // ---------- помощники ----------
 const hostById = (id: string) => hosts.find((h) => h.id === id);
 function descendants(ids: string[]) {
@@ -607,6 +617,13 @@ route("GET", "/tasks", ({ query, user }) => {
     .slice(offset, offset + limit).map(taskOut);
 });
 route("GET", "/tasks/{id}", (_, p) => { const t = find(tasks, p.id, "Задача"); return { ...taskOut(t), log_output: t.log_output, extra_vars: t.extra_vars }; });
+route("POST", "/tasks/{id}/cancel", (ctx, p) => {
+  editor(ctx);
+  const t = find(tasks, p.id, "Задача");
+  if (t.status !== "waiting") throw new HttpError(409, "Отменить можно только задачу, которая ждёт включения ПК");
+  Object.assign(t, { status: "cancelled", finished_at: now().toISOString(), log_output: `${t.log_output}\nОтменена пользователем ${ctx.user?.username}.` });
+  return taskOut(t);
+});
 route("GET", "/tasks/{id}/stream", ({ res }, p) => {
   const t = find(tasks, p.id, "Задача");
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });

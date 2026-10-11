@@ -8,15 +8,16 @@ from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from database import SessionLocal, get_db
-from dependencies import get_current_user
+from dependencies import get_current_user, require_roles
 from models.task import TaskRun, TaskStatus, TaskType
-from models.user import User
+from models.user import User, UserRole
 from schemas.task import TaskRunOut, TaskRunDetailOut
 from services.task_visibility import can_view_task_type
+from services.waiting_tasks import cancel_waiting_task
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
-TERMINAL_STATUSES = (TaskStatus.success, TaskStatus.failed)
+TERMINAL_STATUSES = (TaskStatus.success, TaskStatus.failed, TaskStatus.cancelled)
 
 
 @router.get("", response_model=list[TaskRunOut])
@@ -66,6 +67,21 @@ def get_task(task_id: uuid.UUID, db: Session = Depends(get_db), user: User = Dep
     return out
 
 
+@router.post("/{task_id}/cancel", response_model=TaskRunOut)
+def cancel_task(
+    task_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.operator)),
+):
+    """Отменяет задачу, которая ждёт включения ПК. Запущенные задачи не прерываются."""
+    task_run = db.get(TaskRun, task_id)
+    if task_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задача не найдена")
+    if not cancel_waiting_task(db, task_run, f"Отменена пользователем {user.username}."):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Отменить можно только задачу, которая ждёт включения ПК")
+    return with_author_names(db, [task_run])[0]
+
+
 @router.get("/{task_id}/stream")
 async def stream_task_log(task_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     task_run = db.get(TaskRun, task_id)
@@ -89,7 +105,8 @@ async def stream_task_log(task_id: uuid.UUID, db: Session = Depends(get_db), use
                     yield {"event": "log", "data": log[last_len:]}
                     last_len = len(log)
 
-                if task_run.status in TERMINAL_STATUSES:
+                # Ожидающая задача может ждать ПК днями — поток не держим
+                if task_run.status in TERMINAL_STATUSES or task_run.status == TaskStatus.waiting:
                     yield {"event": "done", "data": task_run.status.value}
                     return
             finally:

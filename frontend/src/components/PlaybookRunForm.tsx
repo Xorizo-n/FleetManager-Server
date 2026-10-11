@@ -7,12 +7,13 @@ import HostPicker from "./HostPicker";
 import PlaybookSelect, { rememberPlaybook } from "./PlaybookSelect";
 import ExtraVarsEditor, { VarPair, varsToObject } from "./ExtraVarsEditor";
 import Button from "./ui/Button";
+import Switch from "./ui/Switch";
 import { ErrorText } from "./ui/States";
 import { useToast } from "./ui/Toast";
 import { useOpenTask } from "./TaskPanel";
 import { compactSelection } from "../lib/groupTree";
 import { CRON_PRESETS, describeCron } from "../lib/cron";
-import { apiError, pcCount } from "../lib/format";
+import { apiError, pcCount, waitingNotice } from "../lib/format";
 
 interface Props {
   initialHostIds?: string[];
@@ -36,6 +37,8 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
   const [vars, setVars] = useState<VarPair[]>([]);
   const [mode, setMode] = useState<"now" | "schedule">(initialMode);
   const [cron, setCron] = useState(CRON_PRESETS[0].value);
+  // Выключенным ПК — отдельные задачи, которые запустятся, когда ПК появится в сети
+  const [deferOffline, setDeferOffline] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -68,16 +71,19 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
     setBusy(true);
     try {
       if (mode === "now") {
-        const { data } = await apiClient.post<{ task_run_id: string }>("/playbooks/run", {
+        const { data } = await apiClient.post<{ task_run_id: string; waiting_task_ids: string[] }>("/playbooks/run", {
           repo_id: repoId,
           playbook_name: playbook,
           host_ids: hostIds,
           host_group_ids: groupIds,
           extra_vars: varsToObject(vars),
+          defer_offline: deferOffline,
         });
         rememberPlaybook(playbook);
         queryClient.invalidateQueries({ queryKey: ["tasks"] });
         onDone?.();
+        const waiting = data.waiting_task_ids?.length ?? 0;
+        if (waiting > 0) toast({ tone: "info", message: waitingNotice(waiting, !data.waiting_task_ids.includes(data.task_run_id)) });
         openTask(data.task_run_id);
       } else {
         await apiClient.post("/playbooks/schedules", {
@@ -134,10 +140,22 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
       <section className="space-y-2">
         <label className="field-label mb-0">2. Хосты</label>
         <HostPicker value={selection} onChange={setSelection} height={pickerHeight} />
-        {offline > 0 && (
+        {offline > 0 && mode === "now" && (
+          <div className="flex items-start gap-2.5 text-xs">
+            <Switch checked={deferOffline} onChange={setDeferOffline} label="Запустить на выключенных ПК, когда они появятся в сети" />
+            <p className={deferOffline ? "text-muted-foreground" : "flex items-center gap-1.5 text-amber-600 dark:text-amber-400"}>
+              {!deferOffline && <AlertTriangle className="h-3.5 w-3.5 shrink-0" />}
+              {offline} из {pcCount(selection.size)} сейчас не в сети.{" "}
+              {deferOffline
+                ? "На них задача запустится, когда они появятся в сети (ждём до 7 дней)."
+                : "На них запуск, скорее всего, завершится ошибкой."}
+            </p>
+          </div>
+        )}
+        {offline > 0 && mode === "schedule" && (
           <p className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
             <AlertTriangle className="h-3.5 w-3.5" />
-            {offline} из {pcCount(selection.size)} сейчас не online — на них запуск, скорее всего, завершится ошибкой
+            {offline} из {pcCount(selection.size)} сейчас не в сети — если при срабатывании расписания они будут выключены, запуск на них завершится ошибкой
           </p>
         )}
       </section>

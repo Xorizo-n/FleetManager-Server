@@ -20,6 +20,8 @@ export const STATUS_LABELS: Record<string, string> = {
   running: "выполняется",
   success: "выполнена",
   failed: "ошибка",
+  waiting: "ждёт ПК",
+  cancelled: "отменена",
 };
 
 export const TASK_TYPE_LABELS: Record<string, string> = {
@@ -110,6 +112,12 @@ export function plural(n: number, one: string, few: string, many: string) {
 }
 
 export const pcCount = (n: number) => plural(n, "ПК", "ПК", "ПК");
+
+/** Уведомление после запуска: сколько ПК не в сети и что с ними будет. */
+export function waitingNotice(waiting: number, startedNow: boolean): string {
+  const when = "задача запустится на них, когда они появятся в сети";
+  return startedNow ? `${pcCount(waiting)} не в сети — ${when}` : `Все ${pcCount(waiting)} не в сети — ${when}`;
+}
 
 export function apiError(err: unknown, fallback: string): string {
   const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;

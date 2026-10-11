@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # Falls back to the request base_url when empty.
     agent_public_url: str = ""
 
+    # Сколько задача ждёт выключенный ПК, прежде чем отмениться (services/waiting_tasks.py)
+    waiting_task_ttl_days: int = 7
+
     # CORS
     cors_origins: str = "http://localhost:5173,http://localhost:8080"
 

@@ -1,4 +1,4 @@
-type BadgeTone = "success" | "danger" | "info" | "warning" | "neutral";
+type BadgeTone = "success" | "danger" | "info" | "warning" | "neutral" | "waiting";
 
 const STATUS_TONE: Record<string, BadgeTone> = {
   online: "success",
@@ -9,6 +9,8 @@ const STATUS_TONE: Record<string, BadgeTone> = {
   failed: "danger",
   removed: "danger",
   queued: "neutral",
+  waiting: "waiting",
+  cancelled: "neutral",
   unknown: "neutral",
   disabled: "neutral",
 };
@@ -19,6 +21,8 @@ const TONE_STYLES: Record<BadgeTone, string> = {
   info: "bg-sky-500/10 text-sky-700 ring-sky-600/25 dark:text-sky-400 dark:ring-sky-500/20",
   warning: "bg-amber-500/10 text-amber-700 ring-amber-600/25 dark:text-amber-400 dark:ring-amber-500/20",
   neutral: "bg-slate-500/10 text-slate-600 ring-slate-500/25 dark:text-slate-400 dark:ring-slate-500/20",
+  // Задача ждёт включения ПК: не ошибка и не работа — отдельный цвет
+  waiting: "bg-violet-500/10 text-violet-700 ring-violet-600/25 dark:text-violet-300 dark:ring-violet-500/25",
 };
 
 const DOT_STYLES: Record<BadgeTone, string> = {
@@ -27,6 +31,7 @@ const DOT_STYLES: Record<BadgeTone, string> = {
   info: "bg-sky-500 dark:bg-sky-400 motion-safe:animate-pulse",
   warning: "bg-amber-500 dark:bg-amber-400",
   neutral: "bg-slate-400",
+  waiting: "bg-transparent ring-1 ring-inset ring-violet-500 dark:ring-violet-400",
 };
 
 interface BadgeProps {
