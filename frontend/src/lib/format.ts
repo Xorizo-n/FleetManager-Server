@@ -31,6 +31,7 @@ export const TASK_TYPE_LABELS: Record<string, string> = {
   agent_version_scan: "Проверка версий агента",
   agent_update: "Обновление агента",
   access_change: "Смена учётных данных SSH",
+  host_wake: "Пробуждение по сети",
 };
 
 export const VERSION_LABELS: Record<string, string> = {

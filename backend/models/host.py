@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -76,6 +76,10 @@ class Host(Base):
     hw_total_memory_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # Версия агента, собравшего поля hw_*: смена железа ищется только между отчётами одной версии
     hw_agent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Сетевые адаптеры от агента (имя, MAC, IPv4/префикс, тип) и MAC того, через
+    # который ПК пришёл на сервер, — для пробуждения по сети (services/wake_on_lan.py)
+    hw_network_adapters: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    hw_mac_address: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

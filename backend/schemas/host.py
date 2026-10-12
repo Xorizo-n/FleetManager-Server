@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from models.host import HostStatus, HostOS
 from schemas.task import TaskRunOut
@@ -174,6 +174,8 @@ class HostOut(BaseModel):
     hw_os_caption: str | None = None
     hw_processor: str | None = None
     hw_total_memory_bytes: int | None = None
+    hw_mac_address: str | None = None
+    hw_network_adapters: list | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -182,3 +184,7 @@ class CsvImportResult(BaseModel):
     created: int
     skipped: int
     errors: list[str]
+
+
+class HostWakeRequest(BaseModel):
+    host_ids: list[uuid.UUID] = Field(min_length=1, max_length=1000)

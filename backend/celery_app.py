@@ -16,6 +16,7 @@ celery_app = Celery(
         "services.host_grouping",
         "services.access_change",
         "services.waiting_tasks",
+        "services.wake_on_lan",
     ],
 )
 

@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowUpCircle, KeyRound, Monitor, Play, Trash2 } from "lucide-react";
+import { Activity, ArrowUpCircle, KeyRound, Monitor, Play, Power, Trash2 } from "lucide-react";
 import { apiClient } from "../../api/client";
 import { keys, useAlerts, useCanEdit, useCredentials, useFleet, useHostSoftware, useTasks } from "../../api/queries";
 import type { AgentAlert, Host, TaskRun } from "../../api/types";
@@ -43,6 +43,15 @@ export default function HostDrawer({ host, onClose, onRunPlaybook }: Props) {
       openTask(data.id);
     } catch (err) {
       toast({ tone: "error", message: apiError(err, "Не удалось запустить диагностику") });
+    }
+  }
+
+  async function wake() {
+    try {
+      const { data } = await apiClient.post<TaskRun>("/hosts/wake", { host_ids: [host.id] });
+      openTask(data.id);
+    } catch (err) {
+      toast({ tone: "error", message: apiError(err, "Не удалось запустить пробуждение") });
     }
   }
 
@@ -94,6 +103,22 @@ export default function HostDrawer({ host, onClose, onRunPlaybook }: Props) {
               <Activity className="h-3.5 w-3.5" />
               Диагностика
             </Button>
+            {host.status !== "online" && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={wake}
+                disabled={!host.hw_mac_address}
+                title={
+                  host.hw_mac_address
+                    ? `Магический пакет на ${host.hw_mac_address} через включённый ПК той же подсети`
+                    : "MAC-адрес неизвестен: агент сообщит его после обновления до 2026.10.12 и следующего включения"
+                }
+              >
+                <Power className="h-3.5 w-3.5" />
+                Разбудить
+              </Button>
+            )}
             {host.has_agent && (
               <Button size="sm" variant="secondary" onClick={updateAgent}>
                 <ArrowUpCircle className="h-3.5 w-3.5" />
@@ -231,6 +256,7 @@ function Overview({ host }: { host: Host }) {
             <Field label="Производитель">{host.hw_manufacturer}</Field>
             <Field label="Модель">{host.hw_model}</Field>
             <Field label="Серийный номер">{host.hw_serial_number}</Field>
+            <Field label="MAC-адрес">{host.hw_mac_address && <span className="font-mono">{host.hw_mac_address}</span>}</Field>
             <Field label="Процессор">{host.hw_processor}</Field>
             <Field label="Память">{formatRam(host.hw_total_memory_bytes)}</Field>
           </dl>

@@ -33,7 +33,7 @@ interface Host {
   last_checked_at: string | null; comment: string | null; credential_id: string | null; has_agent: boolean;
   agent_version: string | null; agent_version_checked_at: string | null; last_seen_at: string | null;
   hw_manufacturer: string | null; hw_model: string | null; hw_serial_number: string | null; hw_os_caption: string | null;
-  hw_processor: string | null; hw_total_memory_bytes: number | null; created_at: string; updated_at: string;
+  hw_processor: string | null; hw_total_memory_bytes: number | null; hw_mac_address: string | null; created_at: string; updated_at: string;
 }
 interface Credential { id: string; name: string; type: string; login: string | null; created_at: string; is_agent_managed: boolean }
 interface Software { id: string; host_id: string; name: string; version: string | null; install_method: string; status: string; detected_at: string }
@@ -119,6 +119,8 @@ function makeHost(hostname: string, groupId: string | null): Host {
     hw_serial_number: hasAgent ? (chance(0.3) ? "To Be Filled By O.E.M." : `SN${Math.floor(rnd() * 1e10)}`) : null,
     hw_os_caption: hasAgent ? (chance(0.6) ? "Microsoft Windows 11 Enterprise" : "Майкрософт Windows 10 Корпоративная") : null,
     hw_processor: hasAgent ? hw.cpu : null, hw_total_memory_bytes: hasAgent ? hw.ram * 1024 ** 3 : null,
+    // MAC сообщают агенты с 2026.10.12 — у части ПК его ещё нет
+    hw_mac_address: hasAgent && chance(0.7) ? Array.from({ length: 6 }, (_, i) => (i === 0 ? 0x34 : Math.floor(rnd() * 256)).toString(16).padStart(2, "0")).join("-").toUpperCase() : null,
     created_at: created, updated_at: created,
   };
   if (hasAgent) {
@@ -479,6 +481,14 @@ route("PATCH", "/hosts/{id}", (ctx, p) => {
 route("DELETE", "/hosts/{id}", (ctx, p) => { editor(ctx); hosts.splice(hosts.indexOf(find(hosts, p.id, "Хост")), 1); return null; });
 route("POST", "/hosts/delete", (ctx) => { editor(ctx); const ids = new Set(ctx.body.host_ids); const before = hosts.length; for (let i = hosts.length - 1; i >= 0; i--) if (ids.has(hosts[i].id)) hosts.splice(i, 1); return { deleted: before - hosts.length }; });
 route("POST", "/hosts/import-csv", (ctx) => { editor(ctx); return { created: 0, skipped: 0, errors: ["Импорт CSV в мок-режиме не поддерживается"] }; });
+route("POST", "/hosts/wake", (ctx) => {
+  editor(ctx);
+  const ids: string[] = ctx.body.host_ids ?? [];
+  if (!ids.length) throw new HttpError(404, "Хосты не найдены");
+  return taskOut(startTask("host_wake", ids, ctx.user!.id));
+});
+route("GET", "/hosts/export.csv", () =>
+  "\ufeffИмя;IP;MAC;Статус\r\n" + hosts.map((h) => [h.hostname, h.ip_address, h.hw_mac_address ?? "", h.status].join(";")).join("\r\n"));
 route("POST", "/hosts/{id}/diagnostics", (ctx, p) => { editor(ctx); find(hosts, p.id, "Хост"); return taskOut(startTask("host_diagnostic", [p.id], ctx.user!.id)); });
 
 // agent

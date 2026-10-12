@@ -26,6 +26,7 @@ class HostHardwareOut(BaseModel):
     hw_os_caption: str | None
     hw_processor: str | None
     hw_total_memory_bytes: int | None
+    hw_mac_address: str | None = None
 
 
 @router.get("", response_model=list[HostHardwareOut])

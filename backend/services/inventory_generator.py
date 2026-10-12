@@ -80,6 +80,9 @@ def build_inventory_dict(db: Session, host_ids: list[uuid.UUID] | None = None) -
             "_fleet_host_id": str(host.id),
             "_fleet_credential_id": str(host.credential_id) if host.credential_id else _group_credential_id(host),
         }
+        # MAC для пробуждения по сети (community.general.wakeonlan и т. п.)
+        if host.hw_mac_address:
+            host_vars["mac_address"] = host.hw_mac_address
         children[group]["hosts"][str(host.id)] = host_vars
         if host.group_id and host.group:
             _add_parent_groups(children, host.group, names)
@@ -105,7 +108,8 @@ def build_inventory_ini(db: Session) -> str:
         lines.append(f"[{group_name}]")
         for host in group_hosts:
             target = resolve_host_target(host.hostname, host.ip_address)
-            lines.append(f"{host.hostname or host.id} ansible_host={target} ansible_port={host.ssh_port or settings.ansible_ssh_port}")
+            mac = f" mac_address={host.hw_mac_address}" if host.hw_mac_address else ""
+            lines.append(f"{host.hostname or host.id} ansible_host={target} ansible_port={host.ssh_port or settings.ansible_ssh_port}{mac}")
         lines.append("")
 
     nested: dict[str, dict] = {}
