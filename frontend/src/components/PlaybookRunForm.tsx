@@ -12,7 +12,8 @@ import { ErrorText } from "./ui/States";
 import { useToast } from "./ui/Toast";
 import { useOpenTask } from "./TaskPanel";
 import { compactSelection } from "../lib/groupTree";
-import { CRON_PRESETS, describeCron } from "../lib/cron";
+import { DEFAULT_CRON, describeCron, isValidCron } from "../lib/cron";
+import CronEditor from "./CronEditor";
 import { apiError, pcCount, waitingNotice } from "../lib/format";
 
 interface Props {
@@ -36,7 +37,7 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
   const [selection, setSelection] = useState<Set<string>>(() => new Set(initialHostIds));
   const [vars, setVars] = useState<VarPair[]>([]);
   const [mode, setMode] = useState<"now" | "schedule">(initialMode);
-  const [cron, setCron] = useState(CRON_PRESETS[0].value);
+  const [cron, setCron] = useState(DEFAULT_CRON);
   // Выключенным ПК — отдельные задачи, которые запустятся, когда ПК появится в сети
   const [deferOffline, setDeferOffline] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -186,21 +187,15 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
         </div>
 
         {mode === "schedule" && (
-          <div className="flex flex-wrap items-center gap-2">
-            {CRON_PRESETS.map((p) => (
-              <button key={p.value} type="button" onClick={() => setCron(p.value)} className={cron === p.value ? "chip-on" : "chip-off"}>
-                {p.label}
-              </button>
-            ))}
-            <input value={cron} onChange={(e) => setCron(e.target.value)} className="input-base w-36 py-1 font-mono text-xs" aria-label="Cron-выражение" />
-            <span className="text-xs text-muted-foreground">{describeCron(cron) ?? "своё cron-выражение: минута час день месяц день_недели"}</span>
-            <p className="w-full text-xs text-subtle">Выбранные группы раскрываются при каждом запуске: новые ПК в аудитории попадут в расписание сами.</p>
+          <div className="space-y-2">
+            <CronEditor value={cron} onChange={setCron} />
+            <p className="text-xs text-subtle">Выбранные группы раскрываются при каждом запуске: новые ПК в аудитории попадут в расписание сами.</p>
           </div>
         )}
 
         <ErrorText>{error}</ErrorText>
         <div className="flex flex-wrap items-center gap-3">
-          <Button onClick={submit} loading={busy} disabled={!playbook || selection.size === 0}>
+          <Button onClick={submit} loading={busy} disabled={!playbook || selection.size === 0 || (mode === "schedule" && !isValidCron(cron))}>
             {mode === "now" ? <Play className="h-4 w-4" /> : <CalendarClock className="h-4 w-4" />}
             {mode === "now" ? `Запустить на ${pcCount(selection.size)}` : "Создать расписание"}
           </Button>

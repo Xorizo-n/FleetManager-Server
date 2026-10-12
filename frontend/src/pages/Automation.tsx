@@ -17,7 +17,8 @@ import HostPicker from "../components/HostPicker";
 import ExtraVarsEditor, { objectToVars, VarPair, varsToObject } from "../components/ExtraVarsEditor";
 import { playbookLabel } from "../components/PlaybookSelect";
 import { compactSelection, GroupTree } from "../lib/groupTree";
-import { CRON_PRESETS, describeCron } from "../lib/cron";
+import { describeCron, isValidCron } from "../lib/cron";
+import CronEditor from "../components/CronEditor";
 import { apiError, formatDateTime, pcCount, playbookShortName } from "../lib/format";
 
 type Tab = "run" | "schedules" | "repos";
@@ -204,22 +205,14 @@ function ScheduleEditor({ schedule, tree, onClose }: { schedule: Schedule; tree:
         <>
           <ErrorText>{error}</ErrorText>
           <Button variant="secondary" onClick={onClose}>Отмена</Button>
-          <Button onClick={save} loading={busy} disabled={selection.size === 0}>Сохранить</Button>
+          <Button onClick={save} loading={busy} disabled={selection.size === 0 || !isValidCron(cron)}>Сохранить</Button>
         </>
       }
     >
       <div className="space-y-4">
         <div>
           <label className="field-label">Когда</label>
-          <div className="flex flex-wrap items-center gap-2">
-            {CRON_PRESETS.map((p) => (
-              <button key={p.value} type="button" onClick={() => setCron(p.value)} className={cron === p.value ? "chip-on" : "chip-off"}>
-                {p.label}
-              </button>
-            ))}
-            <input value={cron} onChange={(e) => setCron(e.target.value)} className="input-base w-36 py-1 font-mono text-xs" aria-label="Cron-выражение" />
-            <span className="text-xs text-muted-foreground">{describeCron(cron) ?? ""}</span>
-          </div>
+          <CronEditor value={cron} onChange={setCron} />
         </div>
         <div>
           <label className="field-label">Хосты</label>
