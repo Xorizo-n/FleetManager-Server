@@ -2,7 +2,22 @@ import { useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Activity, ArrowUpCircle, ChevronDown, Download, FolderInput, KeyRound, MoreHorizontal, Play, Plus, RefreshCw, ScanLine, Trash2, Upload, X, XCircle,
+  Activity,
+  ArrowUpCircle,
+  ChevronDown,
+  Download,
+  FolderInput,
+  KeyRound,
+  MoreHorizontal,
+  Play,
+  Plus,
+  Power,
+  RefreshCw,
+  ScanLine,
+  Trash2,
+  Upload,
+  X,
+  XCircle,
 } from "lucide-react";
 import { apiClient } from "../../api/client";
 import { keys, useAlertSummary, useCanEdit, useFleet } from "../../api/queries";
@@ -60,6 +75,8 @@ export default function HostsPage() {
   const visibleIds = useMemo(() => new Set(visible.map((h) => h.id)), [visible]);
   const hiddenSelected = selectedHosts.filter((h) => !visibleIds.has(h.id)).length;
   const withAgent = selectedHosts.filter((h) => h.has_agent).map((h) => h.id);
+  // Будить имеет смысл выключенные ПК, чей MAC сообщил агент
+  const wakeable = selectedHosts.filter((h) => h.status !== "online" && h.hw_mac_address).map((h) => h.id);
 
   function updateView(next: Partial<typeof view>) {
     const merged = { ...view, ...next };
@@ -177,6 +194,7 @@ export default function HostsPage() {
                       },
                     ]
                   : []),
+                { label: "Выгрузить реестр ПК в CSV", icon: <Download className="h-4 w-4" />, onClick: () => downloadFromApi("/hosts/export.csv", "hosts.csv") },
                 { label: "Скачать inventory Ansible", icon: <Download className="h-4 w-4" />, onClick: () => downloadFromApi("/hosts/inventory", "inventory.ini") },
               ]}
             />
@@ -308,6 +326,13 @@ export default function HostsPage() {
                   disabled: selected.size !== 1,
                   hint: "Диагностика запускается для одного хоста",
                   onClick: () => startTask(apiClient.post(`/hosts/${[...selected][0]}/diagnostics`), "Не удалось запустить диагностику"),
+                },
+                {
+                  label: `Разбудить по сети (${wakeable.length})`,
+                  icon: <Power className="h-4 w-4" />,
+                  disabled: wakeable.length === 0,
+                  hint: "Только выключенные ПК с известным MAC-адресом",
+                  onClick: () => startTask(apiClient.post("/hosts/wake", { host_ids: wakeable }), "Не удалось запустить пробуждение"),
                 },
                 {
                   label: `Проверить версию агента (${withAgent.length})`,

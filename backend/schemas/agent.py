@@ -22,6 +22,20 @@ def _scrub(value):
     return cleaned or None
 
 
+class AgentNetworkAdapter(BaseModel):
+    name: str | None = Field(default=None, max_length=256)
+    description: str | None = Field(default=None, max_length=256)
+    mac_address: str | None = Field(default=None, max_length=64)
+    ipv4: list[str] = Field(default_factory=list, max_length=32)
+    status: str | None = Field(default=None, max_length=64)
+    media_type: str | None = Field(default=None, max_length=64)
+
+    @field_validator("name", "description", "mac_address", "status", "media_type", mode="before")
+    @classmethod
+    def _clean(cls, value):
+        return _scrub(value)
+
+
 class AgentHardware(BaseModel):
     manufacturer: str | None = None
     model: str | None = None
@@ -30,6 +44,8 @@ class AgentHardware(BaseModel):
     processor: str | None = None
     total_memory_bytes: int | None = Field(default=None, ge=0)
     fingerprint: str | None = None
+    # С агента 2026.10.12: MAC и IPv4/префикс для пробуждения по сети; старые не присылают
+    network_adapters: list[AgentNetworkAdapter] = Field(default_factory=list, max_length=32)
 
     @field_validator("manufacturer", "model", "serial_number", "operating_system", "processor", "fingerprint", mode="before")
     @classmethod

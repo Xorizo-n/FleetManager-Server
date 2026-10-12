@@ -53,6 +53,7 @@ from services.audit import record_audit
 from services.hardware_change import hardware_changes
 from services.host_grouping import apply_auto_group
 from services.waiting_tasks import create_task_runs, enqueue, release_waiting_tasks
+from services.wake_on_lan import normalize_mac, primary_adapter
 from services.crypto import decrypt_secret, encrypt_secret
 from services.installer_builder import agent_dist_ready, build_installer_exe, safe_filename
 
@@ -344,6 +345,14 @@ def heartbeat(
     host.hw_os_caption = payload.hardware.operating_system
     host.hw_processor = payload.hardware.processor
     host.hw_total_memory_bytes = payload.hardware.total_memory_bytes
+    # Старые агенты адаптеры не присылают — тогда известные сохраняются
+    if payload.hardware.network_adapters:
+        adapters = [adapter.model_dump() for adapter in payload.hardware.network_adapters]
+        for adapter in adapters:
+            adapter["mac_address"] = normalize_mac(adapter["mac_address"]) or adapter["mac_address"]
+        host.hw_network_adapters = adapters
+        primary = primary_adapter(adapters, host.ip_address)
+        host.hw_mac_address = normalize_mac(primary["mac_address"]) if primary else None
     if payload.ssh_port:
         host.ssh_port = payload.ssh_port
     if payload.ssh_login and host.credential_id:

@@ -33,6 +33,8 @@ export interface Host {
   hw_os_caption?: string | null;
   hw_processor?: string | null;
   hw_total_memory_bytes?: number | null;
+  /** MAC адаптера, через который ПК пришёл на сервер, — для пробуждения по сети */
+  hw_mac_address?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -67,7 +69,7 @@ export interface Credential {
   repo_count?: number;
 }
 
-export type TaskType = "playbook" | "software_scan" | "host_diagnostic" | "agent_version_scan" | "agent_update" | "access_change";
+export type TaskType = "playbook" | "software_scan" | "host_diagnostic" | "agent_version_scan" | "agent_update" | "access_change" | "host_wake";
 // waiting — ПК был не в сети, задача запустится при его появлении; cancelled — так и не дождалась
 export type TaskStatus = "queued" | "running" | "success" | "failed" | "waiting" | "cancelled";
 

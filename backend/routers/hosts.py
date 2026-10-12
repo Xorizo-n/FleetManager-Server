@@ -1,12 +1,14 @@
 import csv
 import io
 import uuid
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from config import settings
 from database import get_db
 from dependencies import get_current_user, require_roles
 from models.credential import Credential
@@ -26,12 +28,14 @@ from schemas.host import (
     AccessChangeRequest,
     AccessChangeResult,
     CsvImportResult,
+    HostWakeRequest,
 )
 from schemas.task import TaskRunOut
 from services.audit import record_audit
 from services.inventory_generator import build_inventory_ini
 from services.host_target import normalize_host_address, resolve_host_target
 from services.host_diagnostics import run_host_diagnostic
+from services.wake_on_lan import run_host_wake
 from services.host_grouping import find_group_by_name
 from services.credential_rules import ssh_credential_error
 from services import access_change
@@ -63,6 +67,65 @@ def list_hosts(
     if group_id:
         query = query.where(Host.group_id == group_id)
     return db.execute(query.order_by(Host.hostname)).scalars().all()
+
+
+# Реестр ПК для Excel: «;» и UTF-8 с BOM, как CSV-отчёт AutoDomain
+EXPORT_COLUMNS = (
+    "Имя", "IP", "MAC", "Группа", "Статус", "Последний heartbeat", "Версия агента", "ОС",
+    "Производитель", "Модель", "Серийный номер", "Процессор", "ОЗУ, ГБ", "Комментарий",
+)
+
+
+def _group_path(group: HostGroup | None) -> str:
+    names = []
+    seen = set()
+    while group is not None and group.id not in seen:
+        seen.add(group.id)
+        names.insert(0, group.name)
+        group = group.parent
+    return " › ".join(names)
+
+
+@router.get("/export.csv")
+def export_hosts_csv(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    tz = ZoneInfo(settings.schedule_timezone)
+    hosts = db.execute(select(Host).order_by(Host.hostname)).scalars().all()
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter=";", lineterminator="\r\n")
+    writer.writerow(EXPORT_COLUMNS)
+    for host in hosts:
+        memory = f"{host.hw_total_memory_bytes / 1024 ** 3:.0f}" if host.hw_total_memory_bytes else ""
+        writer.writerow([
+            host.hostname or "", host.ip_address or "", host.hw_mac_address or "", _group_path(host.group),
+            host.status.value, host.last_seen_at.astimezone(tz).strftime("%d.%m.%Y %H:%M") if host.last_seen_at else "",
+            host.agent_version or "", host.hw_os_caption or "", host.hw_manufacturer or "", host.hw_model or "",
+            host.hw_serial_number or "", host.hw_processor or "", memory, host.comment or "",
+        ])
+    return Response(
+        content="\ufeff" + buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=hosts.csv"},
+    )
+
+
+@router.post("/wake", response_model=TaskRunOut, status_code=status.HTTP_202_ACCEPTED)
+def wake_hosts(
+    payload: HostWakeRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*EDITOR_ROLES)),
+):
+    """Будит ПК магическим пакетом через включённый ПК той же подсети (services/wake_on_lan.py)."""
+    hosts = db.execute(select(Host).where(Host.id.in_(payload.host_ids))).scalars().all()
+    if not hosts:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Хосты не найдены")
+    task = TaskRun(task_type=TaskType.host_wake, host_ids=[str(h.id) for h in hosts], status=TaskStatus.queued, created_by=user.id)
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    run_host_wake.delay(str(task.id))
+    record_audit(db, user.id, "host.wake", f"hosts={len(hosts)}", request)
+    return task
 
 
 @router.get("/inventory", response_class=PlainTextResponse)
