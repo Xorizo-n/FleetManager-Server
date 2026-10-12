@@ -150,16 +150,19 @@ class AgentUpdateScriptTests(unittest.TestCase):
         # Old agents reported random SSH ports (MR32-440-09: 44596); the installer
         # moves sshd to 22 and the new agent no longer reports a port.
         from types import SimpleNamespace
+        from unittest import mock
 
+        from services import agent_update
         from services.agent_update import INSTALLER_SSH_PORT, _adopt_installer_ssh_port
 
         db = SimpleNamespace(commit=lambda: None)
-        task = SimpleNamespace(log_output="")
+        logs = []
         host = SimpleNamespace(hostname="MR32-440-09", ip_address=None, id="h", ssh_port=44596)
-        self.assertTrue(_adopt_installer_ssh_port(db, task, host))
-        self.assertEqual(host.ssh_port, INSTALLER_SSH_PORT)
-        self.assertIn("44596 → 22", task.log_output)
-        self.assertFalse(_adopt_installer_ssh_port(db, task, host))
+        with mock.patch.object(agent_update, "append_task_log", side_effect=lambda _db, _task_id, line: logs.append(line)):
+            self.assertTrue(_adopt_installer_ssh_port(db, "task", host))
+            self.assertEqual(host.ssh_port, INSTALLER_SSH_PORT)
+            self.assertIn("44596 → 22", logs[0])
+            self.assertFalse(_adopt_installer_ssh_port(db, "task", host))
 
     def _recheck(self, open_ports):
         from types import SimpleNamespace
@@ -168,11 +171,10 @@ class AgentUpdateScriptTests(unittest.TestCase):
         from services import agent_update
 
         db = SimpleNamespace(commit=lambda: None)
-        task = SimpleNamespace(log_output="")
         host = SimpleNamespace(hostname="MR32-044-SERGEY", ip_address="10.40.161.34", id="h", ssh_port=5022)
         probe = '{"version":"2026.10.10.9","service_status":"Running"}'
-        with mock.patch.object(agent_update.time, "sleep"),                 mock.patch.object(agent_update, "_is_reachable", side_effect=lambda h, port=None: (port or h.ssh_port) in open_ports),                 mock.patch.object(agent_update, "build_full_inventory", return_value={}),                 mock.patch.object(agent_update, "run_raw_command", return_value=probe):
-            confirmed = agent_update._recheck_version(db, task, {}, host, "2026.10.10.9")
+        with mock.patch.object(agent_update.time, "sleep"),                 mock.patch.object(agent_update, "_is_reachable", side_effect=lambda h, port=None: (port or h.ssh_port) in open_ports),                 mock.patch.object(agent_update, "build_full_inventory", return_value={}),                 mock.patch.object(agent_update, "run_raw_command", return_value=probe),                 mock.patch.object(agent_update, "append_task_log"):
+            confirmed = agent_update._recheck_version(db, "task", {}, host, "2026.10.10.9")
         return host, confirmed
 
     def test_connection_lost_before_the_install_keeps_the_port(self):

@@ -35,6 +35,7 @@ from services.agent_version import (
     version_status,
 )
 from services.ansible_runner import build_full_inventory, run_raw_command
+from services.host_parallel import HostOutcome, append_task_log, host_label, run_for_hosts
 from services.host_target import resolve_host_target
 
 # Таймауты (сек) на выполнение шага через ansible-runner.
@@ -164,9 +165,8 @@ def parse_probe_output(raw: str) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def _append_log(db, task: TaskRun, message: str) -> None:
-    task.log_output = f"{task.log_output}\n{message}" if task.log_output else message
-    db.commit()
+def _append_log(db, task_id: uuid.UUID, message: str) -> None:
+    append_task_log(db, task_id, message)
 
 
 def _store_version(db, host: Host, version: str | None) -> str | None:
@@ -198,7 +198,7 @@ def _is_reachable(host: Host, port: int | None = None) -> bool:
         return False
 
 
-def _recheck_version(db, task: TaskRun, inventory: dict, host: Host, available: str | None) -> str | None:
+def _recheck_version(db, task_id: uuid.UUID, inventory: dict, host: Host, available: str | None) -> str | None:
     """Повторно опрашивает хост после обрыва сессии; None — обновление не подтвердилось.
 
     Сессию обычно обрывает перезапуск sshd в конце установки, и у хоста со старым
@@ -211,7 +211,7 @@ def _recheck_version(db, task: TaskRun, inventory: dict, host: Host, available: 
         if not _is_reachable(host):
             if host.ssh_port == INSTALLER_SSH_PORT or not _is_reachable(host, INSTALLER_SSH_PORT):
                 continue
-            _adopt_installer_ssh_port(db, task, host)
+            _adopt_installer_ssh_port(db, task_id, host)
             inventory = build_full_inventory(db, [host.id])
         try:
             probe = parse_probe_output(run_raw_command(inventory, str(host.id), PROBE_CMD, timeout=PROBE_TIMEOUT))
@@ -223,11 +223,11 @@ def _recheck_version(db, task: TaskRun, inventory: dict, host: Host, available: 
     return None
 
 
-def _adopt_installer_ssh_port(db, task: TaskRun, host: Host) -> bool:
+def _adopt_installer_ssh_port(db, task_id: uuid.UUID, host: Host) -> bool:
     """После установки SSH слушает INSTALLER_SSH_PORT; True — порт хоста изменён."""
     if host.ssh_port == INSTALLER_SSH_PORT:
         return False
-    _append_log(db, task, f"[{_label(host)}] SSH-порт {host.ssh_port} → {INSTALLER_SSH_PORT}: установщик агента держит SSH на {INSTALLER_SSH_PORT}")
+    _append_log(db, task_id, f"[{_label(host)}] SSH-порт {host.ssh_port} → {INSTALLER_SSH_PORT}: установщик агента держит SSH на {INSTALLER_SSH_PORT}")
     host.ssh_port = INSTALLER_SSH_PORT
     db.commit()
     return True
@@ -239,8 +239,7 @@ def _target_hosts(db, task: TaskRun) -> list[Host]:
     return sorted(hosts, key=lambda h: (h.hostname or h.ip_address or str(h.id)).lower())
 
 
-def _label(host: Host) -> str:
-    return host.hostname or host.ip_address or str(host.id)
+_label = host_label
 
 
 def _start_task(db, task: TaskRun) -> None:
@@ -255,6 +254,24 @@ def _finish_task(db, task: TaskRun, failed: bool) -> None:
     db.commit()
 
 
+def _scan_host(db, task_id: uuid.UUID, inventory: dict, available: str | None, host: Host) -> HostOutcome:
+    label = _label(host)
+    resolve_host_target(host.hostname, host.ip_address)
+    if not _is_reachable(host):
+        _append_log(db, task_id, f"[{label}] недоступен по TCP {_ssh_port(host)}")
+        return HostOutcome.unreachable
+    raw = run_raw_command(inventory, str(host.id), PROBE_CMD, timeout=PROBE_TIMEOUT)
+    probe = parse_probe_output(raw)
+    version = _store_version(db, host, probe.get("version"))
+    if version:
+        status = version_status(version, available)
+        service = probe.get("service_status") or "неизвестно"
+        _append_log(db, task_id, f"[{label}] версия {version} ({status}), служба: {service}")
+    else:
+        _append_log(db, task_id, f"[{label}] агент не найден в списке установленных программ")
+    return HostOutcome.ok
+
+
 @celery_app.task(name="services.agent_update.run_agent_version_scan")
 def run_agent_version_scan(task_run_id: str):
     """Опрашивает хосты по SSH и сохраняет установленную версию агента."""
@@ -266,51 +283,81 @@ def run_agent_version_scan(task_run_id: str):
 
         _start_task(db, task)
         available = available_agent_version()
-        _append_log(db, task, f"Доступная версия установщика: {available or 'неизвестна'}")
+        _append_log(db, task.id, f"Доступная версия установщика: {available or 'неизвестна'}")
 
         hosts = _target_hosts(db, task)
         if not hosts:
-            _append_log(db, task, "Нет хостов для проверки")
+            _append_log(db, task.id, "Нет хостов для проверки")
             _finish_task(db, task, failed=False)
             return
 
         inventory = build_full_inventory(db, [host.id for host in hosts])
-        any_failure = False
-
-        for host in hosts:
-            label = _label(host)
-            try:
-                resolve_host_target(host.hostname, host.ip_address)
-                if not _is_reachable(host):
-                    any_failure = True
-                    _append_log(db, task, f"[{label}] недоступен по TCP {_ssh_port(host)}")
-                    continue
-                raw = run_raw_command(inventory, str(host.id), PROBE_CMD, timeout=PROBE_TIMEOUT)
-                probe = parse_probe_output(raw)
-                version = _store_version(db, host, probe.get("version"))
-                if version:
-                    status = version_status(version, available)
-                    service = probe.get("service_status") or "неизвестно"
-                    _append_log(db, task, f"[{label}] версия {version} ({status}), служба: {service}")
-                else:
-                    _append_log(db, task, f"[{label}] агент не найден в списке установленных программ")
-            except Exception as exc:  # noqa: BLE001
-                any_failure = True
-                _append_log(db, task, f"[{label}] ОШИБКА: {exc}")
-
+        any_failure = run_for_hosts(
+            task.id, [host.id for host in hosts],
+            lambda host_db, host: _scan_host(host_db, task.id, inventory, available, host),
+        )
         _finish_task(db, task, failed=any_failure)
     except Exception as exc:  # noqa: BLE001
+        db.rollback()
         task = db.get(TaskRun, uuid.UUID(task_run_id))
         if task is not None:
-            _append_log(db, task, f"[ERROR] {exc}")
+            _append_log(db, task.id, f"[ERROR] {exc}")
             _finish_task(db, task, failed=True)
     finally:
         db.close()
 
 
+def _update_host(db, task_id: uuid.UUID, inventory: dict, available: str | None, host: Host) -> HostOutcome:
+    label = _label(host)
+    previous = host.agent_version
+    if not _is_reachable(host):
+        _append_log(db, task_id, f"[{label}] недоступен по TCP {_ssh_port(host)}")
+        return HostOutcome.unreachable
+    _append_log(db, task_id, f"[{label}] запуск обновления (было: {previous or 'неизвестно'})")
+    try:
+        raw = run_raw_command(inventory, str(host.id), UPDATE_CMD, timeout=UPDATE_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001
+        # Установщик перезапускает службу агента и может задеть SSH-сессию.
+        # Прежде чем считать хост упавшим, перепроверяем версию новой сессией.
+        _append_log(db, task_id, f"[{label}] связь потеряна во время установки ({exc}); проверяем результат")
+        confirmed = _recheck_version(db, task_id, inventory, host, available)
+        if confirmed:
+            _store_version(db, host, confirmed)
+            _append_log(db, task_id, f"[{label}] обновлено: {previous or 'неизвестно'} → {confirmed}")
+            return HostOutcome.ok
+        _append_log(db, task_id, f"[{label}] ОШИБКА: обновление не подтверждено")
+        return HostOutcome.failed
+
+    result = parse_probe_output(raw)
+    version = normalize_version(result.get("version"))
+    if version:
+        _store_version(db, host, version)
+    exit_code = result.get("exit_code")
+    if result.get("finished") is False:
+        _append_log(db, task_id, f"[{label}] установщик не завершился за 15 минут, версия сейчас: {version or 'неизвестно'}")
+        return HostOutcome.failed
+    if exit_code not in (0, None):
+        _append_log(db, task_id, f"[{label}] установщик завершился с кодом {exit_code}")
+        return HostOutcome.failed
+    if not version:
+        _append_log(db, task_id, f"[{label}] не удалось подтвердить версию после установки")
+        return HostOutcome.failed
+    if version_status(version, available) == STATUS_OUTDATED:
+        _append_log(db, task_id, f"[{label}] после установки версия {version} всё ещё старее {available}")
+        return HostOutcome.failed
+    service = result.get("service_status") or "неизвестно"
+    _append_log(db, task_id, f"[{label}] обновлено: {previous or 'неизвестно'} → {version}, служба: {service}")
+    _adopt_installer_ssh_port(db, task_id, host)
+    return HostOutcome.ok
+
+
 @celery_app.task(name="services.agent_update.run_agent_update")
 def run_agent_update(task_run_id: str):
-    """Ставит актуальный установщик агента поверх текущей установки на хостах."""
+    """Ставит актуальный установщик агента поверх текущей установки на хостах.
+
+    Первый доступный ПК обновляется один (canary): если релиз сломан, задача
+    останавливается на нём; остальные идут пачкой (services/host_parallel.py).
+    """
     db = SessionLocal()
     try:
         task = db.get(TaskRun, uuid.UUID(task_run_id))
@@ -319,71 +366,26 @@ def run_agent_update(task_run_id: str):
 
         _start_task(db, task)
         available = available_agent_version()
-        _append_log(db, task, f"Целевая версия: {available or 'неизвестна (установщик будет применён как есть)'}")
+        _append_log(db, task.id, f"Целевая версия: {available or 'неизвестна (установщик будет применён как есть)'}")
 
         hosts = _target_hosts(db, task)
         if not hosts:
-            _append_log(db, task, "Нет хостов для обновления")
+            _append_log(db, task.id, "Нет хостов для обновления")
             _finish_task(db, task, failed=False)
             return
 
         inventory = build_full_inventory(db, [host.id for host in hosts])
-        any_failure = False
-
-        for host in hosts:
-            label = _label(host)
-            previous = host.agent_version
-            try:
-                if not _is_reachable(host):
-                    any_failure = True
-                    _append_log(db, task, f"[{label}] недоступен по TCP {_ssh_port(host)}")
-                    continue
-                _append_log(db, task, f"[{label}] запуск обновления (было: {previous or 'неизвестно'})")
-                raw = run_raw_command(inventory, str(host.id), UPDATE_CMD, timeout=UPDATE_TIMEOUT)
-                result = parse_probe_output(raw)
-                version = normalize_version(result.get("version"))
-                if version:
-                    _store_version(db, host, version)
-                exit_code = result.get("exit_code")
-
-                if result.get("finished") is False:
-                    any_failure = True
-                    _append_log(db, task, f"[{label}] установщик не завершился за 15 минут, версия сейчас: {version or 'неизвестно'}")
-                    continue
-                if exit_code not in (0, None):
-                    any_failure = True
-                    _append_log(db, task, f"[{label}] установщик завершился с кодом {exit_code}")
-                    continue
-                if not version:
-                    any_failure = True
-                    _append_log(db, task, f"[{label}] не удалось подтвердить версию после установки")
-                    continue
-
-                service = result.get("service_status") or "неизвестно"
-                status = version_status(version, available)
-                if status == "outdated":
-                    any_failure = True
-                    _append_log(db, task, f"[{label}] после установки версия {version} всё ещё старее {available}")
-                else:
-                    _append_log(db, task, f"[{label}] обновлено: {previous or 'неизвестно'} → {version}, служба: {service}")
-                    _adopt_installer_ssh_port(db, task, host)
-            except Exception as exc:  # noqa: BLE001
-                # Установщик перезапускает службу агента и может задеть SSH-сессию.
-                # Прежде чем считать хост упавшим, перепроверяем версию новой сессией.
-                _append_log(db, task, f"[{label}] связь потеряна во время установки ({exc}); проверяем результат")
-                confirmed = _recheck_version(db, task, inventory, host, available)
-                if confirmed:
-                    _store_version(db, host, confirmed)
-                    _append_log(db, task, f"[{label}] обновлено: {previous or 'неизвестно'} → {confirmed}")
-                else:
-                    any_failure = True
-                    _append_log(db, task, f"[{label}] ОШИБКА: обновление не подтверждено")
-
+        any_failure = run_for_hosts(
+            task.id, [host.id for host in hosts],
+            lambda host_db, host: _update_host(host_db, task.id, inventory, available, host),
+            canary=True,
+        )
         _finish_task(db, task, failed=any_failure)
     except Exception as exc:  # noqa: BLE001
+        db.rollback()
         task = db.get(TaskRun, uuid.UUID(task_run_id))
         if task is not None:
-            _append_log(db, task, f"[ERROR] {exc}")
+            _append_log(db, task.id, f"[ERROR] {exc}")
             _finish_task(db, task, failed=True)
     finally:
         db.close()
