@@ -53,6 +53,32 @@ def _interfaces(adapter: dict) -> list[ipaddress.IPv4Interface]:
     return result
 
 
+def _usable(interface: ipaddress.IPv4Interface) -> bool:
+    return not (interface.ip.is_link_local or interface.ip.is_loopback or interface.ip.is_unspecified)
+
+
+def agent_lan_address(adapters: list[dict] | None, source_ip: str | None) -> str | None:
+    """Адрес ПК в локальной сети для SSH/RDP/WoL.
+
+    Обычно heartbeat приходит с адреса самого ПК. Но если на ПК поднят VPN, через
+    который идёт и трафик к серверу (встроенный клиент Windows на SU5), сервер видит
+    адрес из пула VPN — до ПК по нему не достучаться. Тогда берётся адрес физического
+    адаптера: проводного в сети, иначе любого подключённого. Без адаптеров (старый
+    агент) остаётся адрес источника.
+    """
+    if not adapters:
+        return source_ip
+    if source_ip and any(str(i.ip) == source_ip for a in adapters for i in _interfaces(a)):
+        return source_ip
+    up = [a for a in adapters if (a.get("status") or "").lower() == "up"]
+    wired = [a for a in up if (a.get("media_type") or "") == "802.3"]
+    for adapter in wired + [a for a in up if a not in wired]:
+        for interface in _interfaces(adapter):
+            if _usable(interface):
+                return str(interface.ip)
+    return source_ip
+
+
 def primary_adapter(adapters: list[dict] | None, host_ip: str | None) -> dict | None:
     """Адаптер, через который ПК пришёл на сервер; иначе проводной в сети, иначе любой проводной."""
     candidates = [a for a in adapters or [] if normalize_mac(a.get("mac_address"))]
