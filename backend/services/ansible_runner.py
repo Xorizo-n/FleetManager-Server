@@ -2,6 +2,7 @@ import os
 import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from types import SimpleNamespace
 
 from celery_app import celery_app
@@ -212,19 +213,28 @@ def run_playbook_task(self, task_run_id: str):
         db.close()
 
 
-@celery_app.task(name="services.ansible_runner.dispatch_scheduled_playbooks")
-def dispatch_scheduled_playbooks():
+def schedule_is_due(cron_expression: str, now: datetime) -> bool:
+    """Должно ли расписание сработать за последнюю минуту.
+
+    Cron считается по местному времени (settings.schedule_timezone): «0 9 * * *» —
+    это 9:00 по Екатеринбургу, как и показывает интерфейс, а не 9:00 UTC (14:00).
+    """
     from croniter import croniter
 
+    local_now = now.astimezone(ZoneInfo(settings.schedule_timezone))
+    next_fire = croniter(cron_expression, local_now - timedelta(minutes=1)).get_next(datetime)
+    return next_fire <= local_now
+
+
+@celery_app.task(name="services.ansible_runner.dispatch_scheduled_playbooks")
+def dispatch_scheduled_playbooks():
     db = SessionLocal()
     try:
         now = datetime.now(timezone.utc)
         schedules = db.query(PlaybookSchedule).filter(PlaybookSchedule.enabled.is_(True)).all()
 
         for schedule in schedules:
-            cron = croniter(schedule.cron_expression, now - timedelta(minutes=1))
-            next_fire = cron.get_next(datetime)
-            if next_fire > now:
+            if not schedule_is_due(schedule.cron_expression, now):
                 continue  # ничего не должно было сработать за последнюю минуту
 
             host_ids = resolve_target_host_ids(db, schedule.host_ids or [], schedule_group_ids(schedule))

@@ -104,8 +104,9 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(schedule_group_ids(schedule), [str(BUILDING), str(legacy)])
 
     def test_next_run(self):
+        # 12:00 UTC = 17:00 по Екатеринбургу; «0 3 * * *» — 03:00 местного = 22:00 UTC
         now = datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc)
-        self.assertEqual(next_run_at("0 3 * * *", now), datetime(2026, 10, 11, 3, 0, tzinfo=timezone.utc))
+        self.assertEqual(next_run_at("0 3 * * *", now), datetime(2026, 10, 10, 22, 0, tzinfo=timezone.utc))
 
     def test_out_has_targets_and_next_run_only_when_enabled(self):
         now = datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc)

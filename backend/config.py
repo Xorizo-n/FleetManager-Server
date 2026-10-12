@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # Сколько задача ждёт выключенный ПК, прежде чем отмениться (services/waiting_tasks.py)
     waiting_task_ttl_days: int = 7
 
+    # Часовой пояс, в котором считаются cron-выражения расписаний плейбуков
+    schedule_timezone: str = "Asia/Yekaterinburg"
+
     # CORS
     cors_origins: str = "http://localhost:5173,http://localhost:8080"
 

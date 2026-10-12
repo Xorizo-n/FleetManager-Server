@@ -1,4 +1,7 @@
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+from config import settings
 
 from models.playbook import PlaybookSchedule
 from schemas.playbook import PlaybookScheduleOut
@@ -13,10 +16,13 @@ def schedule_group_ids(schedule: PlaybookSchedule) -> list[str]:
 
 
 def next_run_at(cron_expression: str, now: datetime | None = None) -> datetime | None:
+    """Следующий запуск; cron — местное время (settings.schedule_timezone), как и в
+    services.ansible_runner.schedule_is_due."""
     from croniter import croniter
 
+    local_now = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo(settings.schedule_timezone))
     try:
-        return croniter(cron_expression, now or datetime.now(timezone.utc)).get_next(datetime)
+        return croniter(cron_expression, local_now).get_next(datetime)
     except (ValueError, KeyError):
         return None
 

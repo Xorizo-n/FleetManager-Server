@@ -49,6 +49,20 @@ docker builder prune -f
 - Последняя команда обязательна: на сервере диск 15 ГБ, и кэш сборки (особенно когда заново собирается слой с `pip install`) заполняет его до конца.
 - Перед `up -d` проверьте, что celery ничего не выполняет (`docker exec fleet-manager-celery-1 celery -A celery_app.celery_app inspect active`): пересоздание контейнера обрывает запущенные плейбуки.
 
+### Время на сервере
+
+- Часовой пояс хоста — `Asia/Yekaterinburg` (`timedatectl set-timezone Asia/Yekaterinburg`). Часы аппаратные в UTC.
+- Синхронизация — `systemd-timesyncd`. Серверы времени задаются отдельным файлом `/etc/systemd/timesyncd.conf.d/fleet-manager.conf`, не в git:
+
+  ```ini
+  [Time]
+  NTP=ntp.urfu.ru ntp1.vniiftri.ru ntp2.vniiftri.ru
+  FallbackNTP=ntp.ix.ru time.google.com
+  ```
+
+  `ntp.urfu.ru` — в сети УрФУ (задержка < 1 мс). ВНИИФТРИ — государственный эталон времени, stratum 1. Проверка: `timedatectl timesync-status`.
+- Cron в расписаниях плейбуков — местное время: `SCHEDULE_TIMEZONE`, по умолчанию `Asia/Yekaterinburg`. «0 9 * * *» — 9:00 по Екатеринбургу.
+
 ## HTTPS и порты
 
 | Порт | Что |
