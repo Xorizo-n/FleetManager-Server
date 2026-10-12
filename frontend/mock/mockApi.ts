@@ -4,6 +4,7 @@
 // Вход: любой пароль; роль задаёт имя пользователя — admin, operator или viewer.
 import type { Plugin } from "vite";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { nextRuns } from "../src/lib/cron";
 
 // ---------- детерминированный генератор ----------
 let seed = 20261010;
@@ -286,9 +287,9 @@ function taskOut(t: Task) {
   return { ...rest, created_by_name: users.find((u) => u.id === t.created_by)?.username ?? null };
 }
 function scheduleOut(s: Schedule) {
-  const next = new Date(Date.now() + 3600_000 * (2 + Math.floor(rnd() * 20)));
-  next.setMinutes(0, 0, 0);
-  return { ...s, next_run_at: s.enabled ? next.toISOString() : null };
+  // Как на сервере: cron — время Екатеринбурга
+  const next = nextRuns(s.cron_expression, 1)[0];
+  return { ...s, next_run_at: s.enabled && next ? next.date.toISOString() : null };
 }
 function credentialOut(c: Credential) {
   return {
