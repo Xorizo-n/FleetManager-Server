@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowUpCircle, KeyRound, Play, Trash2 } from "lucide-react";
+import { Activity, ArrowUpCircle, KeyRound, Monitor, Play, Trash2 } from "lucide-react";
 import { apiClient } from "../../api/client";
 import { keys, useAlerts, useCanEdit, useCredentials, useFleet, useHostSoftware, useTasks } from "../../api/queries";
 import type { AgentAlert, Host, TaskRun } from "../../api/types";
@@ -17,6 +17,7 @@ import { useAccessChange } from "../../components/useAccessChange";
 import { AgentCell, StatusDot } from "./HostTable";
 import { apiError, formatDateTime, formatRam, hostLabel, osLabel, relativeTime, STATUS_LABELS, taskTitle } from "../../lib/format";
 import { isSystemSoftware } from "../../lib/software";
+import { downloadRdpFile, rdpAddress } from "../../lib/rdp";
 import { effectiveCredential, EffectiveCredential, isSshAssignable } from "../../lib/credentials";
 
 type Tab = "overview" | "software" | "tasks" | "alerts";
@@ -82,28 +83,43 @@ export default function HostDrawer({ host, onClose, onRunPlaybook }: Props) {
         </span>
       }
     >
-      {canEdit && (
-        <div className="mb-4 flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => onRunPlaybook([host.id])}>
-            <Play className="h-3.5 w-3.5" />
-            Запустить плейбук
-          </Button>
-          <Button size="sm" variant="secondary" onClick={diagnose}>
-            <Activity className="h-3.5 w-3.5" />
-            Диагностика
-          </Button>
-          {host.has_agent && (
-            <Button size="sm" variant="secondary" onClick={updateAgent}>
-              <ArrowUpCircle className="h-3.5 w-3.5" />
-              Обновить агент
+      <div className="mb-4 flex flex-wrap gap-2">
+        {canEdit && (
+          <>
+            <Button size="sm" onClick={() => onRunPlaybook([host.id])}>
+              <Play className="h-3.5 w-3.5" />
+              Запустить плейбук
             </Button>
-          )}
+            <Button size="sm" variant="secondary" onClick={diagnose}>
+              <Activity className="h-3.5 w-3.5" />
+              Диагностика
+            </Button>
+            {host.has_agent && (
+              <Button size="sm" variant="secondary" onClick={updateAgent}>
+                <ArrowUpCircle className="h-3.5 w-3.5" />
+                Обновить агент
+              </Button>
+            )}
+          </>
+        )}
+        {rdpAddress(host) && (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => downloadRdpFile(host)}
+            title={`Скачать файл подключения к ${rdpAddress(host)}: откроется окно «Подключение к удалённому рабочему столу», логин и пароль — свои`}
+          >
+            <Monitor className="h-3.5 w-3.5" />
+            RDP
+          </Button>
+        )}
+        {canEdit && (
           <Button size="sm" variant="ghost" className="ml-auto text-rose-600 dark:text-rose-400" onClick={remove}>
             <Trash2 className="h-3.5 w-3.5" />
             Удалить
           </Button>
-        </div>
-      )}
+        )}
+      </div>
       <Tabs<Tab>
         value={tab}
         onChange={setTab}
