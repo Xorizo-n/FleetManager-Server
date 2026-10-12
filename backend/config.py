@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     # Сколько задача ждёт выключенный ПК, прежде чем отмениться (services/waiting_tasks.py)
     waiting_task_ttl_days: int = 7
 
+    # Сколько ПК одна задача (обновление агента, проверка версий, сканирование ПО)
+    # обрабатывает одновременно (services/host_parallel.py)
+    host_task_parallelism: int = 10
+
     # Часовой пояс, в котором считаются cron-выражения расписаний плейбуков
     schedule_timezone: str = "Asia/Yekaterinburg"
 
