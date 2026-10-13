@@ -9,12 +9,17 @@ Groups are created on demand, so the tree grows as PCs register. A top-level gro
 that already has the room's name (for example a manually created MR32-411) is reused
 and moved under its floor. A host in a manually created group with another name is
 left where an administrator put it; hosts in automatic groups follow their name.
+
+An automatic group that loses its last host and has no subgroups is deleted, then its
+floor and building if they are left empty too (prune_empty_auto_groups) — after a
+rename, a move, a deletion or an agent uninstall, and on the hourly regroup.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import uuid
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -26,6 +31,7 @@ from celery_app import celery_app
 from config import settings
 from database import SessionLocal
 from models.host import Host, HostGroup
+from models.playbook import PlaybookSchedule
 
 logger = logging.getLogger(__name__)
 
@@ -155,14 +161,64 @@ def keeps_ssh_access(own_credential_id, current_group_credential, new_group_cred
     return current_group_credential == new_group_credential
 
 
+def _schedule_group_ids(db: Session) -> set[uuid.UUID]:
+    referenced: set[uuid.UUID] = set()
+    for single, many in db.execute(select(PlaybookSchedule.host_group_id, PlaybookSchedule.host_group_ids)).all():
+        for value in [single, *(many or [])]:
+            try:
+                referenced.add(value if isinstance(value, uuid.UUID) else uuid.UUID(str(value)))
+            except (TypeError, ValueError):
+                continue
+    return referenced
+
+
+def prune_empty_auto_groups(db: Session) -> list[str]:
+    """Deletes automatic groups left without hosts and subgroups, bottom-up: an emptied
+    room, then its floor, then the building. Kept are groups with an SSH credential set
+    by an administrator and groups a playbook schedule targets — deleting them would
+    silently lose that setup. Flushes but does not commit; returns the deleted names."""
+    referenced = _schedule_group_ids(db)
+    deleted: list[str] = []
+    while True:
+        occupied = set(db.execute(select(Host.group_id).where(Host.group_id.isnot(None)).distinct()).scalars())
+        parents = set(db.execute(select(HostGroup.parent_id).where(HostGroup.parent_id.isnot(None)).distinct()).scalars())
+        empty = [
+            group
+            for group in db.execute(select(HostGroup).where(HostGroup.is_auto.is_(True), HostGroup.credential_id.is_(None))).scalars()
+            if group.id not in occupied and group.id not in parents and group.id not in referenced
+        ]
+        if not empty:
+            return deleted
+        for group in empty:
+            deleted.append(group.name)
+            db.delete(group)
+        db.flush()
+
+
+def cleanup_auto_groups(db: Session) -> None:
+    """prune_empty_auto_groups with its own commit; never raises into the caller."""
+    try:
+        deleted = prune_empty_auto_groups(db)
+        db.commit()
+        if deleted:
+            logger.info("Deleted empty automatic groups: %s", ", ".join(deleted))
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.exception("Deleting empty automatic groups failed")
+
+
 def apply_auto_group(db: Session, host: Host) -> None:
     """auto_group_host with its own commit; never raises into the caller (heartbeat,
     registration). Two PCs of a new room registering at once can race on creating
-    the same group — the loser retries once and finds it."""
+    the same group — the loser retries once and finds it. A group the host left
+    is deleted if that was its last host."""
     for attempt in (1, 2):
         try:
+            before = host.group_id
             auto_group_host(db, host)
             db.commit()
+            if before is not None and host.group_id != before:
+                cleanup_auto_groups(db)
             return
         except IntegrityError:
             db.rollback()
@@ -186,6 +242,7 @@ def regroup_hosts() -> int:
             apply_auto_group(db, host)
             if host.group_id != before:
                 moved += 1
+        cleanup_auto_groups(db)
         return moved
     finally:
         db.close()

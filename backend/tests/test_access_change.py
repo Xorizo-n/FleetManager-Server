@@ -107,7 +107,10 @@ def host_obj(credential_id=None, group_id=ROOM):
 
 class ApplyTests(unittest.TestCase):
     def _apply(self, db, spec, plans, passed):
-        with patch.object(ac, "hosts_by_ids", lambda _db, ids: [db.objects[i] for i in ids]):
+        from services import host_grouping
+
+        self.cleanups = []
+        with patch.object(ac, "hosts_by_ids", lambda _db, ids: [db.objects[i] for i in ids]),                 patch.object(host_grouping, "cleanup_auto_groups", self.cleanups.append):
             return ac.apply_change(db, spec, plans, passed)
 
     def test_host_credential_kept_where_login_failed(self):
@@ -129,6 +132,7 @@ class ApplyTests(unittest.TestCase):
         plans = [ac.HostPlan(ok.id, BUILDING_KEY, ROOM_KEY, True), ac.HostPlan(bad.id, BUILDING_KEY, ROOM_KEY, True)]
         self._apply(db, {"action": ac.MOVE_TO_GROUP, "group_id": str(OTHER_ROOM)}, plans, {ok.id})
         self.assertEqual((ok.group_id, bad.group_id), (OTHER_ROOM, ROOM))
+        self.assertEqual(self.cleanups, [db])  # the room the hosts left is deleted if now empty
 
     def test_skipped_agent_host_is_untouched(self):
         agent = host_obj(credential_id=AGENT_KEY)

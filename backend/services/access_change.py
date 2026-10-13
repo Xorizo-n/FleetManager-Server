@@ -191,6 +191,10 @@ def apply_change(db, spec: dict, plans: list[HostPlan], passed: set) -> dict:
                 host.credential_id = plan.old_credential
                 pinned += 1
     db.commit()
+    if action == MOVE_TO_GROUP:
+        from services.host_grouping import cleanup_auto_groups
+
+        cleanup_auto_groups(db)  # аудитория, из которой ушли все ПК, удаляется
     return {"applied": len(ok_ids), "failed": len(failed), "pinned": pinned, "without_previous": unchanged}
 
 

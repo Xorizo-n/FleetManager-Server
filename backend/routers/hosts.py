@@ -36,7 +36,7 @@ from services.inventory_generator import build_inventory_ini
 from services.host_target import normalize_host_address, resolve_host_target
 from services.host_diagnostics import run_host_diagnostic
 from services.wake_on_lan import run_host_wake
-from services.host_grouping import find_group_by_name
+from services.host_grouping import cleanup_auto_groups, find_group_by_name
 from services.credential_rules import ssh_credential_error
 from services import access_change
 
@@ -317,6 +317,7 @@ def assign_hosts_to_group(
     for host in hosts:
         host.group_id = group.id
     db.commit()
+    cleanup_auto_groups(db)
     db.refresh(group)
     record_audit(db, user.id, "host_group.assign", f"group={group.name} hosts={len(hosts)}", request)
     return group
@@ -339,6 +340,7 @@ def unassign_hosts_from_group(
     for host in hosts:
         host.group_id = None
     db.commit()
+    cleanup_auto_groups(db)
     record_audit(db, user.id, "host_group.unassign", f"hosts={len(hosts)}", request)
     return {"unassigned": len(hosts)}
 
@@ -377,12 +379,15 @@ def update_host(
     resolve_host_target(values.get("hostname", host.hostname), values.get("ip_address", host.ip_address))
     if "credential_id" in values and values["credential_id"] != host.credential_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Учётка SSH меняется через POST /hosts/access-changes: он сначала проверяет вход новыми данными")
-    if "group_id" in values and values["group_id"] != host.group_id:
+    group_changed = "group_id" in values and values["group_id"] != host.group_id
+    if group_changed:
         _refuse_unverified_move(db, [host.id], values["group_id"])
     for field, value in values.items():
         setattr(host, field, value)
 
     db.commit()
+    if group_changed:
+        cleanup_auto_groups(db)
     db.refresh(host)
     record_audit(db, user.id, "host.update", host.hostname, request)
     return host
@@ -399,9 +404,11 @@ def delete_host(
     if host is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Хост не найден")
 
+    hostname = host.hostname
     db.delete(host)
     db.commit()
-    record_audit(db, user.id, "host.delete", host.hostname, request)
+    cleanup_auto_groups(db)
+    record_audit(db, user.id, "host.delete", hostname, request)
 
 
 @router.post("/delete", status_code=status.HTTP_200_OK)
@@ -415,6 +422,7 @@ def delete_hosts(
     for host in hosts:
         db.delete(host)
     db.commit()
+    cleanup_auto_groups(db)
     record_audit(db, user.id, "host.delete_bulk", f"hosts={len(hosts)}", request)
     return {"deleted": len(hosts)}
 

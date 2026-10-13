@@ -51,7 +51,7 @@ from services.agent_version import (
 )
 from services.audit import record_audit
 from services.hardware_change import hardware_changes
-from services.host_grouping import apply_auto_group
+from services.host_grouping import apply_auto_group, cleanup_auto_groups
 from services.waiting_tasks import create_task_runs, enqueue, release_waiting_tasks
 from services.wake_on_lan import agent_lan_address, normalize_mac, primary_adapter
 from services.crypto import decrypt_secret, encrypt_secret
@@ -489,7 +489,8 @@ def uninstall_agent(
         host.credential_id = None
         db.delete(credential)
     db.execute(delete(AgentAlert).where(AgentAlert.host_id == host.id))
-    if host.is_agent_managed:
+    host_deleted = host.is_agent_managed
+    if host_deleted:
         db.delete(host)
     else:
         host.agent_id = None
@@ -499,6 +500,8 @@ def uninstall_agent(
         host.last_shutdown_at = _now()
         host.status = HostStatus.offline
     db.commit()
+    if host_deleted:
+        cleanup_auto_groups(db)  # удалённый хост мог быть последним в своей аудитории
     return {"status": "uninstalled", "host_id": host_id}
 
 
