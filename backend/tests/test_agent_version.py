@@ -193,6 +193,55 @@ class AgentUpdateScriptTests(unittest.TestCase):
         self.assertEqual(host.ssh_port, 5022)
         self.assertIsNone(confirmed)
 
+    def _update(self, run_raw):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from services import agent_update
+
+        db = SimpleNamespace(commit=lambda: None)
+        host = SimpleNamespace(hostname="MR32-044-SERGEY", ip_address="10.40.161.34", id="h", ssh_port=5022, agent_version="2026.10.09.8")
+        logs, commands = [], []
+
+        def raw(_inventory, _host, command, timeout=None):
+            commands.append(command)
+            return run_raw(command)
+
+        with mock.patch.object(agent_update, "_is_reachable", return_value=True),                 mock.patch.object(agent_update, "run_raw_command", side_effect=raw),                 mock.patch.object(agent_update, "append_task_log", side_effect=lambda _db, _task, line: logs.append(line)):
+            outcome = agent_update._update_host(db, "task", {}, "2026.10.12.13", host)
+        return outcome, commands, logs
+
+    def test_ssh_that_resets_the_session_is_unreachable_not_a_failed_update(self):
+        # MR32-044-SERGEY: the port is open but sshd resets every session. It used to be the
+        # first host of a rollout and stopped it as a "failed canary".
+        from services.agent_update import PROBE_CMD
+        from services.host_parallel import HostOutcome
+
+        def raw(command):
+            raise RuntimeError("Ansible: Connection reset by 10.40.161.34 port 5022")
+
+        outcome, commands, logs = self._update(raw)
+        self.assertEqual(outcome, HostOutcome.unreachable)
+        self.assertEqual(commands, [PROBE_CMD])  # the installer was never started
+        self.assertIn("SSH не отвечает", logs[-1])
+
+    def test_host_answering_over_ssh_is_updated(self):
+        from unittest import mock
+
+        from services.agent_update import PROBE_CMD, UPDATE_CMD
+        from services.host_parallel import HostOutcome
+
+        def raw(command):
+            if command == PROBE_CMD:
+                return '{"version":"2026.10.09.8"}'
+            return '{"version":"2026.10.12.13","exit_code":0,"finished":true,"service_status":"Running"}'
+
+        with mock.patch("services.agent_update._store_version"), mock.patch("services.agent_update._adopt_installer_ssh_port"):
+            outcome, commands, logs = self._update(raw)
+        self.assertEqual(outcome, HostOutcome.ok)
+        self.assertEqual(commands, [PROBE_CMD, UPDATE_CMD])
+        self.assertIn("обновлено: 2026.10.09.8 → 2026.10.12.13", logs[-1])
+
     def test_probe_script_reads_the_inno_setup_uninstall_entry(self):
         import base64
 

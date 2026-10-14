@@ -313,6 +313,13 @@ def _update_host(db, task_id: uuid.UUID, inventory: dict, available: str | None,
     if not _is_reachable(host):
         _append_log(db, task_id, f"[{label}] недоступен по TCP {_ssh_port(host)}")
         return HostOutcome.unreachable
+    # Порт бывает открыт, а SSH сбрасывает соединение (MR32-044-SERGEY). Такой ПК —
+    # недоступный, а не неудачное обновление: иначе он остановил бы раскатку на первом ПК.
+    try:
+        run_raw_command(inventory, str(host.id), PROBE_CMD, timeout=PROBE_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001
+        _append_log(db, task_id, f"[{label}] SSH не отвечает ({exc}); обновление не запускалось")
+        return HostOutcome.unreachable
     _append_log(db, task_id, f"[{label}] запуск обновления (было: {previous or 'неизвестно'})")
     try:
         raw = run_raw_command(inventory, str(host.id), UPDATE_CMD, timeout=UPDATE_TIMEOUT)
