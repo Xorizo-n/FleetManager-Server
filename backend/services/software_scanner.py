@@ -16,34 +16,15 @@ from services.software_sync import sync_host_software
 
 GET_PACKAGE_CMD = 'powershell -NoProfile -Command "Get-Package | Select-Object Name,Version | ConvertTo-Json -Compress"'
 CHOCO_LIST_CMD = 'powershell -NoProfile -NonInteractive -Command "if (Get-Command choco -ErrorAction SilentlyContinue) { choco list --local-only --limit-output }"'
-_LEGACY_REGISTRY_PACKAGES_CMD = (
-    "powershell -NoProfile -NonInteractive -EncodedCommand "
-    "JABwAGEAdABoAHMAPQBAACgAJwBIAEsATABNADoAXABTAG8AZgB0AHcAYQByAGUAXABNAGkAYwByAG8AcwBvAGYAdABcAFcAaQBuAGQAbwB3AHMAXABDAHUAcgByAGUAbgB0AFYAZQByAHMAaQBvAG4AXABVAG4AaQBuAHMAdABhAGwAbABcACoAJwAsACcASABLAEwATQA6AFwAUwBvAGYAdAB3AGEAcgBlAFwAVwBPAFcANgA0ADMAMgBOAG8AZABlAFwATQBpAGMAcgBvAHMAbwBmAHQAXABXAGkAbgBkAG8AdwBzAFwAQwB1AHIAcgBlAG4AdABWAGUAcgBzAGkAbwBuAFwAVQBuAGkAbgBzAHQAYQBsAGwAXAAqACcALAAnAEgASwBDAFUAOgBcAFMAbwBmAHQAdwBhAHIAZQBcAE0AaQBjAHIAbwBzAG8AZgB0AFwAVwBpAG4AZABvAHcAcwBcAEMAdQByAHIAZQBuAHQAVgBlAHIAcwBpAG8AbgBcAFUAbgBpAG4AcwB0AGEAbABsAFwAKgAnACkAOwAkAGkAdABlAG0AcwA9AGYAbwByAGUAYQBjAGgAKAAkAHAAYQB0AGgAIABpAG4AIAAkAHAAYQB0AGgAcwApAHsARwBlAHQALQBJAHQAZQBtAFAAcgBvAHAAZQByAHQAeQAgAC0AUABhAHQAaAAgACQAcABhAHQAaAAgAC0ARQByAHIAb3JBAWN0AGkAbwBuACAAUwBpAGwAZQBuAHQAbAB5AEMAbwBuAHQAaQBuAHUAZQAgAHwAIABXAGgAZQByAGUALQBPAGIAagBlAGMAdAAgAHsAJABfAC4ARABpAHMAcABsAGEAeQBOAGEAbQBlACAALQBhAG4AZAAgACQAXwAuAFMAeQBzAHQAZQBtAEMAbwBtAHAAbwBuAGUAbgB0ACAALQBuAGUAIAAxAH0AIAB8ACAARgBvAHIARQBhAGMAaAAtAE8AYgBqAGUAYwB0ACAAewBbAHAAcwBjAHUAcwB0AG8AbQBvAGIAagBlAGMAdABdAEAAewBOAGEAbQBlAD0AJABfAC4ARABpAHMAcABsAGEAeQBOAGEAbQBlADsAVgBlAHIAcwBpAG8AbgA9ACgAWwBzAHQAcgBpAG4AZwBdACQAXwAuAEQAaQBzAHAAbABhAHkAVgBlAHIAcwBpAG8AbgApAH0AfQB9ADsAJABpAHQAZQBtAHMAIAB8ACAAUwBvAHIAdAAtAE8AYgBqAGUAYwB0ACAATgBhAG0AZQAsAFYAZQByAHMAaQBvAG4AIAAtAFUAbgBpAHEAdQBlACAAfAAgAEMAbwBuAHYAZQByAHQAVABvAC0ASgBzAG8AbgAgAC0AQwBvAG0AcAByAGUAcwBzAA=="
-)
 
-REGISTRY_PACKAGES_CMD = (
-    "powershell -NoProfile -NonInteractive -EncodedCommand "
-    "JABwAGEAdABoAHMAPQAnAEgASwBMAE0AOgBcAFMAbwBmAHQAdwBhAHIAZQBcAE0AaQBjAHIAbwBzAG8AZgB0AFwAVwBpAG4AZABvAHcAcwBcAEMAdQByAHIAZQBuAHQAVgBlAHIAcwBpAG8AbgBcAFUAbgBpAG4AcwB0AGEAbABsAFwAKgAnACwAJwBIAEsATABNADoAXABTAG8AZgB0AHcAYQByAGUAXABXAE8AVwA2ADQAMwAyAE4AbwBkAGUAXABNAGkAYwByAG8AcwBvAGYAdABcAFcAaQBuAGQAbwB3AHMAXABDAHUAcgByAGUAbgB0AFYAZQByAHMAaQBvAG4AXABVAG4AaW5zdGFsbABcACoAJwAsACcASABLAEMAVQA6AFwAUwBvAGYAdAB3AGEAcgBlAFwATQBpAGMAcgBvAHMAb2YAdABcAFcAaW5kb3dzXEN1cnJlbnRWZXJzaW9uXFVuaW5zdGFsbFwqACcAOwAkAGkAdABlAG0AcwA9AGYAb3JlYWNoACgAJABwACAAaW4AIAAkAHAAYQB0AGgAcwApAHsARwBlAHQALQBJAHQAZQBtAFAAcgBvAHAAZQByAHQAeQAgACQAcAAgAC0ARQByAHIAb3JBAWN0AGkAbwBuACAAUwBpAGwAZQBuAHQAbAB5AEMAbwBuAHQAaQBuAHUAZQAgAHwAIAA/ACAAewAkAF8ALgBEAGkAcwBwAGwAYQB5AE4AYQBtAGUAIAAtAGEAbgBkACAAJABfAC4AUwB5AHMAdABlAG0AQwBvAG0AcABvAG4AZQBuAHQAIAAtAG4AZQAgADEAfQAgAHwAIAAlACAAewBbAHAAcwBjAHUAcwB0AG8AbQBvAGIAagBlAGMAdABdAEAAewBOAGEAbQBlAD0AJABfAC4ARABpAHMAcABsAGEAeQBOAGEAbQBlADsAVgBlAHIAcwBpAG8AbgA9AFsAcwB0AHIAaQBuAGcAXQAkAF8ALgBEAGkAcwBwAGwAYQB5AFYAZQByAHMAaQBvAG4AfQB9AH0AOwAkAGkAdABlAG0AcwAgAHwAIABTAG8AcgB0ACAATgBhAG0AZQAsAFYAZQByAHMAaQBvAG4AIAAtAFUAbgBpAHEAdQBlACAAfAAgAEMAbwBuAHYAZQByAHQAVABvAC0ASgBzAG8AbgAgAC0AQwBvAG0AcAByAGUAcwBzAA=="
-)
-
-
-# Use an encoded PowerShell payload so the remote Windows shell cannot strip
-# registry paths, variables, or quoting before PowerShell receives them.
-REGISTRY_PACKAGES_CMD = (
-    "powershell -NoProfile -NonInteractive -EncodedCommand "
-    "JABpAHQAZQBtAHMAPQBHAGUAdAAtAEkAdABlAG0AUAByAG8AcABlAHIAdAB5ACAAJwBIAEsATABNADoAXABTAG8AZgB0AHcAYQByAGUAXABNAGkAYwByAG8AcwBvAGYAdABcAFcAaQBuAGQAbwB3AHMAXABDAHUAcgByAGUAbgB0AFYAZQByAHMAaQBvAG4AXABVAG4AaW5zdGFsbABcACoAJwAsACcASABLAEwATQA6AFwAUwBvAGYAdAB3AGEAcgBlAFwAVwBPAFcANgA0ADMAMgBOAG8AZABlAFwATQBpAGMAcgBvAHMAb2YAdABcAFcAaQBuAGQAbwB3AHMAXABDAHUAcgByAGUAbgB0AFYAZQByAHMAaQBvAG4AXABVAG4AaW5zdGFsbABcACoAJwAsACcASABLAEMAVQA6AFwAUwBvAGYAdwBhAHIAZQBcAE0AaQBjAHIAb3NvZnRcAFcAaW5kb3dzXEN1cnJlbnRWZXJzaW9uXFVuaW5zdGFsbFwqACcAIAAtAEUAcgByAG8AcgBBAGMAdABpAG8AbgAgAFMAaQBsAGUAbgB0AGwAeQBDAG8AbgB0AGkAbgB1AGUAIAB8ACAAPwAgAHsAJABfAC4ARABpAHMAcABsAGEAeQBOAGEAbQBlACAALQBhAG4AZAAgACQAXwAuAFMAeQBzAHQAZQBtAEMAbwBtAHAAbwBuAGUAbgB0ACAALQBuAGUAIAAxAH0AIAB8ACAAlACAAewBbAHAAcwBjdQBzAHQAbwBtAG8AYgBqAGUAYwB0AF0AQAB7AE4AYQBtAGUAPQAkAF8ALgBEAGkAcwBwAGwAYQB5AE4AYQBtAGUAOwBWAGUAcgBzAGkAbwBuAD0AWwBzAHQAcgBpAG4AZwBdACQAXwAuAEQAaQBzAHAAbABhAHkAVgBlAHIAcwBpAG8AbgB9AH0AOwAkAGkAdABlAG0AcwAgAHwAIABTAG8AcgB0ACAATgBhAG0AZQAsAFYAZQByAHMAaQBvAG4AIAAtAFUAbgBpAHEAdQBlACAAfAAgAEMAbwBuAHYAZQByAHQAVABvAC0ASgBzAG8AbgAgAC0AQwBvAG0AcAByAGUAcwBzAA=="
-)
-
-
-REGISTRY_SCRIPT = r"""$items=Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -and $_.SystemComponent -ne 1 } | ForEach-Object { [pscustomobject]@{ Name=$_.DisplayName; Version=[string]$_.DisplayVersion } }; $items | Sort-Object Name,Version -Unique | ConvertTo-Json -Compress"""
-REGISTRY_PACKAGES_CMD = "powershell -NoProfile -NonInteractive -EncodedCommand " + base64.b64encode(REGISTRY_SCRIPT.encode("utf-16le")).decode("ascii")
-
-
-REGISTRY_SCRIPT = r"""$items=Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -and $_.SystemComponent -ne 1 } | ForEach-Object { [pscustomobject]@{ Name=$_.DisplayName; Version=[string]$_.DisplayVersion } }; $appx=Get-AppxPackage -ErrorAction SilentlyContinue | Where-Object { $_.Name -and $_.IsFramework -ne $true } | ForEach-Object { [pscustomobject]@{ Name=$_.Name; Version=[string]$_.Version } }; @($items)+=@($appx); $items | Sort-Object Name,Version -Unique | ConvertTo-Json -Compress"""
-REGISTRY_PACKAGES_CMD = "powershell -NoProfile -NonInteractive -EncodedCommand " + base64.b64encode(REGISTRY_SCRIPT.encode("utf-16le")).decode("ascii")
-
-
-REGISTRY_SCRIPT = r"""$items=Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -and $_.SystemComponent -ne 1 } | ForEach-Object { [pscustomobject]@{ Name=$_.DisplayName; Version=[string]$_.DisplayVersion } }; $appx=Get-AppxPackage -ErrorAction SilentlyContinue | Where-Object { $_.Name -and $_.IsFramework -ne $true } | ForEach-Object { [pscustomobject]@{ Name=$_.Name; Version=[string]$_.Version } }; $items=@($items)+@($appx); $items | Sort-Object Name,Version -Unique | ConvertTo-Json -Compress"""
+# Uninstall-записи читаются по ключам через RegistryKey.GetValue, а не
+# Get-ItemProperty по маске: тот читает все значения всех записей, и одно чужое
+# битое значение роняет весь вызов. Установщик NetBeans пишет NoModify как
+# REG_DWORD из 8 байт, .NET отдаёт его как Int64, провайдер реестра PowerShell
+# падает с InvalidCastException, и на таком ПК (SU5-VM-SBX) из реестра не
+# находилось ни одной программы. Нечитаемая запись пропускается, остальные — нет.
+REGISTRY_SCRIPT = r"""$keys='HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'; $items=Get-ChildItem $keys -ErrorAction SilentlyContinue | ForEach-Object { try { $name=[string]$_.GetValue('DisplayName'); if ($name -and $_.GetValue('SystemComponent') -ne 1) { [pscustomobject]@{ Name=$name; Version=[string]$_.GetValue('DisplayVersion') } } } catch {} }; $appx=Get-AppxPackage -ErrorAction SilentlyContinue | Where-Object { $_.Name -and $_.IsFramework -ne $true } | ForEach-Object { [pscustomobject]@{ Name=$_.Name; Version=[string]$_.Version } }; $items=@($items)+@($appx); $items | Sort-Object Name,Version -Unique | ConvertTo-Json -Compress"""
+# Закодированный PowerShell: удалённый shell не портит пути, переменные и кавычки.
 REGISTRY_PACKAGES_CMD = "powershell -NoProfile -NonInteractive -EncodedCommand " + base64.b64encode(REGISTRY_SCRIPT.encode("utf-16le")).decode("ascii")
 
 
