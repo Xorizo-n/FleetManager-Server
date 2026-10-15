@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Activity, ArrowUpCircle, KeyRound, Monitor, Play, Power, Trash2 } from "lucide-react";
 import { apiClient } from "../../api/client";
 import { keys, useAlerts, useCanEdit, useCredentials, useFleet, useHostSoftware, useTasks } from "../../api/queries";
-import type { AgentAlert, Host, TaskRun } from "../../api/types";
+import type { AgentAlert, Host, NetworkAdapter, TaskRun } from "../../api/types";
 import Drawer from "../../components/ui/Drawer";
 import Tabs from "../../components/ui/Tabs";
 import Button from "../../components/ui/Button";
@@ -18,6 +18,8 @@ import { AgentCell, StatusDot } from "./HostTable";
 import { apiError, formatDateTime, formatRam, hostLabel, osLabel, relativeTime, STATUS_LABELS, taskTitle } from "../../lib/format";
 import { isSystemSoftware } from "../../lib/software";
 import { downloadRdpFile, rdpAddress } from "../../lib/rdp";
+import { formatLinkSpeed, isSlowWiredLink, primaryAdapter } from "../../lib/hardware";
+import { DiskList } from "../../components/DiskUsage";
 import { effectiveCredential, EffectiveCredential, isSshAssignable } from "../../lib/credentials";
 
 type Tab = "overview" | "software" | "tasks" | "alerts";
@@ -259,11 +261,26 @@ function Overview({ host }: { host: Host }) {
             <Field label="MAC-адрес">{host.hw_mac_address && <span className="font-mono">{host.hw_mac_address}</span>}</Field>
             <Field label="Процессор">{host.hw_processor}</Field>
             <Field label="Память">{formatRam(host.hw_total_memory_bytes)}</Field>
+            <Field label="Скорость сети"><LinkSpeed adapter={primaryAdapter(host)} /></Field>
           </dl>
         ) : (
           <p className="text-sm text-subtle">Агент ещё не прислал данные об оборудовании</p>
         )}
       </section>
+
+      {!!host.hw_disks?.length && (
+        <section>
+          <h3 className="mb-2 text-sm font-semibold text-foreground">Диски</h3>
+          <DiskList disks={host.hw_disks} />
+        </section>
+      )}
+
+      {!!host.hw_network_adapters?.length && (
+        <section>
+          <h3 className="mb-2 text-sm font-semibold text-foreground">Сетевые адаптеры</h3>
+          <NetworkAdapters host={host} />
+        </section>
+      )}
 
       <section className="space-y-3">
         <h3 className="text-sm font-semibold text-foreground">Управление</h3>
@@ -331,6 +348,44 @@ function Overview({ host }: { host: Host }) {
         )}
       </section>
     </div>
+  );
+}
+
+function LinkSpeed({ adapter }: { adapter: NetworkAdapter | null }) {
+  const speed = formatLinkSpeed(adapter?.link_speed_bps);
+  if (!speed) return null;
+  return isSlowWiredLink(adapter) ? (
+    <span className="text-amber-600 dark:text-amber-400" title="Проводной адаптер договорился с портом меньше чем на гигабит — проверьте кабель, патч-корд и порт коммутатора">
+      {speed}
+    </span>
+  ) : (
+    <>{speed}</>
+  );
+}
+
+function NetworkAdapters({ host }: { host: Host }) {
+  const adapters = [...(host.hw_network_adapters ?? [])].sort((a, b) => Number((b.status ?? "").toLowerCase() === "up") - Number((a.status ?? "").toLowerCase() === "up"));
+  return (
+    <ul className="divide-y divide-border rounded-lg border border-border">
+      {adapters.map((a) => {
+        const up = (a.status ?? "").toLowerCase() === "up";
+        return (
+          <li key={a.mac_address ?? a.name} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-2 text-sm">
+            <span className={`h-2 w-2 shrink-0 self-center rounded-full ${up ? "bg-emerald-500" : "bg-slate-400"}`} title={a.status ?? undefined} />
+            <span className="min-w-0 flex-1">
+              <span className="font-medium text-foreground">{a.name ?? "Адаптер"}</span>
+              {a.mac_address === host.hw_mac_address && <span className="text-xs text-subtle"> · связь с сервером</span>}
+              {a.description && <span className="block truncate text-xs text-muted-foreground" title={a.description}>{a.description}</span>}
+            </span>
+            <span className="text-xs tabular-nums">{!up ? <span className="text-muted-foreground">нет линка</span> : a.link_speed_bps ? <LinkSpeed adapter={a} /> : "—"}</span>
+            <span className="w-full pl-5 font-mono text-xs text-muted-foreground">
+              {a.mac_address}
+              {a.ipv4.length > 0 && ` · ${a.ipv4.join(", ")}`}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

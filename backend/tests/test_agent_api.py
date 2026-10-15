@@ -46,6 +46,31 @@ class AgentApiContractTests(unittest.TestCase):
         self.assertEqual(payload.ssh_login, r"rtf\s.u.mirzagitov")
         self.assertEqual(payload.ssh_port, 5022)
 
+    def test_heartbeat_carries_disk_usage_and_link_speed(self):
+        payload = AgentHeartbeatRequest(
+            machine_id=str(uuid.uuid4()),
+            os="windows_11",
+            hardware={
+                "network_adapters": [{"name": "Ethernet", "mac_address": "34-5A-60-BF-91-C7", "link_speed_bps": 100_000_000},
+                                     {"name": "Wi-Fi", "mac_address": "AA-BB-CC-DD-EE-FF", "link_speed_bps": None}],
+                "disks": [{"name": "C:", "label": None, "file_system": "NTFS", "size_bytes": 510935429120, "free_bytes": 351092977664}],
+            },
+        )
+        self.assertEqual(payload.hardware.network_adapters[0].link_speed_bps, 100_000_000)
+        self.assertIsNone(payload.hardware.network_adapters[1].link_speed_bps)
+        self.assertEqual(payload.hardware.disks[0].model_dump(), {
+            "name": "C:", "label": None, "file_system": "NTFS", "size_bytes": 510935429120, "free_bytes": 351092977664,
+        })
+
+    def test_heartbeat_of_old_agents_has_no_disks(self):
+        payload = AgentHeartbeatRequest(machine_id=str(uuid.uuid4()), os="windows_10", hardware={"network_adapters": [{"mac_address": "34-5A-60-BF-91-C7"}]})
+        self.assertEqual(payload.hardware.disks, [])
+        self.assertIsNone(payload.hardware.network_adapters[0].link_speed_bps)
+
+    def test_heartbeat_rejects_negative_disk_sizes(self):
+        with self.assertRaises(ValidationError):
+            AgentHeartbeatRequest(machine_id=str(uuid.uuid4()), os="windows_11", hardware={"disks": [{"name": "C:", "size_bytes": -1, "free_bytes": 0}]})
+
     def test_heartbeat_scrubs_control_chars_rejected_by_postgres(self):
         # Vendor DisplayName values in the registry sometimes contain NUL, which
         # PostgreSQL text columns reject — failing the whole heartbeat.

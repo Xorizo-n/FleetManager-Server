@@ -35,8 +35,32 @@ export interface Host {
   hw_total_memory_bytes?: number | null;
   /** MAC адаптера, через который ПК пришёл на сервер, — для пробуждения по сети */
   hw_mac_address?: string | null;
+  hw_network_adapters?: NetworkAdapter[] | null;
+  /** Локальные диски из последнего heartbeat; у агентов до 2026.10.15 нет */
+  hw_disks?: HostDisk[] | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface NetworkAdapter {
+  name: string | null;
+  description: string | null;
+  mac_address: string | null;
+  ipv4: string[];
+  status: string | null;
+  /** «802.3» — проводной */
+  media_type: string | null;
+  /** Скорость линка, бит/с; null — нет линка или старый агент */
+  link_speed_bps?: number | null;
+}
+
+export interface HostDisk {
+  /** «C:» */
+  name: string;
+  label: string | null;
+  file_system: string | null;
+  size_bytes: number;
+  free_bytes: number;
 }
 
 export interface AgentHostVersion {
