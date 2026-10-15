@@ -250,6 +250,18 @@ class AgentUpdateScriptTests(unittest.TestCase):
         self.assertIn("FleetManager Agent", script)
         self.assertIn("WOW6432Node", script)
 
+    def test_uninstall_entry_is_read_value_by_value(self):
+        # NetBeans writes NoModify as an 8-byte REG_DWORD; Get-ItemProperty over
+        # Uninstall\* then throws InvalidCastException, and on SU5-VM-SBX the update
+        # died before starting the installer while the probe found no agent.
+        import base64
+
+        for command in (PROBE_CMD, UPDATE_CMD):
+            script = base64.b64decode(command.rsplit(" ", 1)[1]).decode("utf-16le")
+            self.assertNotIn("Get-ItemProperty", script)
+            self.assertIn("GetValue('DisplayVersion')", script)
+            self.assertIn("& $installed", script)
+
     def test_probe_output_is_extracted_from_noisy_ssh_output(self):
         raw = 'motd banner\r\n{"version":"2025.08.14.12","service_status":"Running"}\r\n'
         self.assertEqual(parse_probe_output(raw)["version"], "2025.08.14.12")
