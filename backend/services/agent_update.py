@@ -58,16 +58,31 @@ RECHECK_DELAY = 30
 INSTALLER_SSH_PORT = 22
 
 UNINSTALL_KEYS = (
-    r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-    r"HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    r"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+    r"HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
 )
 
-# Читает версию из записи удаления, которую создаёт Inno Setup, и состояние службы.
+# Запись удаления агента (её создаёт Inno Setup): & $installed возвращает её
+# DisplayVersion и InstallLocation или $null.
+#
+# Значения читаются по одному через RegistryKey.GetValue, а не Get-ItemProperty
+# по маске: тот читает все значения всех записей, и одно чужое битое значение
+# роняет весь вызов. Установщик NetBeans пишет NoModify как REG_DWORD из 8 байт,
+# .NET отдаёт его как Int64, и провайдер реестра PowerShell падает с
+# InvalidCastException («Specified cast is not valid»). На SU5-VM-SBX из-за
+# этого скрипт обновления завершался ошибкой ещё до запуска установщика, а
+# проверка версии не находила агент.
+AGENT_ENTRY_SCRIPT = f"""
+$installed = {{ Get-ChildItem '{UNINSTALL_KEYS[0]}','{UNINSTALL_KEYS[1]}' -ErrorAction SilentlyContinue |
+    Where-Object {{ $_.GetValue('DisplayName') -eq '{AGENT_DISPLAY_NAME}' }} | Select-Object -First 1 |
+    ForEach-Object {{ [pscustomobject]@{{ DisplayVersion = [string]$_.GetValue('DisplayVersion'); InstallLocation = [string]$_.GetValue('InstallLocation') }} }} }}
+"""
+
+# Читает версию из записи удаления агента и состояние службы.
 PROBE_SCRIPT = f"""
 $ErrorActionPreference = 'SilentlyContinue'
-$entry = Get-ItemProperty '{UNINSTALL_KEYS[0]}','{UNINSTALL_KEYS[1]}' |
-    Where-Object {{ $_.DisplayName -eq '{AGENT_DISPLAY_NAME}' }} |
-    Select-Object -First 1
+{AGENT_ENTRY_SCRIPT}
+$entry = & $installed
 $service = Get-Service -Name FleetManagerAgent
 [pscustomobject]@{{
     version = [string]$entry.DisplayVersion
@@ -113,8 +128,7 @@ $dest = Join-Path $env:TEMP '{INSTALLER_FILENAME}'
 $ProgressPreference = 'SilentlyContinue'
 Invoke-WebRequest -Uri "$base/api/agent/installer" -Headers @{{ Authorization = "Bearer $($config.AgentToken)" }} -OutFile $dest -UseBasicParsing -TimeoutSec 900
 
-$installed = {{ Get-ItemProperty '{UNINSTALL_KEYS[0]}','{UNINSTALL_KEYS[1]}' -ErrorAction SilentlyContinue |
-    Where-Object {{ $_.DisplayName -eq '{AGENT_DISPLAY_NAME}' }} | Select-Object -First 1 }}
+{AGENT_ENTRY_SCRIPT}
 $previous = [string](& $installed).DisplayVersion
 $commandLine = '"' + $dest + '" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-'
 $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{{ CommandLine = $commandLine }}
