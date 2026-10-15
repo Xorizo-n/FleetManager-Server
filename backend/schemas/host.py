@@ -176,6 +176,7 @@ class HostOut(BaseModel):
     hw_total_memory_bytes: int | None = None
     hw_mac_address: str | None = None
     hw_network_adapters: list | None = None
+    hw_disks: list | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -34,6 +34,7 @@ interface Host {
   agent_version: string | null; agent_version_checked_at: string | null; last_seen_at: string | null;
   hw_manufacturer: string | null; hw_model: string | null; hw_serial_number: string | null; hw_os_caption: string | null;
   hw_processor: string | null; hw_total_memory_bytes: number | null; hw_mac_address: string | null; created_at: string; updated_at: string;
+  hw_network_adapters?: any[] | null; hw_disks?: any[] | null;
 }
 interface Credential { id: string; name: string; type: string; login: string | null; created_at: string; is_agent_managed: boolean }
 interface Software { id: string; host_id: string; name: string; version: string | null; install_method: string; status: string; detected_at: string }
@@ -123,6 +124,21 @@ function makeHost(hostname: string, groupId: string | null): Host {
     hw_mac_address: hasAgent && chance(0.7) ? Array.from({ length: 6 }, (_, i) => (i === 0 ? 0x34 : Math.floor(rnd() * 256)).toString(16).padStart(2, "0")).join("-").toUpperCase() : null,
     created_at: created, updated_at: created,
   };
+  // Диски и скорость линка — с агента 2026.10.15
+  if (host.hw_mac_address && chance(0.8)) {
+    const ip = `${host.ip_address}/24`;
+    const slow = chance(0.08);
+    host.hw_network_adapters = [
+      { name: "Ethernet", description: pick(["Realtek PCIe GbE Family Controller", "Intel(R) Ethernet Connection (17) I219-LM"]), mac_address: host.hw_mac_address,
+        ipv4: status === "online" ? [ip] : [], status: status === "online" ? "Up" : "Disconnected", media_type: "802.3",
+        link_speed_bps: status === "online" ? (slow ? 100_000_000 : 1_000_000_000) : null },
+      ...(chance(0.3) ? [{ name: "Беспроводная сеть", description: "Intel(R) Wi-Fi 6 AX201 160MHz", mac_address: "A0-B3-39-12-34-56", ipv4: [], status: "Disconnected", media_type: "Native 802.11", link_speed_bps: null }] : []),
+    ];
+    const size = pick([255, 476, 931]) * 1024 ** 3;
+    const used = Math.min(0.99, 0.35 + rnd() * (chance(0.15) ? 0.64 : 0.4));
+    host.hw_disks = [{ name: "C:", label: null, file_system: "NTFS", size_bytes: size, free_bytes: Math.round(size * (1 - used)) }];
+    if (chance(0.3)) host.hw_disks.push({ name: "D:", label: "Data", file_system: "NTFS", size_bytes: 1863 * 1024 ** 3, free_bytes: Math.round(1863 * 1024 ** 3 * rnd()) });
+  }
   if (hasAgent) {
     const cred: Credential = { id: uuid(), name: `Agent SSH — ${hostname}`, type: "ssh_key", login: "fleetagent", created_at: created, is_agent_managed: true };
     credentials.push(cred);

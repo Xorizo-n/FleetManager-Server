@@ -355,6 +355,9 @@ def heartbeat(
     host.hw_os_caption = payload.hardware.operating_system
     host.hw_processor = payload.hardware.processor
     host.hw_total_memory_bytes = payload.hardware.total_memory_bytes
+    # Старые агенты диски не присылают — тогда последние известные сохраняются
+    if payload.hardware.disks:
+        host.hw_disks = [disk.model_dump() for disk in payload.hardware.disks]
     if payload.ssh_port:
         host.ssh_port = payload.ssh_port
     if payload.ssh_login and host.credential_id:

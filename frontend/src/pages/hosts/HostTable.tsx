@@ -5,9 +5,11 @@ import type { Host, VersionStatus } from "../../api/types";
 import type { GroupTree } from "../../lib/groupTree";
 import Checkbox from "../../components/ui/Checkbox";
 import { formatRam, hostLabel, osLabel, pcCount, relativeTime, VERSION_LABELS } from "../../lib/format";
+import { diskUsedPercent, formatLinkSpeed, fullestDisk, isSlowWiredLink, primaryAdapter } from "../../lib/hardware";
+import { DiskCell } from "../../components/DiskUsage";
 
 export type ColumnSet = "main" | "hardware";
-type SortKey = "name" | "ip" | "status" | "agent" | "checked";
+type SortKey = "name" | "ip" | "status" | "agent" | "checked" | "disk" | "net";
 
 interface Props {
   hosts: Host[];
@@ -29,17 +31,26 @@ const VERSION_ORDER: Record<string, number> = { outdated: 0, unknown: 1, newer: 
 const collator = new Intl.Collator("ru", { numeric: true });
 
 // Одна сетка колонок на всю таблицу: ширина не «прыгает» между аудиториями
-// В узкой таблице (< 880px) колонка ОС скрывается, чтобы не было горизонтальной прокрутки
-const GRID: Record<ColumnSet, { wide: string; compact: string }> = {
+// В узкой таблице (< wideFrom) часть колонок скрывается, чтобы не было горизонтальной прокрутки:
+// в основных — ОС, в железе — процессор, серийный номер и ОС
+const GRID: Record<ColumnSet, { wide: string; compact: string; wideFrom: number }> = {
   main: {
     wide: "2.25rem minmax(11rem,1.4fr) 8.5rem 6.5rem minmax(9rem,1fr) 7rem 7.5rem",
     compact: "2.25rem minmax(9rem,1.4fr) 7.5rem 6rem minmax(8rem,1fr) 6.5rem",
+    wideFrom: 880,
   },
   hardware: {
-    wide: "2.25rem minmax(11rem,1.2fr) minmax(10rem,1.2fr) minmax(10rem,1.2fr) 4.5rem minmax(8rem,1fr) minmax(9rem,1fr)",
-    compact: "2.25rem minmax(9rem,1fr) minmax(8rem,1fr) minmax(8rem,1.2fr) 4rem minmax(7rem,1fr)",
+    wide: "2.25rem minmax(11rem,1.2fr) minmax(9rem,1.1fr) minmax(9rem,1.2fr) 4.5rem 5.5rem 6.5rem minmax(7rem,0.9fr) minmax(8rem,1fr)",
+    compact: "2.25rem minmax(9rem,1.2fr) minmax(8rem,1fr) 4rem 5.5rem 6.5rem",
+    wideFrom: 1140,
   },
 };
+
+const diskPercent = (h: Host) => {
+  const disk = fullestDisk(h);
+  return disk ? diskUsedPercent(disk) : -1;
+};
+const linkSpeed = (h: Host) => primaryAdapter(h)?.link_speed_bps ?? Number.MAX_SAFE_INTEGER;
 
 /** Реестр хостов: одна виртуализованная таблица, разделители по аудиториям. */
 export default function HostTable({ hosts, tree, versionOf, columns, grouped, selectable, selected, onToggle, onOpen, alertCounts }: Props) {
@@ -47,7 +58,7 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
   const listRef = useRef<HTMLDivElement>(null);
   const shellRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
-  const [layout, setLayout] = useState<"mobile" | "compact" | "wide">("wide");
+  const [width, setWidth] = useState(Number.MAX_SAFE_INTEGER);
 
   useLayoutEffect(() => {
     setScrollMargin(listRef.current?.offsetTop ?? 0);
@@ -56,14 +67,13 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
   useLayoutEffect(() => {
     if (!shellRef.current) return;
     const observer = new ResizeObserver(([entry]) => {
-      const width = entry.contentRect.width;
-      setLayout(width < 560 ? "mobile" : width < 880 ? "compact" : "wide");
+      setWidth(entry.contentRect.width);
     });
     observer.observe(shellRef.current);
     return () => observer.disconnect();
   }, []);
-  const compact = layout !== "wide";
-  const mobile = layout === "mobile";
+  const mobile = width < 560;
+  const compact = width < GRID[columns].wideFrom;
   // На телефоне — только имя (с IP и агентом второй строкой) и статус
   const grid = mobile ? "2.25rem minmax(0,1fr) auto" : compact ? GRID[columns].compact : GRID[columns].wide;
 
@@ -74,6 +84,9 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
       else if (sort.key === "status") result = (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9);
       else if (sort.key === "agent") result = (VERSION_ORDER[versionOf(a)] ?? 9) - (VERSION_ORDER[versionOf(b)] ?? 9);
       else if (sort.key === "checked") result = (b.last_checked_at ?? "").localeCompare(a.last_checked_at ?? "");
+      // Сначала проблемные: самые заполненные диски и самые медленные линки
+      else if (sort.key === "disk") result = diskPercent(b) - diskPercent(a);
+      else if (sort.key === "net") result = linkSpeed(a) - linkSpeed(b);
       if (result === 0) result = collator.compare(hostLabel(a), hostLabel(b));
       return sort.desc ? -result : result;
     };
@@ -153,9 +166,11 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
         ) : (
           <>
             {header(null, "Модель")}
-            {header(null, "Процессор")}
+            {!compact && header(null, "Процессор")}
             {header(null, "RAM")}
-            {header(null, "Серийный №")}
+            {header("disk", "Диск")}
+            {header("net", "Сеть")}
+            {!compact && header(null, "Серийный №")}
             {!compact && header(null, "ОС")}
           </>
         )}
@@ -250,9 +265,11 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
                     <div className="truncate text-foreground">{h.hw_model ?? "—"}</div>
                     <div className="truncate text-xs text-subtle">{h.hw_manufacturer}</div>
                   </div>
-                  <div className="truncate text-xs text-foreground/80" title={h.hw_processor ?? ""}>{h.hw_processor ?? "—"}</div>
+                  {!compact && <div className="truncate text-xs text-foreground/80" title={h.hw_processor ?? ""}>{h.hw_processor ?? "—"}</div>}
                   <div className="tabular-nums">{formatRam(h.hw_total_memory_bytes)}</div>
-                  <div className="truncate font-mono text-xs text-muted-foreground">{h.hw_serial_number ?? "—"}</div>
+                  <DiskCell disk={fullestDisk(h)} all={h.hw_disks ?? []} />
+                  <LinkSpeedCell host={h} />
+                  {!compact && <div className="truncate font-mono text-xs text-muted-foreground">{h.hw_serial_number ?? "—"}</div>}
                   {!compact && <div className="truncate text-xs text-muted-foreground" title={h.hw_os_caption ?? ""}>{h.hw_os_caption ?? osLabel(h.os)}</div>}
                 </>
               )}
@@ -260,6 +277,21 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function LinkSpeedCell({ host }: { host: Host }) {
+  const adapter = primaryAdapter(host);
+  const speed = formatLinkSpeed(adapter?.link_speed_bps);
+  if (!speed) return <div className="text-muted-foreground">—</div>;
+  const slow = isSlowWiredLink(adapter);
+  return (
+    <div
+      className={`truncate text-xs tabular-nums ${slow ? "text-amber-600 dark:text-amber-400" : "text-foreground/80"}`}
+      title={`${adapter?.name ?? "Адаптер"}${adapter?.description ? ` — ${adapter.description}` : ""}${slow ? "\nМеньше гигабита по проводу: проверьте кабель и порт" : ""}`}
+    >
+      {speed}
     </div>
   );
 }

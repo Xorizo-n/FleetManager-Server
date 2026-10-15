@@ -80,6 +80,8 @@ class Host(Base):
     # который ПК пришёл на сервер, — для пробуждения по сети (services/wake_on_lan.py)
     hw_network_adapters: Mapped[list | None] = mapped_column(JSON, nullable=True)
     hw_mac_address: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Локальные диски от агента: имя («C:»), метка, ФС, размер и свободное место в байтах
+    hw_disks: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
