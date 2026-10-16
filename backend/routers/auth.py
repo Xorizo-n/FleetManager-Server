@@ -18,6 +18,7 @@ from schemas.auth import (
     TotpVerifyRequest,
     RefreshRequest,
     TotpResetResponse,
+    ChangePasswordRequest,
 )
 from services.audit import record_audit
 from services.rate_limiter import check_rate_limit
@@ -187,6 +188,27 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)):
     return user
+
+
+@router.post("/change-password", status_code=status.HTTP_200_OK)
+def change_password(
+    payload: ChangePasswordRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if not verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Текущий пароль неверный")
+    if payload.new_password == payload.current_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Новый пароль должен отличаться от текущего",
+        )
+
+    user.password_hash = hash_password(payload.new_password)
+    db.commit()
+    record_audit(db, user.id, "user.change_password", "Пароль изменён", request)
+    return {"detail": "Пароль изменён"}
 
 
 @router.post("/totp/reset/{user_id}", response_model=TotpResetResponse)

@@ -7,9 +7,10 @@ from sqlalchemy.orm import Session
 from database import get_db
 from dependencies import require_roles
 from models.user import User, UserRole
-from schemas.auth import UserOut, UserRoleUpdate
+from schemas.auth import UserCreate, UserOut, UserRoleUpdate
 from services.audit import record_audit
 from services.permissions import validate_role_change
+from services.security import hash_password
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -20,6 +21,41 @@ def list_users(
     _: User = Depends(require_roles(UserRole.admin)),
 ):
     return db.execute(select(User).order_by(User.username)).scalars().all()
+
+
+@router.post("", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+def create_user(
+    payload: UserCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_roles(UserRole.admin)),
+):
+    existing = db.execute(
+        select(User).where((User.username == payload.username) | (User.email == payload.email))
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Пользователь с таким именем или email уже существует",
+        )
+
+    user = User(
+        username=payload.username,
+        email=payload.email,
+        password_hash=hash_password(payload.password),
+        role=payload.role,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    record_audit(
+        db,
+        admin.id,
+        "user.create",
+        f"Создан пользователь {user.username} ({user.role.value})",
+        request,
+    )
+    return user
 
 
 @router.patch("/{user_id}/role", response_model=UserOut)
