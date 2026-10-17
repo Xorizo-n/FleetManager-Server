@@ -8,10 +8,12 @@ import { formatRam, hostLabel, osLabel, pcCount, relativeTime, VERSION_LABELS } 
 import { diskUsedPercent, formatLinkSpeed, fullestDisk, isSlowWiredLink, primaryAdapter } from "../../lib/hardware";
 import { DiskCell } from "../../components/DiskUsage";
 import { ActivationCell } from "../../components/Activation";
+import { PeripheralCell } from "../../components/Workplace";
+import { cleanName, monitorTitle, presence } from "../../lib/devices";
 import { activationSeverity } from "../../lib/activation";
 
 export type ColumnSet = "main" | "hardware";
-type SortKey = "name" | "ip" | "status" | "agent" | "checked" | "disk" | "net" | "activation";
+type SortKey = "name" | "ip" | "status" | "agent" | "checked" | "disk" | "net" | "activation" | "devices";
 
 interface Props {
   hosts: Host[];
@@ -34,7 +36,8 @@ const collator = new Intl.Collator("ru", { numeric: true });
 
 // Одна сетка колонок на всю таблицу: ширина не «прыгает» между аудиториями
 // В узкой таблице (< wideFrom) часть колонок скрывается, чтобы не было горизонтальной прокрутки:
-// в основных — ОС и активация, в железе — процессор, серийный номер и ОС
+// в основных — ОС и активация, в железе — процессор, видеокарта и монитор. Серийный номер — в карточке ПК,
+// в поиске и в выгрузке CSV: в таблицу с видеокартой и монитором он не помещается
 const GRID: Record<ColumnSet, { wide: string; compact: string; wideFrom: number }> = {
   main: {
     wide: "2.25rem minmax(11rem,1.4fr) 8.5rem 6.5rem minmax(9rem,1fr) 7rem 7.5rem 7.5rem",
@@ -42,9 +45,9 @@ const GRID: Record<ColumnSet, { wide: string; compact: string; wideFrom: number 
     wideFrom: 1000,
   },
   hardware: {
-    wide: "2.25rem minmax(11rem,1.2fr) minmax(9rem,1.1fr) minmax(9rem,1.2fr) 4.5rem 5.5rem 6.5rem minmax(7rem,0.9fr) minmax(8rem,1fr)",
-    compact: "2.25rem minmax(9rem,1.2fr) minmax(8rem,1fr) 4rem 5.5rem 6.5rem",
-    wideFrom: 1140,
+    wide: "2.25rem minmax(9rem,1fr) minmax(8rem,1fr) minmax(7rem,1fr) minmax(6rem,0.8fr) minmax(6rem,0.8fr) 4rem 5rem 5.5rem 4.5rem",
+    compact: "2.25rem minmax(9rem,1.2fr) minmax(8rem,1fr) 4rem 5.5rem 6.5rem 4.5rem",
+    wideFrom: 1060,
   },
 };
 
@@ -52,6 +55,9 @@ const diskPercent = (h: Host) => {
   const disk = fullestDisk(h);
   return disk ? diskUsedPercent(disk) : -1;
 };
+// Сначала ПК, где нет клавиатуры, мыши или монитора, затем — где устройство пропало недавно
+const DEVICE_ORDER = { missing: 0, pending: 1, ok: 2, unknown: 3 };
+const devicesRank = (h: Host) => Math.min(...(["keyboard", "mouse", "monitor"] as const).map((c) => DEVICE_ORDER[presence(h, c)]));
 const linkSpeed = (h: Host) => primaryAdapter(h)?.link_speed_bps ?? Number.MAX_SAFE_INTEGER;
 
 /** Реестр хостов: одна виртуализованная таблица, разделители по аудиториям. */
@@ -90,6 +96,7 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
       else if (sort.key === "disk") result = diskPercent(b) - diskPercent(a);
       else if (sort.key === "net") result = linkSpeed(a) - linkSpeed(b);
       else if (sort.key === "activation") result = activationSeverity(b) - activationSeverity(a);
+      else if (sort.key === "devices") result = devicesRank(a) - devicesRank(b);
       if (result === 0) result = collator.compare(hostLabel(a), hostLabel(b));
       return sort.desc ? -result : result;
     };
@@ -171,11 +178,12 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
           <>
             {header(null, "Модель")}
             {!compact && header(null, "Процессор")}
+            {!compact && header(null, "Видеокарта")}
+            {!compact && header(null, "Монитор")}
             {header(null, "RAM")}
             {header("disk", "Диск")}
             {header("net", "Сеть")}
-            {!compact && header(null, "Серийный №")}
-            {!compact && header(null, "ОС")}
+            {header("devices", "Устр.")}
           </>
         )}
       </div>
@@ -271,17 +279,40 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
                     <div className="truncate text-xs text-subtle">{h.hw_manufacturer}</div>
                   </div>
                   {!compact && <div className="truncate text-xs text-foreground/80" title={h.hw_processor ?? ""}>{h.hw_processor ?? "—"}</div>}
+                  {!compact && <GpuCell host={h} />}
+                  {!compact && <MonitorCell host={h} />}
                   <div className="tabular-nums">{formatRam(h.hw_total_memory_bytes)}</div>
                   <DiskCell disk={fullestDisk(h)} all={h.hw_disks ?? []} />
                   <LinkSpeedCell host={h} />
-                  {!compact && <div className="truncate font-mono text-xs text-muted-foreground">{h.hw_serial_number ?? "—"}</div>}
-                  {!compact && <div className="truncate text-xs text-muted-foreground" title={h.hw_os_caption ?? ""}>{h.hw_os_caption ?? osLabel(h.os)}</div>}
+                  <div><PeripheralCell host={h} /></div>
                 </>
               )}
             </div>
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function GpuCell({ host }: { host: Host }) {
+  const names = (host.hw_components?.gpus ?? []).map((g) => cleanName(g.name)).filter(Boolean);
+  return (
+    <div className="truncate text-xs text-foreground/80" title={names.join("\n")}>
+      {names.length ? names.join(", ") : <span className="text-muted-foreground">—</span>}
+    </div>
+  );
+}
+
+function MonitorCell({ host }: { host: Host }) {
+  const monitors = host.hw_components?.monitors ?? [];
+  if (!host.hw_components) return <div className="text-xs text-muted-foreground">—</div>;
+  if (!monitors.length) return <div className="text-xs text-rose-600 dark:text-rose-400">нет</div>;
+  const titles = monitors.map(monitorTitle);
+  return (
+    <div className="truncate text-xs text-foreground/80" title={titles.join("\n")}>
+      {titles[0]}
+      {monitors.length > 1 && <span className="text-muted-foreground"> +{monitors.length - 1}</span>}
     </div>
   );
 }

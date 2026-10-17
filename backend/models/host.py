@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
 from services.activation import activation_state
+from services.workplace_devices import pending_devices
 
 
 class HostStatus(str, enum.Enum):
@@ -85,6 +86,12 @@ class Host(Base):
     hw_disks: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # Активация Windows и Office от агента: продукты, CMID, проверка порта KMS (services/activation.py)
     license_activation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Состав рабочего места от агента: плата, BIOS, память, диски, видеокарты, мониторы,
+    # клавиатуры, мыши, USB (services/workplace_devices.py) и подтверждение изменений периферии
+    hw_components: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    hw_device_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Когда в журнале оборудования появилась последняя запись — для фильтра реестра
+    hw_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -96,6 +103,10 @@ class Host(Base):
     @property
     def activation_office(self) -> str | None:
         return activation_state(self.license_activation, "office")
+
+    @property
+    def hw_pending_devices(self) -> list[dict]:
+        return pending_devices(self.hw_device_state)
 
     group: Mapped["HostGroup"] = relationship(back_populates="hosts")
     credential: Mapped["Credential"] = relationship(back_populates="hosts")

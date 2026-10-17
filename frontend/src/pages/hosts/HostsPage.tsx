@@ -35,7 +35,7 @@ import GroupSidebar from "./GroupSidebar";
 import HostTable, { ColumnSet } from "./HostTable";
 import HostDrawer from "./HostDrawer";
 import { AddHostDialog, CredentialDialog, GroupDialog } from "./dialogs";
-import { ACTIVATION_FILTERS, AGENT_FILTERS, ALERT_FILTERS, alertDays, CHECKED_FILTERS, filterHosts, useHostFilters } from "./filters";
+import { ACTIVATION_FILTERS, DEVICE_FILTERS, AGENT_FILTERS, ALERT_FILTERS, alertDays, CHECKED_FILTERS, filterHosts, useHostFilters } from "./filters";
 import { downloadFromApi } from "../../lib/download";
 import { apiError, OS_OPTIONS, osLabel, pcCount, waitingNotice } from "../../lib/format";
 
@@ -242,6 +242,10 @@ export default function HostsPage() {
             <select value={filters.activation} onChange={(e) => setFilter("activation", e.target.value)} className="input-base w-auto py-2" aria-label="Активация">
               <option value="">Активация</option>
               {ACTIVATION_FILTERS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            <select value={filters.devices} onChange={(e) => setFilter("devices", e.target.value)} className="input-base w-auto py-2" aria-label="Оборудование">
+              <option value="">Оборудование</option>
+              {DEVICE_FILTERS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
             {(activeCount > 0 || filters.group) && (
               <button className="btn-ghost btn-sm" onClick={reset}>

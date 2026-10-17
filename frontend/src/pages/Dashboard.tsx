@@ -2,9 +2,9 @@ import { ReactNode, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ArrowUpCircle, BellRing, ChevronRight, Clock, KeyRound, PlugZap, ServerOff, XCircle } from "lucide-react";
+import { ArrowUpCircle, BellRing, ChevronRight, Clock, KeyRound, Keyboard, PlugZap, ServerOff, XCircle } from "lucide-react";
 import { apiClient } from "../api/client";
-import { useAlertSummary, useFleet, useTasks } from "../api/queries";
+import { useAlertSummary, useFleet, useHardwareEvents, useTasks } from "../api/queries";
 import { useTheme } from "../context/ThemeContext";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
@@ -12,6 +12,8 @@ import PageHeader from "../components/ui/PageHeader";
 import { useOpenTask } from "../components/TaskPanel";
 import { formatDateTime, pcCount, plural, STATUS_LABELS, taskTitle } from "../lib/format";
 import { kmsUnreachable, notActivated } from "../lib/activation";
+import { presence } from "../lib/devices";
+import { EventList } from "../components/Workplace";
 
 const DAY = 86_400_000;
 
@@ -24,6 +26,7 @@ export default function Dashboard() {
   const recent = useTasks({ limit: 50 }, 10_000);
   // Счётчик считает сервер: раньше бралось 50 последних алертов, и цифра упиралась в 50
   const alerts = useAlertSummary(7);
+  const hardwareEvents = useHardwareEvents({ days: 7, limit: 8 });
 
   const stats = useMemo(() => {
     const now = Date.now();
@@ -36,6 +39,8 @@ export default function Dashboard() {
       windowsInactive: hosts.filter((h) => notActivated(h.activation_windows)).length,
       officeInactive: hosts.filter((h) => notActivated(h.activation_office)).length,
       kmsUnreachable: hosts.filter(kmsUnreachable).length,
+      // Только включённые: у выключенного ПК состав — на момент выключения
+      noInput: hosts.filter((h) => h.status === "online" && (presence(h, "keyboard") === "missing" || presence(h, "mouse") === "missing")).length,
     };
   }, [hosts]);
 
@@ -54,12 +59,13 @@ export default function Dashboard() {
 
   const attention: { show: boolean; icon: ReactNode; text: string; to: string; tone: string }[] = [
     { show: failed24h > 0, icon: <XCircle className="h-4 w-4" />, text: `${plural(failed24h, "задача завершилась", "задачи завершились", "задач завершились")} ошибкой за сутки`, to: "/tasks?status=failed", tone: "text-rose-600 dark:text-rose-400" },
+    { show: stats.noInput > 0, icon: <Keyboard className="h-4 w-4" />, text: `Нет клавиатуры или мыши на ${pcCount(stats.noInput)} в сети`, to: "/hosts?devices=noinput&status=online", tone: "text-rose-600 dark:text-rose-400" },
     { show: stats.windowsInactive > 0, icon: <KeyRound className="h-4 w-4" />, text: `Windows не активирован на ${pcCount(stats.windowsInactive)}`, to: "/hosts?activation=windows", tone: "text-rose-600 dark:text-rose-400" },
     { show: stats.officeInactive > 0, icon: <KeyRound className="h-4 w-4" />, text: `Office не активирован на ${pcCount(stats.officeInactive)}`, to: "/hosts?activation=office", tone: "text-amber-600 dark:text-amber-400" },
     { show: stats.kmsUnreachable > 0, icon: <ServerOff className="h-4 w-4" />, text: `KMS недоступен с ${pcCount(stats.kmsUnreachable)}: активация не пройдёт`, to: "/hosts?activation=kms", tone: "text-rose-600 dark:text-rose-400" },
     { show: outdated > 0, icon: <ArrowUpCircle className="h-4 w-4" />, text: `Устаревший агент на ${pcCount(outdated)} (актуальная ${agentVersions?.available_version ?? "—"})`, to: "/hosts?agent=outdated", tone: "text-amber-600 dark:text-amber-400" },
     { show: stats.stale > 0, icon: <Clock className="h-4 w-4" />, text: `${pcCount(stats.stale)} не проверялись больше 7 дней`, to: "/hosts?checked=older", tone: "text-amber-600 dark:text-amber-400" },
-    { show: alerts7d > 0, icon: <BellRing className="h-4 w-4" />, text: `${plural(alerts7d, "алерт", "алерта", "алертов")} от агентов за неделю на ${pcCount(alertHosts)} (смена оборудования)`, to: "/hosts?alerts=7", tone: "text-amber-600 dark:text-amber-400" },
+    { show: alerts7d > 0, icon: <BellRing className="h-4 w-4" />, text: `${plural(alerts7d, "алерт", "алерта", "алертов")} от агентов за неделю на ${pcCount(alertHosts)} (оборудование)`, to: "/hosts?alerts=7", tone: "text-amber-600 dark:text-amber-400" },
     { show: stats.withoutAgent > 0, icon: <PlugZap className="h-4 w-4" />, text: `${pcCount(stats.withoutAgent)} без агента`, to: "/hosts?agent=without", tone: "text-muted-foreground" },
   ];
   const attentionItems = attention.filter((a) => a.show);
@@ -125,6 +131,14 @@ export default function Dashboard() {
           </ul>
         </Card>
       </div>
+
+      <Card title="Изменения оборудования за неделю" action={<Link to="/hosts?devices=changed7" className="text-xs text-blue-600 hover:underline dark:text-blue-400">Все ПК с изменениями</Link>}>
+        {hardwareEvents.data?.length ? (
+          <EventList events={hardwareEvents.data} withHost />
+        ) : (
+          <p className="py-6 text-center text-sm text-subtle">{hardwareEvents.isLoading ? "Загрузка…" : "Изменений не было"}</p>
+        )}
+      </Card>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Online за последние 24 часа">

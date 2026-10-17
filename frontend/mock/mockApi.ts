@@ -6,7 +6,7 @@ import type { Plugin } from "vite";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { nextRuns } from "../src/lib/cron";
 import { productState } from "../src/lib/activation";
-import type { ActivationState, LicenseActivation, LicenseProduct } from "../src/api/types";
+import type { ActivationState, HardwareEvent, HwComponents, LicenseActivation, LicenseProduct, PendingDevice } from "../src/api/types";
 
 // ---------- детерминированный генератор ----------
 let seed = 20261010;
@@ -38,6 +38,7 @@ interface Host {
   hw_processor: string | null; hw_total_memory_bytes: number | null; hw_mac_address: string | null; created_at: string; updated_at: string;
   hw_network_adapters?: any[] | null; hw_disks?: any[] | null;
   license_activation?: LicenseActivation | null; activation_windows?: ActivationState | null; activation_office?: ActivationState | null;
+  hw_components?: HwComponents | null; hw_pending_devices?: PendingDevice[]; hw_changed_at?: string | null;
 }
 interface Credential { id: string; name: string; type: string; login: string | null; created_at: string; is_agent_managed: boolean }
 interface Software { id: string; host_id: string; name: string; version: string | null; install_method: string; status: string; detected_at: string }
@@ -142,6 +143,38 @@ function makeActivation(kmsBlocked: boolean): Pick<Host, "license_activation" | 
   return { license_activation: activation, activation_windows: worst("windows"), activation_office: worst("office") };
 }
 
+// Состав рабочего места и журнал оборудования — с агента 2026.10.17
+const hardwareEvents: HardwareEvent[] = [];
+const KEYBOARD = { kind: "keyboard" as const, name: "USB Keyboard", vid: "1A2C", pid: "2124", serial: null, device_class: null };
+const MOUSE = { kind: "mouse" as const, name: "Usb Mouse", vid: "1C4F", pid: "0034", serial: null, device_class: null };
+
+function makeWorkplace(host: Host) {
+  const aio = host.hw_model?.includes("AF82") || chance(0.15);
+  const noKeyboard = chance(0.02);
+  const noMouse = chance(0.03);
+  const components: HwComponents = {
+    baseboard: { manufacturer: "Micro-Star International Co., Ltd.", product: aio ? "MS-AF82" : "PRO B760M-A DDR4 II (MS-7D99)", serial_number: aio ? `AF82110_M81E${Math.floor(rnd() * 1e6)}` : null },
+    bios_version: pick(["1.F1", "1.F0", "8.20"]),
+    memory_modules: Array.from({ length: pick([1, 2]) }, (_, i) => ({ slot: `Controller${i}-ChannelA-DIMM0`, manufacturer: pick(["Samsung", "Kingston", "0x0080"]), part_number: pick(["M471A1K43EB1-CWE", "KF432C16BB/8", null]), serial_number: Math.floor(rnd() * 0xffffffff).toString(16).toUpperCase(), capacity_bytes: 8 * 1024 ** 3, speed_mhz: 3200 })),
+    physical_disks: [{ model: pick(["AirDisk 512GB SSD", "WD PC SN560 SDDPNQE-512G-1032"]), serial_number: `E823_${Math.floor(rnd() * 1e8)}`, bus_type: "NVMe", size_bytes: 512105932800 }],
+    gpus: [{ name: aio ? "Intel(R) Iris(R) Xe Graphics" : chance(0.2) ? "NVIDIA GeForce RTX 3060" : "Intel(R) UHD Graphics 770", driver_version: "32.0.101.7088", pnp_id: "PCI\\VEN_8086&DEV_4680" }],
+    monitors: chance(0.04) ? [] : [aio ? { manufacturer: "MSI", model: "Modern AM272", serial_number: null, product_code: "AF82", year: 2021, connection: 2147483648 } : { manufacturer: "AUS", model: "VA27UQSB", serial_number: `S2LMTF${Math.floor(rnd() * 1e6)}`, product_code: "27C7", year: 2023, connection: pick([5, 10]) }],
+    input_devices: [...(noKeyboard ? [] : [KEYBOARD]), ...(noMouse ? [] : [MOUSE])],
+    usb_devices: [...(chance(0.3) ? [{ kind: "usb" as const, name: "Logitech USB Headset", vid: "046D", pid: "0A45", serial: null, device_class: "USB" }] : []), { kind: "usb" as const, name: "MYSTIC LIGHT", vid: "1462", pid: "7D99", serial: "7D9924101807", device_class: "HIDClass" }],
+  };
+  host.hw_components = components;
+  host.hw_pending_devices = host.status === "online" && chance(0.03) ? [{ category: "mouse", item: MOUSE, missing: true, since: minutesAgo(Math.floor(rnd() * 25)) }] : [];
+  const log = (minutes: number, category: HardwareEvent["category"], action: HardwareEvent["action"], summary: string) => {
+    hardwareEvents.push({ id: uuid(), host_id: host.id, hostname: host.hostname, category, action, summary, details: null, created_at: minutesAgo(minutes) });
+    host.hw_changed_at = host.hw_changed_at && host.hw_changed_at > minutesAgo(minutes) ? host.hw_changed_at : minutesAgo(minutes);
+  };
+  if (noMouse) log(Math.floor(rnd() * 60 * 24 * 5), "mouse", "removed", "Пропала мышь: Usb Mouse (1C4F:0034)");
+  if (noKeyboard) log(Math.floor(rnd() * 60 * 24 * 5), "keyboard", "removed", "Пропала клавиатура: USB Keyboard (1A2C:2124)");
+  if (chance(0.03)) log(Math.floor(rnd() * 60 * 24 * 20), "memory", "removed", "Пропал модуль памяти: Samsung M471A1K43EB1-CWE 8 ГБ, слот Controller1-ChannelA-DIMM0 (с/н 424AB2F7)");
+  if (chance(0.05)) log(Math.floor(rnd() * 60 * 24 * 20), "bios", "changed", "BIOS: 1.F0 → 1.F1");
+  if (chance(0.04)) log(Math.floor(rnd() * 60 * 24 * 6), "usb", "added", "Появилось USB-устройство: FHD Camera (5986:213A) (с/н 01.00.00)");
+}
+
 function makeHost(hostname: string, groupId: string | null): Host {
   ipCounter += 1;
   const hw = pick(HW);
@@ -180,6 +213,7 @@ function makeHost(hostname: string, groupId: string | null): Host {
     if (chance(0.3)) host.hw_disks.push({ name: "D:", label: "Data", file_system: "NTFS", size_bytes: 1863 * 1024 ** 3, free_bytes: Math.round(1863 * 1024 ** 3 * rnd()) });
     // Активация — с агента 2026.10.17; с подсетей SU5 и SU7 порт KMS закрыт, как на проде
     if (chance(0.9)) Object.assign(host, makeActivation(hostname.startsWith("SU5") || hostname.startsWith("SU7")));
+    if (chance(0.92)) makeWorkplace(host);
   }
   if (hasAgent) {
     const cred: Credential = { id: uuid(), name: `Agent SSH — ${hostname}`, type: "ssh_key", login: "fleetagent", created_at: created, is_agent_managed: true };
@@ -399,6 +433,13 @@ route("PATCH", "/users/{id}/role", (ctx, p) => { admin(ctx); const u = find(user
 // hosts
 route("GET", "/hosts", () => hosts);
 route("GET", "/hosts/groups", () => groups);
+route("GET", "/hosts/hardware-events", ({ query }) => {
+  const since = Date.now() - Number(query.get("days") ?? 30) * 86400_000;
+  return hardwareEvents
+    .filter((e) => (!query.get("host_id") || e.host_id === query.get("host_id")) && new Date(e.created_at).getTime() >= since)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, Number(query.get("limit") ?? 200));
+});
 route("GET", "/hosts/inventory", () => hosts.map((h) => `${h.hostname} ansible_host=${h.ip_address}`).join("\n"));
 route("POST", "/hosts/groups", (ctx) => { editor(ctx); return addGroup(ctx.body.name, ctx.body.parent_id ?? null, false, ctx.body.description ?? null); });
 route("PATCH", "/hosts/groups/{id}", (ctx, p) => {

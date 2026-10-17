@@ -1,9 +1,10 @@
 import csv
 import io
 import uuid
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import PlainTextResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 from config import settings
 from database import get_db
 from dependencies import get_current_user, require_roles
+from models.agent import HardwareEvent
 from models.credential import Credential
 from models.host import Host, HostGroup, HostOS
 from models.task import TaskRun, TaskStatus, TaskType
@@ -30,6 +32,7 @@ from schemas.host import (
     CsvImportResult,
     HostWakeRequest,
 )
+from schemas.agent import HardwareEventOut
 from schemas.task import TaskRunOut
 from services.activation import STATE_LABELS
 from services.audit import record_audit
@@ -128,6 +131,27 @@ def wake_hosts(
     run_host_wake.delay(str(task.id))
     record_audit(db, user.id, "host.wake", f"hosts={len(hosts)}", request)
     return task
+
+
+@router.get("/hardware-events", response_model=list[HardwareEventOut])
+def list_hardware_events(
+    host_id: uuid.UUID | None = None,
+    days: int = Query(default=30, ge=1, le=3650),
+    limit: int = Query(default=200, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Журнал изменений оборудования, новые сверху: одного ПК или всего парка."""
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    query = (
+        select(HardwareEvent, Host.hostname)
+        .join(Host, Host.id == HardwareEvent.host_id)
+        .where(HardwareEvent.created_at >= since)
+    )
+    if host_id:
+        query = query.where(HardwareEvent.host_id == host_id)
+    rows = db.execute(query.order_by(HardwareEvent.created_at.desc()).limit(limit)).all()
+    return [HardwareEventOut.model_validate(event).model_copy(update={"hostname": hostname}) for event, hostname in rows]
 
 
 @router.get("/inventory", response_class=PlainTextResponse)

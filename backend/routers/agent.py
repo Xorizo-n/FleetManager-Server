@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from config import settings
 from dependencies import get_current_user, require_roles
-from models.agent import AgentAlert, AgentEnrollmentToken
+from models.agent import AgentAlert, AgentEnrollmentToken, HardwareEvent
 from models.credential import Credential, CredentialType
 from models.host import Host, HostStatus
 from models.software import InstallMethod, SoftwareItem, SoftwareStatus
@@ -51,6 +51,7 @@ from services.agent_version import (
 )
 from services.audit import record_audit
 from services.hardware_change import hardware_changes
+from services.workplace_devices import DeviceChange, apply_components
 from services.host_grouping import apply_auto_group, cleanup_auto_groups
 from services.waiting_tasks import create_task_runs, enqueue, release_waiting_tasks
 from services.wake_on_lan import agent_lan_address, normalize_mac, primary_adapter
@@ -58,6 +59,7 @@ from services.crypto import decrypt_secret, encrypt_secret
 from services.installer_builder import agent_dist_ready, build_installer_exe, safe_filename
 
 HARDWARE_CHANGED = "hardware_changed"
+DEVICE_MISSING = "device_missing"
 
 logger = logging.getLogger(__name__)
 
@@ -306,6 +308,30 @@ def register_agent(payload: AgentRegisterRequest, request: Request, db: Session 
     )
 
 
+def _record_hardware_changes(db: Session, host: Host, changes: list[str], device_changes: list[DeviceChange], fingerprint: str | None, now: datetime) -> None:
+    """Журнал оборудования и алерты: смена железа — одним алертом hardware_changed,
+    пропажа клавиатуры, мыши или монитора — алертом device_missing."""
+    for summary in changes:
+        db.add(HardwareEvent(host_id=host.id, category="system", action="changed", summary=summary, created_at=now))
+    for change in device_changes:
+        details = {"item": change.item, "previous": change.previous, **change.details}
+        db.add(HardwareEvent(host_id=host.id, category=change.category, action=change.action, summary=change.summary, details=details, created_at=now))
+    if changes or device_changes:
+        host.hw_changed_at = now
+    hardware = changes + [c.summary for c in device_changes if c.alert_type == HARDWARE_CHANGED]
+    if hardware:
+        db.add(AgentAlert(
+            host_id=host.id,
+            alert_type=HARDWARE_CHANGED,
+            message="; ".join(hardware),
+            previous_fingerprint=host.hardware_fingerprint,
+            current_fingerprint=fingerprint,
+        ))
+    missing = [c.summary for c in device_changes if c.alert_type == DEVICE_MISSING]
+    if missing:
+        db.add(AgentAlert(host_id=host.id, alert_type=DEVICE_MISSING, message="; ".join(missing)))
+
+
 @router.post("/heartbeat")
 def heartbeat(
     payload: AgentHeartbeatRequest,
@@ -339,14 +365,12 @@ def heartbeat(
     )
     # Смену железа сервер определяет сам, сравнивая с прошлым отчётом той же версии агента
     changes = hardware_changes(host, payload.hardware, reported_version)
-    if changes:
-        db.add(AgentAlert(
-            host_id=host.id,
-            alert_type=HARDWARE_CHANGED,
-            message="; ".join(changes),
-            previous_fingerprint=host.hardware_fingerprint,
-            current_fingerprint=payload.hardware.fingerprint,
-        ))
+    components = payload.hardware.components
+    device_changes = apply_components(
+        host, components.model_dump(mode="json") if components else None, now,
+        same_agent_version=bool(reported_version) and host.hw_agent_version == reported_version,
+    )
+    _record_hardware_changes(db, host, changes, device_changes, payload.hardware.fingerprint, now)
     host.hw_agent_version = reported_version
     host.hardware_fingerprint = payload.hardware.fingerprint
     host.hw_manufacturer = payload.hardware.manufacturer
