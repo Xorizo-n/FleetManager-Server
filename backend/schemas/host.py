@@ -177,6 +177,10 @@ class HostOut(BaseModel):
     hw_mac_address: str | None = None
     hw_network_adapters: list | None = None
     hw_disks: list | None = None
+    # Снимок активации от агента и сводка по нему: licensed / expiring / grace / unlicensed, None — нет данных
+    license_activation: dict | None = None
+    activation_windows: str | None = None
+    activation_office: str | None = None
     created_at: datetime
     updated_at: datetime
 

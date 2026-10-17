@@ -5,6 +5,8 @@
 import type { Plugin } from "vite";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { nextRuns } from "../src/lib/cron";
+import { productState } from "../src/lib/activation";
+import type { ActivationState, LicenseActivation, LicenseProduct } from "../src/api/types";
 
 // ---------- детерминированный генератор ----------
 let seed = 20261010;
@@ -35,6 +37,7 @@ interface Host {
   hw_manufacturer: string | null; hw_model: string | null; hw_serial_number: string | null; hw_os_caption: string | null;
   hw_processor: string | null; hw_total_memory_bytes: number | null; hw_mac_address: string | null; created_at: string; updated_at: string;
   hw_network_adapters?: any[] | null; hw_disks?: any[] | null;
+  license_activation?: LicenseActivation | null; activation_windows?: ActivationState | null; activation_office?: ActivationState | null;
 }
 interface Credential { id: string; name: string; type: string; login: string | null; created_at: string; is_agent_managed: boolean }
 interface Software { id: string; host_id: string; name: string; version: string | null; install_method: string; status: string; detected_at: string }
@@ -102,6 +105,43 @@ const SOFTWARE_POOL: [string, string[], number][] = [
 
 const BUILDINGS: [string, number[]][] = [["MR32", [0, 1, 2, 3, 4, 5]], ["SU5", [1, 2, 3]], ["GUK", [1, 2, 3, 4]], ["RTF", [1, 2, 3]]];
 let ipCounter = 0;
+const IMAGE_CMID = "36185d39-f35d-4efb-8610-c2aac5b98cb4";
+const KMS = "sk5-cod-kms3.at.urfu.ru";
+
+function makeActivation(kmsBlocked: boolean): Pick<Host, "license_activation" | "activation_windows" | "activation_office"> {
+  const failed = { at: minutesAgo(Math.floor(rnd() * 120)), kms: `${KMS}:1688`, result: "0xC0020017" };
+  const renewed = { at: minutesAgo(60 * 24 * Math.floor(rnd() * 7)), kms: `${KMS}:1688`, result: "0x00000000" };
+  const kmsProduct = (kind: "windows" | "office", name: string, key: string): LicenseProduct => ({
+    kind, id: uuid(), name, description: kind === "windows" ? "Windows(R) Operating System, VOLUME_KMSCLIENT channel" : "Office 19, VOLUME_KMSCLIENT channel",
+    channel: "Volume:GVLK", partial_product_key: key, license_status: 1, status_reason: 0, grace_minutes: 150 * 1440 + Math.floor(rnd() * 30 * 1440),
+    kms_machine: null, kms_port: 1688, discovered_kms_machine: KMS, discovered_kms_port: 1688, last_request: renewed,
+  });
+  const windows = kmsProduct("windows", "Windows(R), ProfessionalEducation edition", "J447Y");
+  const office = kmsProduct("office", "Office 19, Office19ProPlus2019VL_KMS_Client_AE edition", "6MWKP");
+  const products: LicenseProduct[] = [windows];
+  if (chance(0.85)) products.push(office);
+  if (kmsBlocked) {
+    Object.assign(windows, { license_status: 5, status_reason: 0xc004f00f, grace_minutes: 0, last_request: { ...failed, at: minutesAgo(Math.floor(rnd() * 1440)) } });
+    Object.assign(office, { license_status: 2, status_reason: 0x4004f00c, grace_minutes: 38000 + Math.floor(rnd() * 900), discovered_kms_machine: null, last_request: failed });
+    if (chance(0.5)) products.push({ ...office, id: uuid(), name: "Office 19, Office19ProjectPro2019R_Grace edition", description: "Office 19, RETAIL(Grace) channel", channel: "Retail", partial_product_key: "B4JJJ", license_status: 5, status_reason: 0xc004f009, grace_minutes: 0, last_request: null });
+  } else if (chance(0.04)) {
+    // Продление давно не проходит — активация скоро истечёт
+    Object.assign(windows, { grace_minutes: 12 * 1440, last_request: { ...failed, result: "0x8007274C" } });
+  }
+  const activation: LicenseActivation = {
+    collected_at: minutesAgo(Math.floor(rnd() * 60)),
+    client_machine_id: kmsBlocked || chance(0.5) ? IMAGE_CMID : uuid(),
+    kms_probe: { host: KMS, port: 1688, reachable: !kmsBlocked, error: kmsBlocked ? "TimedOut" : null },
+    products,
+  };
+  const worst = (kind: string) => {
+    const order: ActivationState[] = ["licensed", "expiring", "grace", "unlicensed"];
+    const states = products.filter((p) => p.kind === kind).map(productState);
+    return states.length ? order[Math.max(...states.map((x) => order.indexOf(x)))] : null;
+  };
+  return { license_activation: activation, activation_windows: worst("windows"), activation_office: worst("office") };
+}
+
 function makeHost(hostname: string, groupId: string | null): Host {
   ipCounter += 1;
   const hw = pick(HW);
@@ -138,6 +178,8 @@ function makeHost(hostname: string, groupId: string | null): Host {
     const used = Math.min(0.99, 0.35 + rnd() * (chance(0.15) ? 0.64 : 0.4));
     host.hw_disks = [{ name: "C:", label: null, file_system: "NTFS", size_bytes: size, free_bytes: Math.round(size * (1 - used)) }];
     if (chance(0.3)) host.hw_disks.push({ name: "D:", label: "Data", file_system: "NTFS", size_bytes: 1863 * 1024 ** 3, free_bytes: Math.round(1863 * 1024 ** 3 * rnd()) });
+    // Активация — с агента 2026.10.17; с подсетей SU5 и SU7 порт KMS закрыт, как на проде
+    if (chance(0.9)) Object.assign(host, makeActivation(hostname.startsWith("SU5") || hostname.startsWith("SU7")));
   }
   if (hasAgent) {
     const cred: Credential = { id: uuid(), name: `Agent SSH — ${hostname}`, type: "ssh_key", login: "fleetagent", created_at: created, is_agent_managed: true };

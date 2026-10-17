@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
+from services.activation import activation_state
 
 
 class HostStatus(str, enum.Enum):
@@ -82,9 +83,19 @@ class Host(Base):
     hw_mac_address: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # Локальные диски от агента: имя («C:»), метка, ФС, размер и свободное место в байтах
     hw_disks: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Активация Windows и Office от агента: продукты, CMID, проверка порта KMS (services/activation.py)
+    license_activation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    @property
+    def activation_windows(self) -> str | None:
+        return activation_state(self.license_activation, "windows")
+
+    @property
+    def activation_office(self) -> str | None:
+        return activation_state(self.license_activation, "office")
 
     group: Mapped["HostGroup"] = relationship(back_populates="hosts")
     credential: Mapped["Credential"] = relationship(back_populates="hosts")

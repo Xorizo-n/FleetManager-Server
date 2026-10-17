@@ -2,7 +2,7 @@ import { ReactNode, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ArrowUpCircle, BellRing, ChevronRight, Clock, PlugZap, XCircle } from "lucide-react";
+import { ArrowUpCircle, BellRing, ChevronRight, Clock, KeyRound, PlugZap, ServerOff, XCircle } from "lucide-react";
 import { apiClient } from "../api/client";
 import { useAlertSummary, useFleet, useTasks } from "../api/queries";
 import { useTheme } from "../context/ThemeContext";
@@ -11,6 +11,7 @@ import Badge from "../components/ui/Badge";
 import PageHeader from "../components/ui/PageHeader";
 import { useOpenTask } from "../components/TaskPanel";
 import { formatDateTime, pcCount, plural, STATUS_LABELS, taskTitle } from "../lib/format";
+import { kmsUnreachable, notActivated } from "../lib/activation";
 
 const DAY = 86_400_000;
 
@@ -32,6 +33,9 @@ export default function Dashboard() {
       offline: hosts.filter((h) => h.status === "offline").length,
       withoutAgent: hosts.filter((h) => !h.has_agent).length,
       stale: hosts.filter((h) => !h.last_checked_at || now - new Date(h.last_checked_at).getTime() > 7 * DAY).length,
+      windowsInactive: hosts.filter((h) => notActivated(h.activation_windows)).length,
+      officeInactive: hosts.filter((h) => notActivated(h.activation_office)).length,
+      kmsUnreachable: hosts.filter(kmsUnreachable).length,
     };
   }, [hosts]);
 
@@ -50,6 +54,9 @@ export default function Dashboard() {
 
   const attention: { show: boolean; icon: ReactNode; text: string; to: string; tone: string }[] = [
     { show: failed24h > 0, icon: <XCircle className="h-4 w-4" />, text: `${plural(failed24h, "задача завершилась", "задачи завершились", "задач завершились")} ошибкой за сутки`, to: "/tasks?status=failed", tone: "text-rose-600 dark:text-rose-400" },
+    { show: stats.windowsInactive > 0, icon: <KeyRound className="h-4 w-4" />, text: `Windows не активирован на ${pcCount(stats.windowsInactive)}`, to: "/hosts?activation=windows", tone: "text-rose-600 dark:text-rose-400" },
+    { show: stats.officeInactive > 0, icon: <KeyRound className="h-4 w-4" />, text: `Office не активирован на ${pcCount(stats.officeInactive)}`, to: "/hosts?activation=office", tone: "text-amber-600 dark:text-amber-400" },
+    { show: stats.kmsUnreachable > 0, icon: <ServerOff className="h-4 w-4" />, text: `KMS недоступен с ${pcCount(stats.kmsUnreachable)}: активация не пройдёт`, to: "/hosts?activation=kms", tone: "text-rose-600 dark:text-rose-400" },
     { show: outdated > 0, icon: <ArrowUpCircle className="h-4 w-4" />, text: `Устаревший агент на ${pcCount(outdated)} (актуальная ${agentVersions?.available_version ?? "—"})`, to: "/hosts?agent=outdated", tone: "text-amber-600 dark:text-amber-400" },
     { show: stats.stale > 0, icon: <Clock className="h-4 w-4" />, text: `${pcCount(stats.stale)} не проверялись больше 7 дней`, to: "/hosts?checked=older", tone: "text-amber-600 dark:text-amber-400" },
     { show: alerts7d > 0, icon: <BellRing className="h-4 w-4" />, text: `${plural(alerts7d, "алерт", "алерта", "алертов")} от агентов за неделю на ${pcCount(alertHosts)} (смена оборудования)`, to: "/hosts?alerts=7", tone: "text-amber-600 dark:text-amber-400" },

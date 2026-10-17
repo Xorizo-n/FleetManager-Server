@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { Host, VersionStatus } from "../../api/types";
 import { GroupTree, NO_GROUP } from "../../lib/groupTree";
+import { kmsUnreachable, notActivated } from "../../lib/activation";
 
 // Фильтры реестра хостов живут в адресной строке: ссылкой можно поделиться,
 // а счётчики дашборда ведут сразу на отфильтрованный список.
@@ -14,9 +15,10 @@ export interface HostFilters {
   os: string;
   checked: string;
   alerts: string;
+  activation: string;
 }
 
-const FILTER_KEYS: (keyof HostFilters)[] = ["q", "group", "status", "agent", "os", "checked", "alerts"];
+const FILTER_KEYS: (keyof HostFilters)[] = ["q", "group", "status", "agent", "os", "checked", "alerts", "activation"];
 
 export const AGENT_FILTERS: { value: string; label: string }[] = [
   { value: "with", label: "С агентом" },
@@ -38,6 +40,24 @@ export const ALERT_FILTERS: { value: string; label: string; days: number }[] = [
   { value: "7", label: "Алерты за 7 дней", days: 7 },
   { value: "30", label: "Алерты за 30 дней", days: 30 },
   { value: "all", label: "Алерты за всё время", days: 3650 },
+];
+
+export const ACTIVATION_FILTERS: { value: string; label: string; match: (h: Host) => boolean }[] = [
+  {
+    value: "problem",
+    label: "Есть проблемы",
+    match: (h) => [h.activation_windows, h.activation_office].some((s) => s && s !== "licensed") || kmsUnreachable(h),
+  },
+  { value: "windows", label: "Windows не активирован", match: (h) => notActivated(h.activation_windows) },
+  { value: "office", label: "Office не активирован", match: (h) => notActivated(h.activation_office) },
+  { value: "expiring", label: "Активация истекает", match: (h) => h.activation_windows === "expiring" || h.activation_office === "expiring" },
+  { value: "kms", label: "KMS недоступен", match: kmsUnreachable },
+  {
+    value: "ok",
+    label: "Всё активировано",
+    match: (h) => !!h.license_activation && [h.activation_windows, h.activation_office].every((s) => !s || s === "licensed"),
+  },
+  { value: "unknown", label: "Нет данных", match: (h) => !h.license_activation },
 ];
 
 export const alertDays = (value: string) => ALERT_FILTERS.find((f) => f.value === value)?.days ?? 7;
@@ -92,6 +112,7 @@ export function filterHosts(
     if (filters.status && h.status !== filters.status) return false;
     if (filters.alerts && !alertCounts.get(h.id)) return false;
     if (filters.os && h.os !== filters.os) return false;
+    if (filters.activation && !ACTIVATION_FILTERS.find((f) => f.value === filters.activation)?.match(h)) return false;
     if (filters.agent) {
       if (filters.agent === "with" && !h.has_agent) return false;
       if (filters.agent === "without" && h.has_agent) return false;
