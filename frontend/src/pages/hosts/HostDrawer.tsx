@@ -20,6 +20,8 @@ import { isSystemSoftware } from "../../lib/software";
 import { downloadRdpFile, rdpAddress } from "../../lib/rdp";
 import { formatLinkSpeed, isSlowWiredLink, primaryAdapter } from "../../lib/hardware";
 import { DiskList } from "../../components/DiskUsage";
+import { ActivationSection } from "../../components/Activation";
+import { sameCmidCount } from "../../lib/activation";
 import { effectiveCredential, EffectiveCredential, isSshAssignable } from "../../lib/credentials";
 
 type Tab = "overview" | "software" | "tasks" | "alerts";
@@ -180,8 +182,9 @@ function Overview({ host }: { host: Host }) {
   const canEdit = useCanEdit();
   const queryClient = useQueryClient();
   const toast = useToast();
-  const { tree, versionOf, agentVersions } = useFleet();
+  const { hosts, tree, versionOf, agentVersions } = useFleet();
   const credentials = useCredentials();
+  const sameCmid = useMemo(() => sameCmidCount(host.license_activation, hosts), [host.license_activation, hosts]);
   const runAccessChange = useAccessChange();
   const [form, setForm] = useState({ group_id: host.group_id ?? "", credential_id: host.credential_id ?? "", comment: host.comment ?? "" });
   const [saving, setSaving] = useState(false);
@@ -272,6 +275,13 @@ function Overview({ host }: { host: Host }) {
         <section>
           <h3 className="mb-2 text-sm font-semibold text-foreground">Диски</h3>
           <DiskList disks={host.hw_disks} />
+        </section>
+      )}
+
+      {(host.has_agent || host.license_activation) && (
+        <section>
+          <h3 className="mb-2 text-sm font-semibold text-foreground">Активация Windows и Office</h3>
+          <ActivationSection host={host} sameCmid={sameCmid} />
         </section>
       )}
 

@@ -31,6 +31,7 @@ from schemas.host import (
     HostWakeRequest,
 )
 from schemas.task import TaskRunOut
+from services.activation import STATE_LABELS
 from services.audit import record_audit
 from services.inventory_generator import build_inventory_ini
 from services.host_target import normalize_host_address, resolve_host_target
@@ -72,7 +73,7 @@ def list_hosts(
 # Реестр ПК для Excel: «;» и UTF-8 с BOM, как CSV-отчёт AutoDomain
 EXPORT_COLUMNS = (
     "Имя", "IP", "MAC", "Группа", "Статус", "Последний heartbeat", "Версия агента", "ОС",
-    "Производитель", "Модель", "Серийный номер", "Процессор", "ОЗУ, ГБ", "Комментарий",
+    "Производитель", "Модель", "Серийный номер", "Процессор", "ОЗУ, ГБ", "Активация Windows", "Активация Office", "Комментарий",
 )
 
 
@@ -99,7 +100,8 @@ def export_hosts_csv(db: Session = Depends(get_db), _: User = Depends(get_curren
             host.hostname or "", host.ip_address or "", host.hw_mac_address or "", _group_path(host.group),
             host.status.value, host.last_seen_at.astimezone(tz).strftime("%d.%m.%Y %H:%M") if host.last_seen_at else "",
             host.agent_version or "", host.hw_os_caption or "", host.hw_manufacturer or "", host.hw_model or "",
-            host.hw_serial_number or "", host.hw_processor or "", memory, host.comment or "",
+            host.hw_serial_number or "", host.hw_processor or "", memory,
+            STATE_LABELS.get(host.activation_windows, ""), STATE_LABELS.get(host.activation_office, ""), host.comment or "",
         ])
     return Response(
         content="\ufeff" + buf.getvalue(),

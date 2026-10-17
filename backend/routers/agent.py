@@ -358,6 +358,9 @@ def heartbeat(
     # Старые агенты диски не присылают — тогда последние известные сохраняются
     if payload.hardware.disks:
         host.hw_disks = [disk.model_dump() for disk in payload.hardware.disks]
+    # Активацию агент собирает раз в час; без неё (старый агент или сбой сбора) остаётся прежняя
+    if payload.activation is not None:
+        host.license_activation = payload.activation.model_dump(mode="json")
     if payload.ssh_port:
         host.ssh_port = payload.ssh_port
     if payload.ssh_login and host.credential_id:

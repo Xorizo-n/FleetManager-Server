@@ -7,9 +7,11 @@ import Checkbox from "../../components/ui/Checkbox";
 import { formatRam, hostLabel, osLabel, pcCount, relativeTime, VERSION_LABELS } from "../../lib/format";
 import { diskUsedPercent, formatLinkSpeed, fullestDisk, isSlowWiredLink, primaryAdapter } from "../../lib/hardware";
 import { DiskCell } from "../../components/DiskUsage";
+import { ActivationCell } from "../../components/Activation";
+import { activationSeverity } from "../../lib/activation";
 
 export type ColumnSet = "main" | "hardware";
-type SortKey = "name" | "ip" | "status" | "agent" | "checked" | "disk" | "net";
+type SortKey = "name" | "ip" | "status" | "agent" | "checked" | "disk" | "net" | "activation";
 
 interface Props {
   hosts: Host[];
@@ -32,12 +34,12 @@ const collator = new Intl.Collator("ru", { numeric: true });
 
 // Одна сетка колонок на всю таблицу: ширина не «прыгает» между аудиториями
 // В узкой таблице (< wideFrom) часть колонок скрывается, чтобы не было горизонтальной прокрутки:
-// в основных — ОС, в железе — процессор, серийный номер и ОС
+// в основных — ОС и активация, в железе — процессор, серийный номер и ОС
 const GRID: Record<ColumnSet, { wide: string; compact: string; wideFrom: number }> = {
   main: {
-    wide: "2.25rem minmax(11rem,1.4fr) 8.5rem 6.5rem minmax(9rem,1fr) 7rem 7.5rem",
+    wide: "2.25rem minmax(11rem,1.4fr) 8.5rem 6.5rem minmax(9rem,1fr) 7rem 7.5rem 7.5rem",
     compact: "2.25rem minmax(9rem,1.4fr) 7.5rem 6rem minmax(8rem,1fr) 6.5rem",
-    wideFrom: 880,
+    wideFrom: 1000,
   },
   hardware: {
     wide: "2.25rem minmax(11rem,1.2fr) minmax(9rem,1.1fr) minmax(9rem,1.2fr) 4.5rem 5.5rem 6.5rem minmax(7rem,0.9fr) minmax(8rem,1fr)",
@@ -87,6 +89,7 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
       // Сначала проблемные: самые заполненные диски и самые медленные линки
       else if (sort.key === "disk") result = diskPercent(b) - diskPercent(a);
       else if (sort.key === "net") result = linkSpeed(a) - linkSpeed(b);
+      else if (sort.key === "activation") result = activationSeverity(b) - activationSeverity(a);
       if (result === 0) result = collator.compare(hostLabel(a), hostLabel(b));
       return sort.desc ? -result : result;
     };
@@ -161,6 +164,7 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
             {header("status", "Статус")}
             {header("agent", "Агент")}
             {!compact && header(null, "ОС")}
+            {!compact && header("activation", "Активация")}
             {header("checked", "Проверен")}
           </>
         ) : (
@@ -255,6 +259,7 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
                   <div><StatusDot status={h.status} /></div>
                   <div className="min-w-0"><AgentCell host={h} status={versionOf(h)} /></div>
                   {!compact && <div className="truncate text-muted-foreground">{osLabel(h.os)}</div>}
+                  {!compact && <div className="min-w-0"><ActivationCell host={h} /></div>}
                   <div className="truncate text-muted-foreground" title={h.last_checked_at ? new Date(h.last_checked_at).toLocaleString("ru-RU") : undefined}>
                     {relativeTime(h.last_checked_at)}
                   </div>

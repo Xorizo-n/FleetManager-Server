@@ -38,6 +38,11 @@ export interface Host {
   hw_network_adapters?: NetworkAdapter[] | null;
   /** Локальные диски из последнего heartbeat; у агентов до 2026.10.15 нет */
   hw_disks?: HostDisk[] | null;
+  /** Активация Windows и Office от агента (с 2026.10.17), собирается раз в час */
+  license_activation?: LicenseActivation | null;
+  /** Худшее состояние продуктов вида; null — нет данных или продукт не установлен */
+  activation_windows?: ActivationState | null;
+  activation_office?: ActivationState | null;
   created_at: string;
   updated_at: string;
 }
@@ -52,6 +57,40 @@ export interface NetworkAdapter {
   media_type: string | null;
   /** Скорость линка, бит/с; null — нет линка или старый агент */
   link_speed_bps?: number | null;
+}
+
+/** licensed — активирован; expiring — KMS давно не продлевал, до истечения < 30 дней; grace — пробный период; unlicensed — не активирован */
+export type ActivationState = "licensed" | "expiring" | "grace" | "unlicensed";
+
+export interface LicenseActivation {
+  collected_at: string | null;
+  /** CMID: одинаковый у клонов образа без sysprep /generalize */
+  client_machine_id: string | null;
+  /** Открыт ли с ПК порт KMS */
+  kms_probe: { host: string; port: number; reachable: boolean; error: string | null } | null;
+  products: LicenseProduct[];
+}
+
+export interface LicenseProduct {
+  kind: "windows" | "office";
+  id: string | null;
+  name: string | null;
+  description: string | null;
+  /** «Volume:GVLK», «Retail», «MAK»… */
+  channel: string | null;
+  partial_product_key: string | null;
+  /** 0 — нет лицензии, 1 — активирован, 2–4 и 6 — пробный период, 5 — уведомления */
+  license_status: number;
+  /** HRESULT причины (LicenseStatusReason) */
+  status_reason: number | null;
+  /** До конца пробного периода или до истечения KMS-активации, минут */
+  grace_minutes: number | null;
+  kms_machine: string | null;
+  kms_port: number | null;
+  discovered_kms_machine: string | null;
+  discovered_kms_port: number | null;
+  /** Последнее обращение к KMS из журнала; result — HRESULT, null — ответа нет */
+  last_request: { at: string; kms: string | null; result: string | null } | null;
 }
 
 export interface HostDisk {

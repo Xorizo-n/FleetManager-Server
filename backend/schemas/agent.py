@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -128,6 +129,76 @@ class AgentUninstallRequest(BaseModel):
     machine_id: uuid.UUID
 
 
+class AgentKmsRequest(BaseModel):
+    """Последнее обращение продукта к KMS из журнала: когда, куда и с каким HRESULT."""
+
+    at: datetime
+    kms: str | None = Field(default=None, max_length=300)
+    # «0xC0020017»; 0x00000000 — KMS активировал; None — ответа в журнале нет
+    result: str | None = Field(default=None, max_length=16)
+
+    @field_validator("kms", "result", mode="before")
+    @classmethod
+    def _clean(cls, value):
+        return _scrub(value)
+
+
+class AgentLicenseProduct(BaseModel):
+    """Продукт Windows или Office из SoftwareLicensingProduct."""
+
+    kind: Literal["windows", "office"]
+    id: str | None = Field(default=None, max_length=64)
+    name: str | None = Field(default=None, max_length=256)
+    description: str | None = Field(default=None, max_length=256)
+    channel: str | None = Field(default=None, max_length=64)
+    partial_product_key: str | None = Field(default=None, max_length=16)
+    # 0 — нет лицензии, 1 — активирован, 2–4 и 6 — пробный период, 5 — уведомления
+    license_status: int = Field(ge=0, le=255)
+    status_reason: int | None = Field(default=None, ge=0, le=0xFFFFFFFF)
+    # До конца пробного периода или, у KMS, до истечения активации
+    grace_minutes: int | None = Field(default=None, ge=0)
+    kms_machine: str | None = Field(default=None, max_length=300)
+    kms_port: int | None = Field(default=None, ge=1, le=65535)
+    discovered_kms_machine: str | None = Field(default=None, max_length=300)
+    discovered_kms_port: int | None = Field(default=None, ge=1, le=65535)
+    last_request: AgentKmsRequest | None = None
+
+    @field_validator("id", "name", "description", "channel", "partial_product_key", "kms_machine", "discovered_kms_machine", mode="before")
+    @classmethod
+    def _clean(cls, value):
+        return _scrub(value)
+
+
+class AgentKmsProbe(BaseModel):
+    """Открыт ли с ПК порт KMS: TCP-подключение с таймаутом 5 с."""
+
+    host: str = Field(min_length=1, max_length=300)
+    port: int = Field(ge=1, le=65535)
+    reachable: bool
+    # SocketError агента: TimedOut, ConnectionRefused, HostNotFound…
+    error: str | None = Field(default=None, max_length=64)
+
+    @field_validator("host", "error", mode="before")
+    @classmethod
+    def _clean(cls, value):
+        return _scrub(value)
+
+
+class AgentActivation(BaseModel):
+    """С агента 2026.10.17: активация Windows и Office, собирается раз в час."""
+
+    collected_at: datetime | None = None
+    # CMID: у клонов образа без sysprep /generalize одинаковый
+    client_machine_id: str | None = Field(default=None, max_length=64)
+    kms_probe: AgentKmsProbe | None = None
+    products: list[AgentLicenseProduct] = Field(default_factory=list, max_length=32)
+
+    @field_validator("client_machine_id", mode="before")
+    @classmethod
+    def _clean(cls, value):
+        return _scrub(value)
+
+
 class AgentHeartbeatRequest(BaseModel):
     machine_id: uuid.UUID
     hostname: str | None = Field(default=None, max_length=255)
@@ -139,6 +210,8 @@ class AgentHeartbeatRequest(BaseModel):
     agent_version: str | None = Field(default=None, max_length=64)
     hardware: AgentHardware = Field(default_factory=AgentHardware)
     software: list[AgentSoftware] = Field(default_factory=list, max_length=10000)
+    # Старые агенты не присылают; новые — None, если собрать не удалось
+    activation: AgentActivation | None = None
 
     @field_validator("ssh_login", "agent_version", mode="before")
     @classmethod
