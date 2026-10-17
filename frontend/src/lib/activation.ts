@@ -39,6 +39,10 @@ export const notActivated = (state: ActivationState | null | undefined) => state
 
 export const kmsUnreachable = (host: Host) => host.license_activation?.kms_probe?.reachable === false;
 
+/** Любая проблема с активацией: Windows или Office не активирован, активация истекает или KMS недоступен */
+export const hasActivationProblem = (host: Host) =>
+  [host.activation_windows, host.activation_office].some((s) => !!s && s !== "licensed") || kmsUnreachable(host);
+
 /** 38879 мин -> «27 дн.», 300 -> «5 ч» */
 export function formatGrace(minutes: number | null | undefined): string | null {
   if (!minutes || minutes <= 0) return null;

@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { Host, VersionStatus } from "../../api/types";
 import { GroupTree, NO_GROUP } from "../../lib/groupTree";
-import { kmsUnreachable, notActivated } from "../../lib/activation";
+import { hasActivationProblem, kmsUnreachable, notActivated } from "../../lib/activation";
 import { presence } from "../../lib/devices";
 
 // Фильтры реестра хостов живут в адресной строке: ссылкой можно поделиться,
@@ -45,11 +45,7 @@ export const ALERT_FILTERS: { value: string; label: string; days: number }[] = [
 ];
 
 export const ACTIVATION_FILTERS: { value: string; label: string; match: (h: Host) => boolean }[] = [
-  {
-    value: "problem",
-    label: "Есть проблемы",
-    match: (h) => [h.activation_windows, h.activation_office].some((s) => s && s !== "licensed") || kmsUnreachable(h),
-  },
+  { value: "problem", label: "Есть проблемы", match: hasActivationProblem },
   { value: "windows", label: "Windows не активирован", match: (h) => notActivated(h.activation_windows) },
   { value: "office", label: "Office не активирован", match: (h) => notActivated(h.activation_office) },
   { value: "expiring", label: "Активация истекает", match: (h) => h.activation_windows === "expiring" || h.activation_office === "expiring" },
