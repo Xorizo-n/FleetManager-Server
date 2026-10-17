@@ -181,6 +181,10 @@ class HostOut(BaseModel):
     license_activation: dict | None = None
     activation_windows: str | None = None
     activation_office: str | None = None
+    # Состав рабочего места и изменения периферии, ожидающие подтверждения (services/workplace_devices.py)
+    hw_components: dict | None = None
+    hw_pending_devices: list[dict] = []
+    hw_changed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

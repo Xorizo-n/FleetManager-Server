@@ -5,6 +5,7 @@ import type {
   AgentAlert,
   AlertSummary,
   AgentVersionOverview,
+  HardwareEvent,
   Credential,
   Host,
   HostGroup,
@@ -132,6 +133,9 @@ export const useInstallers = () =>
 
 export const useAlertSummary = (days = 7) =>
   useQuery({ queryKey: ["alerts-summary", days], queryFn: () => get<AlertSummary>("/agent/alerts/summary", { days }) });
+
+export const useHardwareEvents = (params: { host_id?: string; days?: number; limit?: number }) =>
+  useQuery({ queryKey: ["hardware-events", params], queryFn: () => get<HardwareEvent[]>("/hosts/hardware-events", params) });
 
 export const useAlerts = (hostId?: string) =>
   useQuery({ queryKey: keys.alerts(hostId), queryFn: () => get<AgentAlert[]>("/agent/alerts", { host_id: hostId, limit: 50 }) });

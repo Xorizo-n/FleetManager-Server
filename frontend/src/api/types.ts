@@ -43,6 +43,12 @@ export interface Host {
   /** Худшее состояние продуктов вида; null — нет данных или продукт не установлен */
   activation_windows?: ActivationState | null;
   activation_office?: ActivationState | null;
+  /** Состав рабочего места от агента (с 2026.10.17): плата, память, диски, видео, мониторы, периферия */
+  hw_components?: HwComponents | null;
+  /** Изменения периферии, ожидающие подтверждения (держатся меньше 30 минут) */
+  hw_pending_devices?: PendingDevice[];
+  /** Последняя запись в журнале оборудования */
+  hw_changed_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -57,6 +63,48 @@ export interface NetworkAdapter {
   media_type: string | null;
   /** Скорость линка, бит/с; null — нет линка или старый агент */
   link_speed_bps?: number | null;
+}
+
+export interface HwComponents {
+  baseboard: { manufacturer: string | null; product: string | null; serial_number: string | null } | null;
+  bios_version: string | null;
+  memory_modules: { slot: string | null; manufacturer: string | null; part_number: string | null; serial_number: string | null; capacity_bytes: number | null; speed_mhz: number | null }[];
+  physical_disks: { model: string | null; serial_number: string | null; bus_type: string | null; size_bytes: number | null }[];
+  gpus: { name: string | null; driver_version: string | null; pnp_id: string | null }[];
+  /** connection — VideoOutputTechnology: 0 VGA, 4 DVI, 5 HDMI, 10 DisplayPort, 2147483648 встроенная панель */
+  monitors: { manufacturer: string | null; model: string | null; serial_number: string | null; product_code: string | null; year: number | null; connection: number | null }[];
+  input_devices: Peripheral[];
+  usb_devices: Peripheral[];
+}
+
+export interface Peripheral {
+  kind: "keyboard" | "mouse" | "usb";
+  name: string | null;
+  vid: string | null;
+  pid: string | null;
+  serial: string | null;
+  device_class: string | null;
+}
+
+export type DeviceCategory = "system" | "baseboard" | "bios" | "memory" | "disk" | "gpu" | "monitor" | "keyboard" | "mouse" | "usb";
+
+export interface PendingDevice {
+  category: DeviceCategory;
+  item: Record<string, unknown>;
+  /** true — устройство пропало, false — появилось новое */
+  missing: boolean;
+  since: string;
+}
+
+export interface HardwareEvent {
+  id: string;
+  host_id: string;
+  hostname: string | null;
+  category: DeviceCategory;
+  action: "added" | "removed" | "changed";
+  summary: string;
+  details: Record<string, unknown> | null;
+  created_at: string;
 }
 
 /** licensed — активирован; expiring — KMS давно не продлевал, до истечения < 30 дней; grace — пробный период; unlicensed — не активирован */

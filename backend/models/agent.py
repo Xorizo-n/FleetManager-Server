@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -23,6 +23,26 @@ class AgentEnrollmentToken(Base):
     @property
     def installer_available(self) -> bool:
         return self.token_encrypted is not None
+
+class HardwareEvent(Base):
+    """Журнал изменений оборудования ПК (services/workplace_devices.py, services/hardware_change.py)."""
+
+    __tablename__ = "hardware_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    host_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("hosts.id", ondelete="CASCADE"), nullable=False, index=True)
+    # system (модель, серийный номер, процессор, объём памяти), baseboard, bios, memory, disk, gpu,
+    # monitor, keyboard, mouse, usb
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    # added / removed / changed
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    # item — устройство после изменения, previous — до
+    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    host: Mapped["Host"] = relationship()
+
 
 class AgentAlert(Base):
     __tablename__ = "agent_alerts"

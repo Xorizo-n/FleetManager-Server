@@ -54,6 +54,81 @@ class AgentDisk(BaseModel):
         return _scrub(value)
 
 
+class _Scrubbed(BaseModel):
+    """Все строки от агента чистятся от управляющих символов (см. _scrub)."""
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _clean(cls, value):
+        return _scrub(value)
+
+
+class AgentBaseboard(_Scrubbed):
+    manufacturer: str | None = Field(default=None, max_length=256)
+    product: str | None = Field(default=None, max_length=256)
+    serial_number: str | None = Field(default=None, max_length=128)
+
+
+class AgentMemoryModule(_Scrubbed):
+    slot: str | None = Field(default=None, max_length=128)
+    manufacturer: str | None = Field(default=None, max_length=128)
+    part_number: str | None = Field(default=None, max_length=128)
+    serial_number: str | None = Field(default=None, max_length=128)
+    capacity_bytes: int | None = Field(default=None, ge=0)
+    speed_mhz: int | None = Field(default=None, ge=0)
+
+
+class AgentPhysicalDisk(_Scrubbed):
+    model: str | None = Field(default=None, max_length=256)
+    serial_number: str | None = Field(default=None, max_length=128)
+    bus_type: str | None = Field(default=None, max_length=32)
+    size_bytes: int | None = Field(default=None, ge=0)
+
+
+class AgentGpu(_Scrubbed):
+    name: str | None = Field(default=None, max_length=256)
+    driver_version: str | None = Field(default=None, max_length=64)
+    pnp_id: str | None = Field(default=None, max_length=512)
+
+
+class AgentMonitor(_Scrubbed):
+    # Код производителя из EDID: AUS, SAM, MSI
+    manufacturer: str | None = Field(default=None, max_length=16)
+    model: str | None = Field(default=None, max_length=128)
+    serial_number: str | None = Field(default=None, max_length=128)
+    product_code: str | None = Field(default=None, max_length=16)
+    year: int | None = Field(default=None, ge=0, le=3000)
+    # VideoOutputTechnology: 0 VGA, 4 DVI, 5 HDMI, 10 DisplayPort, 0x80000000 встроенная панель
+    connection: int | None = None
+
+
+class AgentPeripheral(_Scrubbed):
+    kind: Literal["keyboard", "mouse", "usb"]
+    name: str | None = Field(default=None, max_length=256)
+    vid: str | None = Field(default=None, max_length=8)
+    pid: str | None = Field(default=None, max_length=8)
+    serial: str | None = Field(default=None, max_length=128)
+    device_class: str | None = Field(default=None, max_length=64)
+
+
+class AgentComponents(BaseModel):
+    """С агента 2026.10.17: состав рабочего места (services/workplace_devices.py)."""
+
+    baseboard: AgentBaseboard | None = None
+    bios_version: str | None = Field(default=None, max_length=64)
+    memory_modules: list[AgentMemoryModule] = Field(default_factory=list, max_length=64)
+    physical_disks: list[AgentPhysicalDisk] = Field(default_factory=list, max_length=64)
+    gpus: list[AgentGpu] = Field(default_factory=list, max_length=16)
+    monitors: list[AgentMonitor] = Field(default_factory=list, max_length=16)
+    input_devices: list[AgentPeripheral] = Field(default_factory=list, max_length=64)
+    usb_devices: list[AgentPeripheral] = Field(default_factory=list, max_length=128)
+
+    @field_validator("bios_version", mode="before")
+    @classmethod
+    def _clean(cls, value):
+        return _scrub(value)
+
+
 class AgentHardware(BaseModel):
     manufacturer: str | None = None
     model: str | None = None
@@ -66,6 +141,8 @@ class AgentHardware(BaseModel):
     network_adapters: list[AgentNetworkAdapter] = Field(default_factory=list, max_length=32)
     # С агента 2026.10.15: заполненность дисков; старые не присылают
     disks: list[AgentDisk] = Field(default_factory=list, max_length=64)
+    # С агента 2026.10.17; None — старый агент или сбой сбора
+    components: AgentComponents | None = None
 
     @field_validator("manufacturer", "model", "serial_number", "operating_system", "processor", "fingerprint", mode="before")
     @classmethod
@@ -282,6 +359,19 @@ class AgentAlertOut(BaseModel):
     previous_fingerprint: str | None
     current_fingerprint: str | None
     created_at: datetime
+
+
+class HardwareEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    host_id: uuid.UUID
+    category: str
+    action: str
+    summary: str
+    details: dict | None = None
+    created_at: datetime
+    hostname: str | None = None
 
 
 class AgentHostVersionOut(BaseModel):

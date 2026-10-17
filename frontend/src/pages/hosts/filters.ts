@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import type { Host, VersionStatus } from "../../api/types";
 import { GroupTree, NO_GROUP } from "../../lib/groupTree";
 import { kmsUnreachable, notActivated } from "../../lib/activation";
+import { presence } from "../../lib/devices";
 
 // Фильтры реестра хостов живут в адресной строке: ссылкой можно поделиться,
 // а счётчики дашборда ведут сразу на отфильтрованный список.
@@ -16,9 +17,10 @@ export interface HostFilters {
   checked: string;
   alerts: string;
   activation: string;
+  devices: string;
 }
 
-const FILTER_KEYS: (keyof HostFilters)[] = ["q", "group", "status", "agent", "os", "checked", "alerts", "activation"];
+const FILTER_KEYS: (keyof HostFilters)[] = ["q", "group", "status", "agent", "os", "checked", "alerts", "activation", "devices"];
 
 export const AGENT_FILTERS: { value: string; label: string }[] = [
   { value: "with", label: "С агентом" },
@@ -58,6 +60,18 @@ export const ACTIVATION_FILTERS: { value: string; label: string; match: (h: Host
     match: (h) => !!h.license_activation && [h.activation_windows, h.activation_office].every((s) => !s || s === "licensed"),
   },
   { value: "unknown", label: "Нет данных", match: (h) => !h.license_activation },
+];
+
+const DAY = 86_400_000;
+const changedWithin = (h: Host, days: number) => !!h.hw_changed_at && Date.now() - new Date(h.hw_changed_at).getTime() <= days * DAY;
+
+export const DEVICE_FILTERS: { value: string; label: string; match: (h: Host) => boolean }[] = [
+  { value: "noinput", label: "Нет клавиатуры или мыши", match: (h) => presence(h, "keyboard") === "missing" || presence(h, "mouse") === "missing" },
+  { value: "nomonitor", label: "Нет монитора", match: (h) => presence(h, "monitor") === "missing" },
+  { value: "pending", label: "Устройство пропало недавно", match: (h) => (h.hw_pending_devices ?? []).some((p) => p.missing) },
+  { value: "changed7", label: "Изменения за 7 дней", match: (h) => changedWithin(h, 7) },
+  { value: "changed30", label: "Изменения за 30 дней", match: (h) => changedWithin(h, 30) },
+  { value: "unknown", label: "Нет данных", match: (h) => !h.hw_components },
 ];
 
 export const alertDays = (value: string) => ALERT_FILTERS.find((f) => f.value === value)?.days ?? 7;
@@ -112,6 +126,7 @@ export function filterHosts(
     if (filters.status && h.status !== filters.status) return false;
     if (filters.alerts && !alertCounts.get(h.id)) return false;
     if (filters.os && h.os !== filters.os) return false;
+    if (filters.devices && !DEVICE_FILTERS.find((f) => f.value === filters.devices)?.match(h)) return false;
     if (filters.activation && !ACTIVATION_FILTERS.find((f) => f.value === filters.activation)?.match(h)) return false;
     if (filters.agent) {
       if (filters.agent === "with" && !h.has_agent) return false;

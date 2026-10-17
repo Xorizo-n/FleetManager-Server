@@ -21,10 +21,11 @@ import { downloadRdpFile, rdpAddress } from "../../lib/rdp";
 import { formatLinkSpeed, isSlowWiredLink, primaryAdapter } from "../../lib/hardware";
 import { DiskList } from "../../components/DiskUsage";
 import { ActivationSection } from "../../components/Activation";
+import { WorkplaceTab } from "../../components/Workplace";
 import { sameCmidCount } from "../../lib/activation";
 import { effectiveCredential, EffectiveCredential, isSshAssignable } from "../../lib/credentials";
 
-type Tab = "overview" | "software" | "tasks" | "alerts";
+type Tab = "overview" | "hardware" | "software" | "tasks" | "alerts";
 
 interface Props {
   host: Host;
@@ -154,6 +155,7 @@ export default function HostDrawer({ host, onClose, onRunPlaybook }: Props) {
         onChange={setTab}
         tabs={[
           { id: "overview", label: "Обзор" },
+          { id: "hardware", label: "Оборудование" },
           { id: "software", label: "ПО" },
           { id: "tasks", label: "Задачи" },
           { id: "alerts", label: "Алерты", count: alerts.data?.length || undefined },
@@ -161,6 +163,7 @@ export default function HostDrawer({ host, onClose, onRunPlaybook }: Props) {
       />
       <div className="pt-4">
         {tab === "overview" && <Overview host={host} />}
+        {tab === "hardware" && <WorkplaceTab host={host} />}
         {tab === "software" && <HostSoftware hostId={host.id} />}
         {tab === "tasks" && <HostTasks hostId={host.id} />}
         {tab === "alerts" && <HostAlerts hostId={host.id} />}
@@ -469,7 +472,7 @@ function HostTasks({ hostId }: { hostId: string }) {
   );
 }
 
-const ALERT_TYPE_LABELS: Record<string, string> = { hardware_changed: "Смена оборудования" };
+const ALERT_TYPE_LABELS: Record<string, string> = { hardware_changed: "Смена оборудования", device_missing: "Пропало устройство" };
 
 // До определения смены железа сервером агент присылал только хэши отпечатков
 const isLegacyHardwareAlert = (a: AgentAlert) => a.alert_type === "hardware_changed" && a.message.startsWith("Hardware fingerprint changed");
