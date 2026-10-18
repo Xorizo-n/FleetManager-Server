@@ -22,6 +22,8 @@ class WallpaperOut(BaseModel):
     created_at: datetime
     # Миниатюра JPEG в base64: <img> не передаёт токен, поэтому картинки идут вместе со списком
     thumbnail_base64: str = ""
+    # Перцептивный хэш миниатюры (services.wallpapers.perceptual_hash)
+    phash: str | None = None
 
 
 class WallpaperRename(BaseModel):
@@ -32,6 +34,7 @@ class ObservedWallpaperOut(BaseModel):
     sha256: str
     path: str | None = None
     thumbnail_base64: str
+    phash: str | None = None
 
 
 class WallpaperAssignmentOut(BaseModel):

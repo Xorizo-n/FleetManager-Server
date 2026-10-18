@@ -166,15 +166,20 @@ export default function Wallpapers() {
               <div key={kind}>
                 <h3 className="mb-2 text-sm font-semibold text-foreground">{KIND_LABELS[kind]}</h3>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                  {currentDistribution(hosts, kind).slice(0, 9).map((d) => (
-                    <div key={d.sha256 ?? d.path ?? "none"} className="min-w-0">
+                  {currentDistribution(hosts, kind, thumbnails).slice(0, 9).map((d) => (
+                    <div key={d.filter} className="min-w-0">
                       <WallpaperThumb sha256={d.sha256} path={d.path || null} thumbnails={thumbnails} className="w-full" />
-                      <Link
-                        to={`/hosts?wallpaper=${encodeURIComponent(d.sha256 ?? (d.path ? `path:${d.path}` : "none"))}`}
-                        className="text-xs text-blue-600 hover:underline dark:text-blue-400"
-                      >
+                      <Link to={`/hosts?wallpaper=${encodeURIComponent(d.filter)}`} className="text-xs text-blue-600 hover:underline dark:text-blue-400">
                         {pcCount(d.hostIds.length)}
                       </Link>
+                      {d.variants.length > 1 && (
+                        <span
+                          className="text-xs text-subtle"
+                          title={`Одна картинка в ${d.variants.length} файлах: на каждом ПК или у каждого пользователя она сохранена заново\n${d.variants.map((v) => `${v.path} — ${pcCount(v.count)}`).join("\n")}`}
+                        >
+                          {" "}· {plural(d.variants.length, "вариант", "варианта", "вариантов")} файла
+                        </span>
+                      )}
                     </div>
                   ))}
                 </div>

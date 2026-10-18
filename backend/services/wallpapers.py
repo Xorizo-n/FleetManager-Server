@@ -17,6 +17,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
+from functools import lru_cache
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -60,6 +61,28 @@ def make_thumbnail(image) -> bytes:
     out = io.BytesIO()
     thumb.save(out, "JPEG", quality=80)
     return out.getvalue()
+
+
+@lru_cache(maxsize=4096)
+def perceptual_hash(sha256: str, thumbnail: bytes) -> str | None:
+    """dHash миниатюры: 64 бита, 16 hex-символов. Одна картинка, сохранённая заново (другое
+    сжатие или разрешение), даёт другой SHA-256, но почти тот же dHash. Так, urfu-desktop.jpg
+    создаётся отдельно в профиле каждого пользователя под его экран: варианты отличаются
+    на 1–7 бит, а разные обои — на 21 и больше. По нему страница «Обои» объединяет варианты
+    в одну плитку. sha256 — ключ кэша: миниатюра для хэша не меняется."""
+    from PIL import Image
+
+    try:
+        with Image.open(io.BytesIO(thumbnail)) as image:
+            gray = image.convert("L").resize((9, 8), Image.LANCZOS)
+            pixels = gray.tobytes()
+    except Exception:  # noqa: BLE001 — битая миниатюра просто не группируется
+        return None
+    bits = 0
+    for row in range(8):
+        for col in range(8):
+            bits = (bits << 1) | (pixels[row * 9 + col] > pixels[row * 9 + col + 1])
+    return f"{bits:016x}"
 
 
 def inspect_image(data: bytes) -> tuple[str, str, int, int, bytes]:

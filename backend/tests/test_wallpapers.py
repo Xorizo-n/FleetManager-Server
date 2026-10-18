@@ -9,7 +9,7 @@ from models.host import Host, HostGroup
 from models.wallpaper import DESKTOP, LOCK_SCREEN, Wallpaper, WallpaperAssignment
 from schemas.agent import AgentHeartbeatRequest
 from schemas.wallpaper import WallpaperAssignRequest
-from services.wallpapers import WallpaperError, effective_wallpapers, inspect_image, wallpaper_target
+from services.wallpapers import WallpaperError, effective_wallpapers, inspect_image, make_thumbnail, perceptual_hash, wallpaper_target
 
 SHA = "a" * 64
 
@@ -48,6 +48,48 @@ class InspectImageTests(unittest.TestCase):
         for data in (b"", b"not an image", image_bytes("GIF")):
             with self.assertRaises(WallpaperError):
                 inspect_image(data)
+
+
+def picture(size=(1920, 1080), shift=0):
+    """Картинка с крупными деталями: полосы и круг, как у настоящих обоев."""
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", size, (20, 60, 140))
+    draw = ImageDraw.Draw(image)
+    w, h = size
+    for i in range(6):
+        draw.rectangle([i * w // 6, 0, i * w // 6 + w // 18, h], fill=(200, 120 + i * 20, 40))
+    draw.ellipse([w // 2 - h // 4 + shift, h // 4, w // 2 + h // 4 + shift, 3 * h // 4], fill=(250, 250, 250))
+    return image
+
+
+def thumb_hash(image, quality=90) -> str:
+    out = io.BytesIO()
+    image.save(out, "JPEG", quality=quality)
+    from PIL import Image
+
+    return perceptual_hash(str(id(out)), make_thumbnail(Image.open(io.BytesIO(out.getvalue()))))
+
+
+def bits(a: str, b: str) -> int:
+    return bin(int(a, 16) ^ int(b, 16)).count("1")
+
+
+class PerceptualHashTests(unittest.TestCase):
+    def test_variants_of_one_picture_are_close(self):
+        # urfu-desktop.jpg: та же картинка, сохранённая заново под экран пользователя
+        original = thumb_hash(picture())
+        self.assertLessEqual(bits(original, thumb_hash(picture(), quality=60)), 10)
+        self.assertLessEqual(bits(original, thumb_hash(picture((2560, 1440)))), 10)
+
+    def test_different_pictures_are_far(self):
+        from PIL import Image
+
+        self.assertGreater(bits(thumb_hash(picture()), thumb_hash(picture().transpose(Image.FLIP_LEFT_RIGHT))), 10)
+        self.assertGreater(bits(thumb_hash(picture()), thumb_hash(picture().rotate(180))), 10)
+
+    def test_broken_thumbnail_has_no_hash(self):
+        self.assertIsNone(perceptual_hash("broken", b"not a jpeg"))
 
 
 class EffectiveWallpaperTests(unittest.TestCase):

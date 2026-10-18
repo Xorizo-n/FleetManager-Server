@@ -257,7 +257,14 @@ const wallpapers: Wallpaper[] = WALLPAPER_THUMBS.slice(0, 4).map(([name, thumb],
   id: uuid(), name, original_name: `${name}.png`, content_type: "image/png", sha256: sha(i + 1), size_bytes: 2_400_000 + i * 310_000,
   width: 3840, height: 2160, created_at: minutesAgo(60 * 24 * (10 - i)), thumbnail_base64: thumb,
 }));
-const observedWallpapers: ObservedWallpaper[] = [{ sha256: sha(99), path: "C:\\block_new.png", thumbnail_base64: WALLPAPER_THUMBS[4][1] }];
+const observedWallpapers: ObservedWallpaper[] = [
+  { sha256: sha(99), path: "C:\\block_new.png", thumbnail_base64: WALLPAPER_THUMBS[4][1], phash: "f0e0c0c08080c0e0" },
+  // Одна картинка в профиле каждого пользователя (как urfu-desktop.jpg на проде): хэши файлов разные, вид один
+  ...[97, 96, 95].map((n, i) => ({
+    sha256: sha(n), path: `C:\\Users\\user${i}\\AppData\\Local\\UrFU\\urfu-desktop.jpg`, thumbnail_base64: WALLPAPER_THUMBS[2][1],
+    phash: ["1f3f7fff00ff00ff", "1f3f7fff00ff00fe", "1f3e7fff00ff01ff"][i],
+  })),
+];
 const wallpaperAssignments: WallpaperAssignment[] = [
   { id: uuid(), host_id: null, group_id: groups.find((g) => g.name === "SU5")!.id, kind: "lock_screen", wallpaper_id: wallpapers[2].id, updated_at: minutesAgo(600) },
   { id: uuid(), host_id: null, group_id: groups.find((g) => g.name === "MR32")!.id, kind: "desktop", wallpaper_id: wallpapers[0].id, updated_at: minutesAgo(300) },
@@ -288,6 +295,10 @@ for (const h of hosts) {
     const target = effectiveWallpaper(h, kind);
     if (target && (h.status === "online" ? chance(0.97) : chance(0.6))) return { path: `C:\\ProgramData\\FleetManagerAgent\\wallpapers\\${target.sha256}.png`, sha256: target.sha256, source: "policy" };
     if (kind === "lock_screen") return { path: "C:\\block_new.png", sha256: sha(99), source: "policy" };
+    if (chance(0.3)) {
+      const n = pick([97, 96, 95]);
+      return { path: `C:\\Users\\user${97 - n}\\AppData\\Local\\UrFU\\urfu-desktop.jpg`, sha256: sha(n), source: "user" };
+    }
     return chance(0.5) ? { path: "C:\\Windows\\Web\\Wallpaper\\Windows\\img0.jpg", sha256: null, source: "user" } : null;
   };
   h.wallpaper_state = { desktop: current("desktop"), lock_screen: current("lock_screen"), applied_desktop_id: null, applied_lock_screen_id: null,

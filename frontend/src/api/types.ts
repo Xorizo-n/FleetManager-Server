@@ -96,12 +96,15 @@ export interface Wallpaper {
   height: number;
   created_at: string;
   thumbnail_base64: string;
+  /** Перцептивный хэш миниатюры: у вариантов одной картинки почти совпадает */
+  phash: string | null;
 }
 
 export interface ObservedWallpaper {
   sha256: string;
   path: string | null;
   thumbnail_base64: string;
+  phash: string | null;
 }
 
 export interface WallpaperAssignment {
