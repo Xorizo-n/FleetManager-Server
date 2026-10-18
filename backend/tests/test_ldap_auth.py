@@ -4,7 +4,7 @@ from unittest import mock
 
 from config import settings
 from models.user import UserRole
-from services import ldap_auth
+from services import ldap_auth, ldap_config
 
 ADMINS = "CN=FM-Admins,OU=Groups,DC=at,DC=urfu,DC=ru"
 VIEWERS = "CN=FM-Viewers,OU=Groups,DC=at,DC=urfu,DC=ru"
@@ -57,6 +57,10 @@ class LdapAuthTests(unittest.TestCase):
                                       ldap_viewer_groups=VIEWERS)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # Без БД: действуют настройки из .env (их и подменяют тесты)
+        current = mock.patch.object(ldap_config, "current", side_effect=lambda: ldap_config._draft.get() or ldap_config.from_settings())
+        current.start()
+        self.addCleanup(current.stop)
 
     def bind_as(self, conn, password="secret"):
         """Подменяет bind: верный пароль у ivanov и у служебной записи, остальное — неверный пароль."""
@@ -168,6 +172,40 @@ class LdapAuthTests(unittest.TestCase):
         with patch:
             self.assertEqual(ldap_auth.authenticate("ivanov", "secret").guid, GUID)
 
+    def test_draft_settings_apply_only_inside_use(self):
+        draft = ldap_config.LdapConfig(enabled=True, url="ldaps://dc", domain="example.org", base_dn="DC=example,DC=org",
+                                       operator_groups=[VIEWERS])
+        with ldap_config.use(draft):
+            self.assertEqual(ldap_auth.split_login("ivanov@example.org"), "ivanov")
+            self.assertEqual(dict(ldap_auth.role_groups())[UserRole.operator], [VIEWERS])
+        self.assertIsNone(ldap_auth.split_login("ivanov@example.org"))
+
+    def test_diagnose_reports_groups_and_user_role(self):
+        conn = FakeConn(groups=[VIEWERS])
+        conn_search = conn.search
+
+        def search(base, search_filter, scope, attributes=None, size_limit=0):
+            if search_filter == "(objectClass=group)":
+                conn.entries = [FakeEntry(base, {})] if base == VIEWERS else []
+                return bool(conn.entries)
+            if search_filter.startswith("(&(objectCategory=person)") and "memberOf:" in search_filter:
+                conn.entries = [FakeEntry(USER_DN, {})] * 3
+                return True
+            return conn_search(base, search_filter, scope, attributes, size_limit)
+
+        conn.search = search
+        with mock.patch.multiple(settings, ldap_bind_dn="CN=svc-fleet,DC=at,DC=urfu,DC=ru", ldap_bind_password="secret"):
+            patch, _ = self.bind_as(conn)
+            with patch:
+                report = ldap_auth.diagnose("AT\ivanov")
+        self.assertEqual(report["bind"], "ok")
+        self.assertEqual([(g["dn"], g["found"], g["members"]) for g in report["groups"]], [(ADMINS, False, None), (VIEWERS, True, 3)])
+        self.assertEqual(report["user"], {"username": "ivanov", "found": True, "display_name": "Иванов Иван", "role": "viewer"})
+
+    def test_service_account_required_for_group_search(self):
+        with self.assertRaisesRegex(ldap_auth.LdapUnavailable, "служебная"):
+            ldap_auth.search_groups("OOD")
+
     def test_group_dn_is_escaped_in_the_filter(self):
         group = "CN=FM (admins),OU=Groups,DC=at,DC=urfu,DC=ru"
         conn = FakeConn()
@@ -207,6 +245,31 @@ class ManualRoleTests(unittest.TestCase):
         self.assertIsNone(user.role_override)
         apply_role(user, UserRole.viewer)
         self.assertEqual(user.role, UserRole.viewer)
+
+
+class LdapSettingsSchemaTests(unittest.TestCase):
+    def payload(self, **kw):
+        from routers.ldap_settings import LdapSettingsIn
+
+        base = dict(enabled=True, url="ldaps://at.urfu.ru", domain="at.urfu.ru", base_dn="DC=at,DC=urfu,DC=ru")
+        return LdapSettingsIn(**{**base, **kw})
+
+    def test_groups_are_trimmed_and_deduplicated(self):
+        p = self.payload(operator_groups=[f" {ADMINS} ", ADMINS.lower(), "", VIEWERS])
+        self.assertEqual(p.operator_groups, [ADMINS, VIEWERS])
+
+    def test_rejects_non_dn_group_and_non_ldap_url(self):
+        from pydantic import ValidationError
+
+        with self.assertRaises(ValidationError):
+            self.payload(admin_groups=["IRITRTF OOD Staff"])
+        with self.assertRaises(ValidationError):
+            self.payload(url="https://at.urfu.ru")
+        self.assertEqual(self.payload(url="ldaps://a, ldaps://b,").url, "ldaps://a, ldaps://b")
+
+    def test_password_none_means_keep(self):
+        self.assertIsNone(self.payload().bind_password)
+        self.assertEqual(self.payload(bind_password="").bind_password, "")
 
 
 if __name__ == "__main__":

@@ -2,11 +2,11 @@
 
 Пароль проверяется простым bind'ом от имени пользователя, роль Fleet Manager — по членству
 в группах AD (вложенные группы учитываются, правило LDAP_MATCHING_RULE_IN_CHAIN). Доступ
-получают только участники групп из LDAP_ADMIN_GROUPS / LDAP_OPERATOR_GROUPS /
-LDAP_VIEWER_GROUPS: без групп в домен входят и студенты, поэтому «любой пользователь домена»
-не пускается никогда.
+получают только участники групп ролей (Администрирование → «Вход через домен», иначе LDAP_*_GROUPS
+из .env — services/ldap_config.py): без групп в домен входят и студенты, поэтому «любой
+пользователь домена» не пускается никогда.
 
-Служебная учётная запись (LDAP_BIND_DN) необязательна: без неё пользователь ищет сам себя
+Служебная учётная запись необязательна: без неё пользователь ищет сам себя
 после своего bind'а. С ней сервер при каждом обновлении токена перепроверяет, что запись не
 отключена и всё ещё состоит в группах, — иначе доступ живёт до истечения refresh-токена.
 """
@@ -17,8 +17,8 @@ import ssl
 import uuid
 from dataclasses import dataclass
 
-from config import settings
 from models.user import UserRole
+from services import ldap_config
 
 log = logging.getLogger(__name__)
 
@@ -47,8 +47,12 @@ class LdapIdentity:
     role: UserRole
 
 
+def _c() -> ldap_config.LdapConfig:
+    return ldap_config.current()
+
+
 def enabled() -> bool:
-    return settings.ldap_enabled
+    return _c().enabled
 
 
 def split_login(login: str) -> str | None:
@@ -58,7 +62,7 @@ def split_login(login: str) -> str | None:
         login = login.rsplit("\\", 1)[1]
     elif "@" in login:
         login, _, suffix = login.rpartition("@")
-        if suffix.lower() != settings.ldap_domain.lower():
+        if suffix.lower() != _c().domain.lower():
             return None
     if not login or len(login) > 64 or any(c in login for c in '"/\\[]:;|=,+*?<>@'):
         return None
@@ -66,13 +70,10 @@ def split_login(login: str) -> str | None:
 
 
 def role_groups() -> list[tuple[UserRole, list[str]]]:
-    """Группы ролей из настроек, от старшей роли к младшей. DN разделяются «;»: в самих DN есть запятые."""
-    raw = {
-        UserRole.admin: settings.ldap_admin_groups,
-        UserRole.operator: settings.ldap_operator_groups,
-        UserRole.viewer: settings.ldap_viewer_groups,
-    }
-    return [(role, [g.strip() for g in raw[role].split(";") if g.strip()]) for role in ROLE_ORDER]
+    """Группы ролей из настроек, от старшей роли к младшей."""
+    c = _c()
+    raw = {UserRole.admin: c.admin_groups, UserRole.operator: c.operator_groups, UserRole.viewer: c.viewer_groups}
+    return [(role, [g.strip() for g in raw[role] if g.strip()]) for role in ROLE_ORDER]
 
 
 def _escape(value: str) -> str:
@@ -84,12 +85,15 @@ def _escape(value: str) -> str:
 def _servers():
     from ldap3 import FIRST, NONE, Server, ServerPool, Tls
 
-    tls = Tls(validate=ssl.CERT_REQUIRED, ca_certs_file=settings.ldap_ca_cert or None)
+    c = _c()
+    tls = Tls(validate=ssl.CERT_REQUIRED, ca_certs_file=c.ca_cert or None)
     servers = [
         Server(url.strip(), use_ssl=url.strip().lower().startswith("ldaps://"), tls=tls,
-               connect_timeout=settings.ldap_timeout_seconds, get_info=NONE)
-        for url in settings.ldap_url.split(",") if url.strip()
+               connect_timeout=c.timeout_seconds, get_info=NONE)
+        for url in c.url.split(",") if url.strip()
     ]
+    if not servers:
+        raise LdapUnavailable("Не задан адрес контроллера домена")
     return ServerPool(servers, FIRST, active=1, exhaust=60)
 
 
@@ -100,7 +104,7 @@ def _bind(user: str, password: str):
 
     try:
         conn = Connection(_servers(), user=user, password=password, authentication=SIMPLE, read_only=True,
-                          receive_timeout=settings.ldap_timeout_seconds, raise_exceptions=False)
+                          receive_timeout=_c().timeout_seconds, raise_exceptions=False)
         conn.open()
         if not conn.server.ssl:
             conn.start_tls()
@@ -116,9 +120,12 @@ def _bind(user: str, password: str):
 
 
 def _service_bind():
-    conn = _bind(settings.ldap_bind_dn, settings.ldap_bind_password)
+    c = _c()
+    if not c.bind_dn or not c.bind_password:
+        raise LdapUnavailable("Не задана служебная учётная запись")
+    conn = _bind(c.bind_dn, c.bind_password)
     if conn is None:
-        raise LdapUnavailable("Служебная учётная запись LDAP не подошла (LDAP_BIND_DN / LDAP_BIND_PASSWORD)")
+        raise LdapUnavailable("Служебная учётная запись не подошла: неверный логин или пароль")
     return conn
 
 
@@ -132,7 +139,7 @@ def _first(attrs: dict, name: str):
 def _find(conn, search_filter: str, base: str | None = None):
     from ldap3 import BASE, SUBTREE
 
-    ok = conn.search(base or settings.ldap_base_dn, search_filter, BASE if base else SUBTREE,
+    ok = conn.search(base or _c().base_dn, search_filter, BASE if base else SUBTREE,
                      attributes=ATTRIBUTES, size_limit=2)
     if not ok or len(conn.entries) != 1:
         return None
@@ -140,7 +147,7 @@ def _find(conn, search_filter: str, base: str | None = None):
 
 
 def _find_user(conn, username: str):
-    return _find(conn, settings.ldap_user_filter.format(username=_escape(username)))
+    return _find(conn, _c().user_filter.format(username=_escape(username)))
 
 
 def _role(conn, user_dn: str) -> UserRole | None:
@@ -187,7 +194,7 @@ def authenticate(login: str, password: str) -> LdapIdentity:
         log.warning("LDAP включён, но группы ролей (LDAP_*_GROUPS) не заданы — вход через домен закрыт")
         raise LdapDenied("Вход через домен не настроен: не заданы группы доступа")
 
-    if settings.ldap_bind_dn:
+    if _c().bind_dn:
         conn = _service_bind()
         try:
             entry = _find_user(conn, username)
@@ -202,7 +209,7 @@ def authenticate(login: str, password: str) -> LdapIdentity:
             conn.unbind()
     else:
         # sAMAccountName@домен — неявный UPN, AD принимает его, даже если UPN записи другой
-        conn = _bind(f"{username}@{settings.ldap_domain}", password)
+        conn = _bind(f"{username}@{_c().domain}", password)
         if conn is None:
             raise LdapDenied("Неверный логин или пароль")
         try:
@@ -217,7 +224,7 @@ def authenticate(login: str, password: str) -> LdapIdentity:
 
 
 def can_recheck() -> bool:
-    return enabled() and bool(settings.ldap_bind_dn)
+    return enabled() and bool(_c().bind_dn)
 
 
 def recheck(guid: str) -> LdapIdentity | None:
@@ -229,3 +236,69 @@ def recheck(guid: str) -> LdapIdentity | None:
         return _identity(conn, entry) if entry is not None else None
     finally:
         conn.unbind()
+
+
+def _text(value) -> str | None:
+    value = _first({"v": value}, "v")
+    if isinstance(value, (bytes, bytearray)):
+        value = bytes(value).decode("utf-8", "replace")
+    return value
+
+
+def search_groups(query: str, limit: int = 30) -> list[dict]:
+    """Группы домена по части имени или описания — для выбора в настройках. Нужна служебная запись."""
+    from ldap3 import SUBTREE
+
+    query = query.strip()
+    if len(query) < 2:
+        return []
+    q = _escape(query)
+    conn = _service_bind()
+    try:
+        conn.search(_c().base_dn, f"(&(objectClass=group)(|(cn=*{q}*)(description=*{q}*)))", SUBTREE,
+                    attributes=["cn", "description"], size_limit=limit)
+        groups = [{"dn": e.entry_dn, "name": _text(e.entry_attributes_as_dict.get("cn")) or e.entry_dn,
+                   "description": _text(e.entry_attributes_as_dict.get("description"))} for e in conn.entries]
+    finally:
+        conn.unbind()
+    return sorted(groups, key=lambda g: g["name"].lower())
+
+
+MEMBER_LIMIT = 1000
+
+
+def diagnose(username: str | None = None) -> dict:
+    """Проверка настроек для формы: служебная запись, группы (есть ли, сколько участников), роль пользователя."""
+    from ldap3 import BASE, SUBTREE
+
+    c = _c()
+    report: dict = {"bind": None, "groups": [], "user": None}
+    conn = _service_bind()
+    try:
+        report["bind"] = "ok"
+        for role, groups in role_groups():
+            for group in groups:
+                item = {"dn": group, "role": role.value, "found": False, "members": None}
+                if conn.search(group, "(objectClass=group)", BASE, attributes=["cn"]) and conn.entries:
+                    item["found"] = True
+                    conn.search(c.base_dn, f"(&(objectCategory=person)(objectClass=user)(memberOf:{IN_CHAIN}:={_escape(group)}))",
+                                SUBTREE, attributes=[], size_limit=MEMBER_LIMIT)
+                    item["members"] = len(conn.entries)
+                report["groups"].append(item)
+        if username:
+            name = split_login(username)
+            entry = _find_user(conn, name) if name else None
+            if entry is None:
+                report["user"] = {"username": username, "found": False}
+            else:
+                identity = _identity(conn, entry)
+                attrs = entry.entry_attributes_as_dict
+                report["user"] = {
+                    "username": _text(attrs.get("sAMAccountName")),
+                    "found": True,
+                    "display_name": _text(attrs.get("displayName")),
+                    "role": identity.role.value if identity else None,
+                }
+    finally:
+        conn.unbind()
+    return report

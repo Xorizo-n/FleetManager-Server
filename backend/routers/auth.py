@@ -30,7 +30,7 @@ from services.security import (
     create_refresh_token,
     decode_token,
 )
-from services import ldap_auth, ldap_users
+from services import ldap_auth, ldap_config, ldap_users
 from services import totp as totp_service
 
 log = logging.getLogger(__name__)
@@ -156,7 +156,8 @@ def _ldap_login(db: Session, payload: LoginRequest, request: Request) -> User:
 @router.get("/options")
 def login_options():
     """Что показать на странице входа: включён ли вход доменной учётной записью."""
-    return {"ldap_enabled": ldap_auth.enabled(), "ldap_domain": settings.ldap_domain if ldap_auth.enabled() else None}
+    config = ldap_config.current()
+    return {"ldap_enabled": config.enabled, "ldap_domain": config.domain if config.enabled else None}
 
 
 # SEC-02: Rate limiting — 5 TOTP attempts per pre_auth_token per 5 minutes.
