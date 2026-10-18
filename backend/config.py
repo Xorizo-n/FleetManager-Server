@@ -40,6 +40,8 @@ class Settings(BaseSettings):
 
     # Software share (network share mounted into the container)
     soft_share_dir: str = "/mnt/soft-share"
+    # Каталог обоев (services/wallpapers.py): файлы <sha256>.<расширение>
+    wallpaper_dir: str = "/mnt/soft-share/wallpapers"
 
     # Public URL baked into downloaded agent installers (e.g. https://fleet.example.com)
     # Falls back to the request base_url when empty.

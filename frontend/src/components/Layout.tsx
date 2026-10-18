@@ -14,6 +14,7 @@ export const NAV_ITEMS: { to: string; label: string; end?: boolean; roles?: User
   { to: "/hosts", label: "Хосты" },
   { to: "/software", label: "ПО" },
   { to: "/automation", label: "Автоматизация", roles: EDITORS },
+  { to: "/wallpapers", label: "Обои" },
   { to: "/tasks", label: "Задачи" },
 ];
 

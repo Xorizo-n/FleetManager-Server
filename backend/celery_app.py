@@ -17,6 +17,7 @@ celery_app = Celery(
         "services.access_change",
         "services.waiting_tasks",
         "services.wake_on_lan",
+        "services.wallpapers",
     ],
 )
 
@@ -46,6 +47,11 @@ celery_app.conf.update(
             "schedule": 3600.0,
         },
         # Раскладывает по группам и ПК без агента или выключенные (агентские — сразу при heartbeat).
+        # Смена обоев в заданное время (services/wallpapers.py)
+        "apply-wallpaper-schedules": {
+            "task": "services.wallpapers.apply_wallpaper_schedules",
+            "schedule": 60.0,
+        },
         "regroup-hosts": {
             "task": "services.host_grouping.regroup_hosts",
             "schedule": 3600.0,

@@ -276,6 +276,34 @@ class AgentActivation(BaseModel):
         return _scrub(value)
 
 
+class AgentCurrentWallpaper(_Scrubbed):
+    path: str = Field(min_length=1, max_length=1024)
+    sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    # policy — локальная политика, csp — PersonalizationCSP, user — собственные обои пользователя
+    source: str | None = Field(default=None, max_length=16)
+
+
+class AgentWallpaperThumbnail(BaseModel):
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    jpeg_base64: str = Field(min_length=1, max_length=400_000)
+
+
+class AgentWallpaperReport(BaseModel):
+    """С агента 2026.10.18: обои, которые стоят на ПК (services/wallpapers.py)."""
+
+    desktop: AgentCurrentWallpaper | None = None
+    lock_screen: AgentCurrentWallpaper | None = None
+    applied_desktop_id: str | None = Field(default=None, max_length=64)
+    applied_lock_screen_id: str | None = Field(default=None, max_length=64)
+    error: str | None = Field(default=None, max_length=2000)
+    thumbnails: list[AgentWallpaperThumbnail] = Field(default_factory=list, max_length=4)
+
+    @field_validator("error", mode="before")
+    @classmethod
+    def _clean(cls, value):
+        return _scrub(value)
+
+
 class AgentHeartbeatRequest(BaseModel):
     machine_id: uuid.UUID
     hostname: str | None = Field(default=None, max_length=255)
@@ -289,6 +317,7 @@ class AgentHeartbeatRequest(BaseModel):
     software: list[AgentSoftware] = Field(default_factory=list, max_length=10000)
     # Старые агенты не присылают; новые — None, если собрать не удалось
     activation: AgentActivation | None = None
+    wallpaper: AgentWallpaperReport | None = None
 
     @field_validator("ssh_login", "agent_version", mode="before")
     @classmethod

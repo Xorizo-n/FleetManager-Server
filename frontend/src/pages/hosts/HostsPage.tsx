@@ -6,6 +6,7 @@ import {
   ArrowUpCircle,
   ChevronDown,
   Download,
+  Image as ImageIcon,
   FolderInput,
   KeyRound,
   MoreHorizontal,
@@ -31,6 +32,7 @@ import { Empty, Loading } from "../../components/ui/States";
 import { useToast } from "../../components/ui/Toast";
 import { useOpenTask } from "../../components/TaskPanel";
 import PlaybookRunForm from "../../components/PlaybookRunForm";
+import WallpaperAssignDialog from "../../components/WallpaperAssignDialog";
 import GroupSidebar from "./GroupSidebar";
 import HostTable, { ColumnSet } from "./HostTable";
 import HostDrawer from "./HostDrawer";
@@ -63,6 +65,7 @@ export default function HostsPage() {
   const [groupFor, setGroupFor] = useState<string[] | null>(null);
   const [credentialFor, setCredentialFor] = useState<string[] | null>(null);
   const [adding, setAdding] = useState(false);
+  const [wallpaperFor, setWallpaperFor] = useState<string[] | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Значок у ПК и фильтр «Алерты» — за выбранный в фильтре период, без фильтра — за неделю
@@ -247,6 +250,12 @@ export default function HostsPage() {
               <option value="">Оборудование</option>
               {DEVICE_FILTERS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
+            {filters.wallpaper && (
+              <button className="btn-secondary btn-sm" onClick={() => setFilter("wallpaper", "")} title="Фильтр со страницы «Обои»">
+                Обои: выбранное изображение
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
             {(activeCount > 0 || filters.group) && (
               <button className="btn-ghost btn-sm" onClick={reset}>
                 <XCircle className="h-3.5 w-3.5" />
@@ -357,6 +366,7 @@ export default function HostsPage() {
                     window.confirm(`Обновить агент до ${agentVersions?.available_version ?? "последней версии"} на ${pcCount(withAgent.length)}?`) &&
                     startTask(apiClient.post("/agent/update", { host_ids: withAgent }), "Не удалось запустить обновление"),
                 },
+                { label: "Обои…", icon: <ImageIcon className="h-4 w-4" />, onClick: () => setWallpaperFor([...selected]) },
                 "divider",
                 { label: "Назначить группу…", icon: <FolderInput className="h-4 w-4" />, onClick: () => setGroupFor([...selected]) },
                 { label: "Учётные данные SSH…", icon: <KeyRound className="h-4 w-4" />, onClick: () => setCredentialFor([...selected]) },
@@ -379,6 +389,7 @@ export default function HostsPage() {
       {groupFor && <GroupDialog hostIds={groupFor} onClose={() => setGroupFor(null)} onDone={() => { setGroupFor(null); setSelected(new Set()); }} />}
       {credentialFor && <CredentialDialog hostIds={credentialFor} onClose={() => setCredentialFor(null)} onDone={() => { setCredentialFor(null); setSelected(new Set()); }} />}
       {adding && <AddHostDialog onClose={() => setAdding(false)} />}
+      {wallpaperFor && <WallpaperAssignDialog initialHostIds={wallpaperFor} onClose={() => setWallpaperFor(null)} />}
     </div>
   );
 }

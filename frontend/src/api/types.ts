@@ -49,6 +49,8 @@ export interface Host {
   hw_pending_devices?: PendingDevice[];
   /** Последняя запись в журнале оборудования */
   hw_changed_at?: string | null;
+  /** Обои на ПК по отчёту агента (с 2026.10.18) */
+  wallpaper_state?: WallpaperState | null;
   created_at: string;
   updated_at: string;
 }
@@ -63,6 +65,68 @@ export interface NetworkAdapter {
   media_type: string | null;
   /** Скорость линка, бит/с; null — нет линка или старый агент */
   link_speed_bps?: number | null;
+}
+
+export type WallpaperKind = "desktop" | "lock_screen";
+
+export interface CurrentWallpaper {
+  path: string;
+  sha256: string | null;
+  /** policy — локальная политика, csp — PersonalizationCSP, user — собственные обои пользователя */
+  source: string | null;
+}
+
+export interface WallpaperState {
+  desktop: CurrentWallpaper | null;
+  lock_screen: CurrentWallpaper | null;
+  applied_desktop_id: string | null;
+  applied_lock_screen_id: string | null;
+  error: string | null;
+  reported_at: string;
+}
+
+export interface Wallpaper {
+  id: string;
+  name: string;
+  original_name: string | null;
+  content_type: string;
+  sha256: string;
+  size_bytes: number;
+  width: number;
+  height: number;
+  created_at: string;
+  thumbnail_base64: string;
+}
+
+export interface ObservedWallpaper {
+  sha256: string;
+  path: string | null;
+  thumbnail_base64: string;
+}
+
+export interface WallpaperAssignment {
+  id: string;
+  host_id: string | null;
+  group_id: string | null;
+  kind: WallpaperKind;
+  wallpaper_id: string;
+  updated_at: string;
+}
+
+export interface WallpaperSchedule {
+  id: string;
+  apply_at: string;
+  host_ids: string[];
+  group_ids: string[];
+  /** id обоев, "clear" — снять назначение, null — не менять */
+  desktop: string | null;
+  lock_screen: string | null;
+  comment: string | null;
+  status: "pending" | "applied" | "cancelled" | "failed";
+  result: string | null;
+  created_at: string;
+  applied_at: string | null;
+  created_by_name: string | null;
 }
 
 export interface HwComponents {

@@ -6,7 +6,8 @@ import type { Plugin } from "vite";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { nextRuns } from "../src/lib/cron";
 import { productState } from "../src/lib/activation";
-import type { ActivationState, HardwareEvent, HwComponents, LicenseActivation, LicenseProduct, PendingDevice } from "../src/api/types";
+import type { ActivationState, HardwareEvent, HwComponents, LicenseActivation, LicenseProduct, ObservedWallpaper, PendingDevice, Wallpaper, WallpaperAssignment, WallpaperSchedule, WallpaperState } from "../src/api/types";
+import { WALLPAPER_THUMBS } from "./wallpaperThumbs";
 
 // ---------- детерминированный генератор ----------
 let seed = 20261010;
@@ -39,6 +40,7 @@ interface Host {
   hw_network_adapters?: any[] | null; hw_disks?: any[] | null;
   license_activation?: LicenseActivation | null; activation_windows?: ActivationState | null; activation_office?: ActivationState | null;
   hw_components?: HwComponents | null; hw_pending_devices?: PendingDevice[]; hw_changed_at?: string | null;
+  wallpaper_state?: WallpaperState | null;
 }
 interface Credential { id: string; name: string; type: string; login: string | null; created_at: string; is_agent_managed: boolean }
 interface Software { id: string; host_id: string; name: string; version: string | null; install_method: string; status: string; detected_at: string }
@@ -249,6 +251,49 @@ for (let i = 0; i < 14; i++) makeHost(chance(0.5) ? `DESKTOP-${Math.floor(rnd() 
 for (let i = 0; i < 18; i++) credentials.push({ id: uuid(), name: `Agent SSH — ${pick(hosts).hostname}`, type: "ssh_key", login: "fleetagent", created_at: minutesAgo(60 * 24 * 60), is_agent_managed: true });
 groups.find((g) => g.name === "MR32")!.credential_id = credentials[0].id;
 
+// ---------- обои ----------
+const sha = (n: number) => n.toString(16).padStart(2, "0").repeat(32);
+const wallpapers: Wallpaper[] = WALLPAPER_THUMBS.slice(0, 4).map(([name, thumb], i) => ({
+  id: uuid(), name, original_name: `${name}.png`, content_type: "image/png", sha256: sha(i + 1), size_bytes: 2_400_000 + i * 310_000,
+  width: 3840, height: 2160, created_at: minutesAgo(60 * 24 * (10 - i)), thumbnail_base64: thumb,
+}));
+const observedWallpapers: ObservedWallpaper[] = [{ sha256: sha(99), path: "C:\\block_new.png", thumbnail_base64: WALLPAPER_THUMBS[4][1] }];
+const wallpaperAssignments: WallpaperAssignment[] = [
+  { id: uuid(), host_id: null, group_id: groups.find((g) => g.name === "SU5")!.id, kind: "lock_screen", wallpaper_id: wallpapers[2].id, updated_at: minutesAgo(600) },
+  { id: uuid(), host_id: null, group_id: groups.find((g) => g.name === "MR32")!.id, kind: "desktop", wallpaper_id: wallpapers[0].id, updated_at: minutesAgo(300) },
+];
+const wallpaperSchedules: (WallpaperSchedule & { created_by_name: string | null })[] = [
+  { id: uuid(), apply_at: new Date(new Date().getFullYear(), 11, 29, 8, 0).toISOString(), host_ids: [], group_ids: groups.filter((g) => !g.parent_id && g.is_auto).map((g) => g.id),
+    desktop: wallpapers[3].id, lock_screen: null, comment: "Новогодние обои", status: "pending", result: null, created_at: minutesAgo(90), applied_at: null, created_by_name: "admin" },
+  { id: uuid(), apply_at: minutesAgo(300), host_ids: [], group_ids: [groups.find((g) => g.name === "MR32")!.id], desktop: wallpapers[0].id, lock_screen: null,
+    comment: null, status: "applied", result: "Изменено назначений: 1", created_at: minutesAgo(2000), applied_at: minutesAgo(300), created_by_name: "operator" },
+];
+function groupChain(groupId: string | null) {
+  const chain: string[] = [];
+  for (let id = groupId; id && !chain.includes(id); id = groups.find((g) => g.id === id)?.parent_id ?? null) chain.push(id);
+  return chain;
+}
+function effectiveWallpaper(host: Host, kind: "desktop" | "lock_screen") {
+  const own = wallpaperAssignments.find((a) => a.host_id === host.id && a.kind === kind);
+  if (own) return wallpapers.find((w) => w.id === own.wallpaper_id);
+  for (const gid of groupChain(host.group_id)) {
+    const a = wallpaperAssignments.find((x) => x.group_id === gid && x.kind === kind);
+    if (a) return wallpapers.find((w) => w.id === a.wallpaper_id);
+  }
+  return undefined;
+}
+for (const h of hosts) {
+  if (!h.has_agent || h.agent_version !== AVAILABLE_AGENT) continue;
+  const current = (kind: "desktop" | "lock_screen") => {
+    const target = effectiveWallpaper(h, kind);
+    if (target && (h.status === "online" ? chance(0.97) : chance(0.6))) return { path: `C:\\ProgramData\\FleetManagerAgent\\wallpapers\\${target.sha256}.png`, sha256: target.sha256, source: "policy" };
+    if (kind === "lock_screen") return { path: "C:\\block_new.png", sha256: sha(99), source: "policy" };
+    return chance(0.5) ? { path: "C:\\Windows\\Web\\Wallpaper\\Windows\\img0.jpg", sha256: null, source: "user" } : null;
+  };
+  h.wallpaper_state = { desktop: current("desktop"), lock_screen: current("lock_screen"), applied_desktop_id: null, applied_lock_screen_id: null,
+    error: chance(0.01) ? "Экран блокировки: доступ к реестру запрещён" : null, reported_at: minutesAgo(Math.floor(rnd() * 5)) };
+}
+
 // Срабатывания в формате сервера (backend/services/hardware_change.py): что именно изменилось
 const withAgent = hosts.filter((x) => x.has_agent && x.hw_model);
 const hwAlert = (h: Host, message: string, minutes: number) =>
@@ -433,6 +478,43 @@ route("PATCH", "/users/{id}/role", (ctx, p) => { admin(ctx); const u = find(user
 // hosts
 route("GET", "/hosts", () => hosts);
 route("GET", "/hosts/groups", () => groups);
+route("GET", "/wallpapers", () => wallpapers);
+route("GET", "/wallpapers/observed", () => observedWallpapers);
+route("GET", "/wallpapers/assignments", () => wallpaperAssignments);
+route("GET", "/wallpapers/schedules", () => wallpaperSchedules);
+route("POST", "/wallpapers", (ctx) => { editor(ctx); throw new HttpError(400, "Загрузка изображений в мок-режиме не поддерживается"); });
+route("DELETE", "/wallpapers/schedules/{id}", (ctx, p) => { editor(ctx); find(wallpaperSchedules, p.id, "Расписание").status = "cancelled"; return null; });
+route("DELETE", "/wallpapers/{id}", (ctx, p) => {
+  editor(ctx);
+  if (wallpaperAssignments.some((a) => a.wallpaper_id === p.id)) throw new HttpError(409, "Изображение назначено ПК или группе — сначала снимите назначение");
+  wallpapers.splice(wallpapers.indexOf(find(wallpapers, p.id, "Изображение")), 1);
+  return null;
+});
+route("POST", "/wallpapers/assign", (ctx) => {
+  editor(ctx);
+  const b = ctx.body;
+  if (b.apply_at && new Date(b.apply_at).getTime() > Date.now()) {
+    const s = { id: uuid(), apply_at: b.apply_at, host_ids: b.host_ids, group_ids: b.group_ids, desktop: b.desktop ?? null, lock_screen: b.lock_screen ?? null,
+      comment: b.comment ?? null, status: "pending" as const, result: null, created_at: now().toISOString(), applied_at: null, created_by_name: ctx.user!.username };
+    wallpaperSchedules.unshift(s);
+    return { changed: 0, schedule_id: s.id };
+  }
+  let changed = 0;
+  for (const kind of ["desktop", "lock_screen"] as const) {
+    const value = b[kind];
+    if (!value) continue;
+    for (const [field, ids] of [["host_id", b.host_ids], ["group_id", b.group_ids]] as const) {
+      for (const id of ids as string[]) {
+        const i = wallpaperAssignments.findIndex((a) => a[field] === id && a.kind === kind);
+        if (value === "clear") { if (i >= 0) { wallpaperAssignments.splice(i, 1); changed++; } continue; }
+        if (i >= 0) wallpaperAssignments[i].wallpaper_id = value;
+        else wallpaperAssignments.push({ id: uuid(), host_id: field === "host_id" ? id : null, group_id: field === "group_id" ? id : null, kind, wallpaper_id: value, updated_at: now().toISOString() });
+        changed++;
+      }
+    }
+  }
+  return { changed, schedule_id: null };
+});
 route("GET", "/hosts/hardware-events", ({ query }) => {
   const since = Date.now() - Number(query.get("days") ?? 30) * 86400_000;
   return hardwareEvents
