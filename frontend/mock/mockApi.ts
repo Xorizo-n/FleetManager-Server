@@ -59,6 +59,7 @@ const users = [
   { id: uuid(), username: "admin", email: "admin@urfu.ru", role: "admin", totp_enabled: true, is_active: true },
   { id: uuid(), username: "operator", email: "operator@urfu.ru", role: "operator", totp_enabled: true, is_active: true },
   { id: uuid(), username: "viewer", email: "viewer@urfu.ru", role: "viewer", totp_enabled: false, is_active: true },
+  { id: uuid(), username: "i.i.ivanov", email: "I.I.Ivanov@urfu.ru", role: "operator", totp_enabled: true, is_active: true, auth_source: "ldap", display_name: "Иванов Иван Иванович" },
 ];
 
 const groups: Group[] = [];
@@ -480,6 +481,7 @@ route("POST", "/auth/login", ({ body }) => {
   const user = users.find((u) => u.username === body.username) ?? users[0];
   return { status: "ok", access_token: `mock-${user.username}`, refresh_token: `mock-${user.username}`, token_type: "bearer" };
 }, false);
+route("GET", "/auth/options", () => ({ ldap_enabled: true, ldap_domain: "at.urfu.ru" }), false);
 route("POST", "/auth/refresh", ({ body }) => ({ access_token: body.refresh_token, refresh_token: body.refresh_token, token_type: "bearer" }), false);
 route("GET", "/auth/me", ({ user }) => user);
 route("POST", "/auth/totp/reset/{id}", (ctx, p) => { admin(ctx); const u = find(users, p.id, "Пользователь"); u.totp_enabled = false; return { detail: "TOTP сброшен" }; });

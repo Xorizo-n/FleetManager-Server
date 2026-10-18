@@ -69,6 +69,8 @@ def update_user_role(
     target = db.get(User, user_id)
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
+    if target.auth_source == "ldap":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Роль доменной учётной записи задают её группы в AD")
 
     active_admins = db.execute(
         select(User)

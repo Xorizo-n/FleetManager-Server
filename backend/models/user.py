@@ -22,6 +22,11 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # "local" — пароль в password_hash, "ldap" — доменная учётная запись (services/ldap_auth.py):
+    # пароль проверяет домен, роль задают группы AD, password_hash не используется
+    auth_source: Mapped[str] = mapped_column(String(16), default="local", server_default="local", nullable=False)
+    ldap_guid: Mapped[str | None] = mapped_column(String(36), unique=True, nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.viewer, nullable=False)
 
     totp_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)

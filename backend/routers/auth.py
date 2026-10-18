@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -29,7 +30,10 @@ from services.security import (
     create_refresh_token,
     decode_token,
 )
+from services import ldap_auth, ldap_users
 from services import totp as totp_service
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -102,8 +106,12 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
     if check_rate_limit(f"login:{ip}", limit=10, window_seconds=60):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Слишком много попыток. Повторите через минуту.")
 
-    user = db.execute(select(User).where(User.username == payload.username)).scalar_one_or_none()
-    if user is None or not user.is_active or not verify_password(payload.password, user.password_hash):
+    user = ldap_users.find_local(db, payload.username)
+    if user is None and ldap_auth.enabled():
+        user = _ldap_login(db, payload, request)
+    elif user is None or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Неверный логин или пароль")
+    if not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Неверный логин или пароль")
 
     # Отладочный режим платформы: второй фактор выключен настройкой TOTP_REQUIRED.
@@ -128,6 +136,27 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
         return LoginTotpSetupRequired(pre_auth_token=pre_auth_token, provisioning_uri=uri, qr_code_base64=qr)
 
     return LoginTotpRequired(pre_auth_token=pre_auth_token)
+
+
+def _ldap_login(db: Session, payload: LoginRequest, request: Request) -> User:
+    """Доменная учётная запись: пароль проверяет AD, запись Fleet Manager создаётся при первом входе."""
+    try:
+        identity = ldap_auth.authenticate(payload.username, payload.password)
+        user, created = ldap_users.sync_user(db, identity)
+    except ldap_auth.LdapDenied as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc))
+    except ldap_auth.LdapUnavailable as exc:
+        log.warning("LDAP login failed: %s", exc)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Домен недоступен, попробуйте позже")
+    if created:
+        record_audit(db, user.id, "user.ldap_create", f"Создан доменный пользователь {user.username} ({user.role.value})", request)
+    return user
+
+
+@router.get("/options")
+def login_options():
+    """Что показать на странице входа: включён ли вход доменной учётной записью."""
+    return {"ldap_enabled": ldap_auth.enabled(), "ldap_domain": settings.ldap_domain if ldap_auth.enabled() else None}
 
 
 # SEC-02: Rate limiting — 5 TOTP attempts per pre_auth_token per 5 minutes.
@@ -178,11 +207,33 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
     user = db.get(User, uuid.UUID(token_payload["sub"]))
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Пользователь не найден")
+    if user.auth_source == ldap_users.LDAP:
+        _recheck_ldap(db, user)
 
     return TokenPair(
         access_token=create_access_token(str(user.id), user.role.value),
         refresh_token=create_refresh_token(str(user.id)),
     )
+
+
+def _recheck_ldap(db: Session, user: User) -> None:
+    """Отключённая в домене или исключённая из групп запись теряет доступ при обновлении токена."""
+    if not ldap_auth.enabled():
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Вход через домен выключен")
+    if not ldap_auth.can_recheck() or not user.ldap_guid:
+        return
+    try:
+        identity = ldap_auth.recheck(user.ldap_guid)
+    except ldap_auth.LdapUnavailable as exc:
+        # Сбой домена не выбрасывает из Fleet Manager тех, кто уже вошёл
+        log.warning("LDAP recheck of %s skipped: %s", user.username, exc)
+        return
+    if identity is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Учётная запись отключена или исключена из групп доступа")
+    if identity.role != user.role or identity.display_name != user.display_name:
+        user.role = identity.role
+        user.display_name = identity.display_name
+        db.commit()
 
 
 @router.get("/me", response_model=UserOut)
@@ -197,6 +248,8 @@ def change_password(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    if user.auth_source == ldap_users.LDAP:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Пароль доменной учётной записи меняется в домене")
     if not verify_password(payload.current_password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Текущий пароль неверный")
     if payload.new_password == payload.current_password:
