@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Check, ImageOff } from "lucide-react";
 import { apiClient } from "../api/client";
-import { keys, useFleet, useWallpapers } from "../api/queries";
+import { keys, useFleet, useWallpaperAssignments, useWallpapers } from "../api/queries";
 import type { Wallpaper, WallpaperKind } from "../api/types";
 import Modal from "./ui/Modal";
 import Button from "./ui/Button";
@@ -10,7 +10,7 @@ import { ErrorText } from "./ui/States";
 import { useToast } from "./ui/Toast";
 import HostPicker from "./HostPicker";
 import { compactSelection } from "../lib/groupTree";
-import { apiError, pcCount } from "../lib/format";
+import { apiError, pcCount, plural } from "../lib/format";
 import { KIND_LABELS, KINDS } from "../lib/wallpapers";
 
 type Choice = { mode: "keep" } | { mode: "clear" } | { mode: "set"; id: string };
@@ -27,6 +27,7 @@ export default function WallpaperAssignDialog({ initialHostIds = [], initialWall
   const toast = useToast();
   const { tree } = useFleet();
   const catalog = useWallpapers();
+  const assignments = useWallpaperAssignments();
   const [choices, setChoices] = useState<Record<WallpaperKind, Choice>>({
     desktop: initialWallpaperId ? { mode: "set", id: initialWallpaperId } : { mode: "keep" },
     lock_screen: { mode: "keep" },
@@ -40,6 +41,25 @@ export default function WallpaperAssignDialog({ initialHostIds = [], initialWall
 
   const compact = useMemo(() => compactSelection(tree, selection), [tree, selection]);
   const nothingChosen = KINDS.every((k) => choices[k].mode === "keep");
+
+  // Назначение группы снимает свои назначения её аудиторий и ПК (backend: services/wallpapers.apply_assignment)
+  const replaced = useMemo(() => {
+    const kinds = KINDS.filter((k) => choices[k].mode !== "keep");
+    const groupIds = new Set<string>();
+    const hostIds = new Set<string>();
+    for (const gid of compact.groupIds) {
+      tree.descendants(gid).forEach((d) => d !== gid && groupIds.add(d));
+      tree.byId.get(gid)?.hostIds.forEach((h) => hostIds.add(h));
+    }
+    let groups = 0;
+    let hosts = 0;
+    for (const a of assignments.data ?? []) {
+      if (!kinds.includes(a.kind)) continue;
+      if (a.group_id && groupIds.has(a.group_id)) groups += 1;
+      else if (a.host_id && hostIds.has(a.host_id) && !compact.hostIds.includes(a.host_id)) hosts += 1;
+    }
+    return { groups, hosts };
+  }, [choices, compact, tree, assignments.data]);
   const atDate = at ? new Date(at) : null;
   const laterInvalid = when === "later" && (!atDate || Number.isNaN(atDate.getTime()) || atDate.getTime() <= Date.now());
 
@@ -106,8 +126,15 @@ export default function WallpaperAssignDialog({ initialHostIds = [], initialWall
           <HostPicker value={selection} onChange={setSelection} height={260} />
           <p className="mt-1 text-xs text-subtle">
             Корпус, этаж или аудитория, выбранные целиком, получают назначение на всю группу — его получат и ПК, которые появятся в ней позже.
-            Своё назначение у ПК важнее назначения группы.
+            Назначение группы заменяет свои обои её аудиторий и ПК; чтобы аудитории остались свои, назначьте их ей после.
           </p>
+          {replaced.groups + replaced.hosts > 0 && (
+            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+              Внутри выбранных групп свои обои назначены{" "}
+              {[replaced.groups && plural(replaced.groups, "группе", "группам", "группам"), replaced.hosts && pcCount(replaced.hosts)].filter(Boolean).join(" и ")}
+              {" "}— {when === "now" ? "эти назначения будут сняты" : "при смене эти назначения будут сняты"}.
+            </p>
+          )}
         </section>
 
         <section className="space-y-2">
