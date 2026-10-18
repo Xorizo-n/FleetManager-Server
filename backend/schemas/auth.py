@@ -32,6 +32,8 @@ class UserOut(BaseModel):
     role: UserRole
     totp_enabled: bool
     is_active: bool
+    auth_source: str = "local"
+    display_name: str | None = None
 
 
 class UserRoleUpdate(BaseModel):

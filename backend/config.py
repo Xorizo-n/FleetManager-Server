@@ -25,6 +25,21 @@ class Settings(BaseSettings):
     # (TOTP_REQUIRED=false в .env). Обязателен к возврату в true.
     totp_required: bool = True
 
+    # Вход доменной учётной записью (services/ldap_auth.py). Группы ролей — DN через «;»,
+    # вложенные группы учитываются; без групп через домен не входит никто.
+    ldap_enabled: bool = False
+    ldap_url: str = "ldaps://at.urfu.ru"  # несколько через запятую; ldap:// — со StartTLS
+    ldap_domain: str = "at.urfu.ru"
+    ldap_base_dn: str = "DC=at,DC=urfu,DC=ru"
+    ldap_ca_cert: str = "/app/trust/urfu-root-ca.pem"
+    ldap_user_filter: str = "(&(objectCategory=person)(objectClass=user)(sAMAccountName={username}))"
+    ldap_bind_dn: str = ""
+    ldap_bind_password: str = ""
+    ldap_admin_groups: str = ""
+    ldap_operator_groups: str = ""
+    ldap_viewer_groups: str = ""
+    ldap_timeout_seconds: int = 5
+
     # Ansible
     ansible_playbooks_repo_dir: str = "/app/ansible_data/playbooks_repo"
     ansible_private_key_dir: str = "/app/ansible_data/keys"

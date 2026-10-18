@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Eye, EyeOff, Server } from "lucide-react";
 import { apiClient, setTokens } from "../api/client";
@@ -24,6 +24,14 @@ export default function Login() {
   const [step, setStep] = useState<Step>({ name: "credentials" });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [ldapDomain, setLdapDomain] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiClient
+      .get<{ ldap_enabled: boolean; ldap_domain: string | null }>("/auth/options")
+      .then(({ data }) => setLdapDomain(data.ldap_enabled ? data.ldap_domain : null))
+      .catch(() => setLdapDomain(null));
+  }, []);
 
   async function handleCredentialsSubmit(e: FormEvent) {
     e.preventDefault();
@@ -104,6 +112,9 @@ export default function Login() {
                 required
                 className="input-base"
               />
+              {mode === "login" && ldapDomain && (
+                <p className="mt-1 text-xs text-subtle">Учётная запись домена {ldapDomain} — логин как при входе в Windows</p>
+              )}
             </div>
             {mode === "register" && (
               <div>
@@ -133,7 +144,7 @@ export default function Login() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  minLength={8}
+                  minLength={mode === "register" ? 8 : undefined}
                   className="input-base pr-10"
                 />
                 <button

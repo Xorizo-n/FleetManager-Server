@@ -61,6 +61,7 @@ export default function Users() {
   const users = useQuery({ queryKey: ["users"], queryFn: () => apiClient.get<CurrentUser[]>("/users").then((r) => r.data) });
 
   const isAdmin = me?.role === "admin";
+  const domainSelf = me?.auth_source === "ldap";
   const [createForm, setCreateForm] = useState({ username: "", email: "", password: "", role: "viewer" as UserRole });
   const [creating, setCreating] = useState(false);
   const [pwdForm, setPwdForm] = useState({ current_password: "", new_password: "" });
@@ -120,13 +121,14 @@ export default function Users() {
     <div className="animate-fade-in space-y-4">
       <PageHeader
         title="Пользователи"
-        description="Роли и второй фактор. Свою роль изменить нельзя, последнего активного администратора понизить тоже нельзя."
+        description="Роли и второй фактор. Свою роль изменить нельзя, последнего активного администратора понизить тоже нельзя. Доменные пользователи появляются при первом входе, их роль задают группы AD."
       />
       <div className="table-shell">
         <table className="table-base">
           <thead>
             <tr>
               <th>Пользователь</th>
+              <th>Вход</th>
               <th>Email</th>
               <th>Роль</th>
               <th>TOTP</th>
@@ -136,21 +138,24 @@ export default function Users() {
           <tbody>
             {(users.data ?? []).map((u) => {
               const self = u.id === me?.id;
+              const domain = u.auth_source === "ldap";
               return (
                 <tr key={u.id}>
                   <td className="font-medium text-foreground">
                     {u.username}
                     {self && <span className="ml-1 text-xs font-normal text-subtle">(вы)</span>}
+                    {u.display_name && <div className="text-xs font-normal text-subtle">{u.display_name}</div>}
                   </td>
+                  <td className="text-muted-foreground">{domain ? "домен" : "локальный"}</td>
                   <td className="text-muted-foreground">{u.email}</td>
                   <td>
                     <select
                       value={u.role}
-                      disabled={self}
+                      disabled={self || domain}
                       onChange={(e) => changeRole(u, e.target.value as UserRole)}
                       className="input-base w-auto min-w-40 py-1.5"
                       aria-label={`Роль ${u.username}`}
-                      title={ROLE_OPTIONS.find((r) => r.value === u.role)?.hint}
+                      title={domain ? "Роль задают группы AD, обновляется при входе" : ROLE_OPTIONS.find((r) => r.value === u.role)?.hint}
                     >
                       {ROLE_OPTIONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                     </select>
@@ -213,6 +218,15 @@ export default function Users() {
           </div>
         )}
 
+        {domainSelf ? (
+          <div className="surface-card p-5">
+            <div className="mb-2 flex items-center gap-2">
+              <KeyRound className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+              <h2 className="text-base font-semibold text-foreground">Пароль</h2>
+            </div>
+            <p className="text-sm text-muted-foreground">Вы вошли доменной учётной записью: пароль меняется в Windows (Ctrl+Alt+Del → «Изменить пароль»), роль задают группы AD.</p>
+          </div>
+        ) : (
         <div className="surface-card p-5">
           <div className="mb-4 flex items-center gap-2">
             <KeyRound className="h-4 w-4 text-blue-600 dark:text-blue-400" />
@@ -231,6 +245,7 @@ export default function Users() {
             <Button type="submit" loading={pwdSaving} className="w-full">Изменить пароль</Button>
           </form>
         </div>
+        )}
       </div>
     </div>
   );

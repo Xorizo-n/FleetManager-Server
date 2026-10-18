@@ -10,6 +10,9 @@ export interface CurrentUser {
   role: UserRole;
   totp_enabled: boolean;
   is_active: boolean;
+  /** "ldap" — доменная учётная запись: пароль и роль задаёт AD */
+  auth_source: "local" | "ldap";
+  display_name: string | null;
 }
 
 interface AuthContextValue {
