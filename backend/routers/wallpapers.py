@@ -22,7 +22,15 @@ from schemas.wallpaper import (
     WallpaperScheduleOut,
 )
 from services.audit import record_audit
-from services.wallpapers import MAX_UPLOAD_BYTES, WallpaperError, apply_assignment, remove_file, store_upload, wallpaper_path
+from services.wallpapers import (
+    MAX_UPLOAD_BYTES,
+    WallpaperError,
+    apply_assignment,
+    perceptual_hash,
+    remove_file,
+    store_upload,
+    wallpaper_path,
+)
 
 router = APIRouter(prefix="/wallpapers", tags=["wallpapers"])
 
@@ -32,6 +40,7 @@ EDITOR_ROLES = (UserRole.admin, UserRole.operator)
 def _out(wallpaper: Wallpaper) -> WallpaperOut:
     out = WallpaperOut.model_validate(wallpaper)
     out.thumbnail_base64 = base64.b64encode(wallpaper.thumbnail).decode()
+    out.phash = perceptual_hash(wallpaper.sha256, wallpaper.thumbnail)
     return out
 
 
@@ -97,7 +106,8 @@ def wallpaper_image(wallpaper_id: uuid.UUID, db: Session = Depends(get_db), _: U
 def observed_wallpapers(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     """Миниатюры обоев не из каталога, которые стоят на ПК (обои образа и т. п.)."""
     return [
-        ObservedWallpaperOut(sha256=o.sha256, path=o.path, thumbnail_base64=base64.b64encode(o.thumbnail).decode())
+        ObservedWallpaperOut(sha256=o.sha256, path=o.path, thumbnail_base64=base64.b64encode(o.thumbnail).decode(),
+                             phash=perceptual_hash(o.sha256, o.thumbnail))
         for o in db.execute(select(ObservedWallpaper)).scalars()
     ]
 

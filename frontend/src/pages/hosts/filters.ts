@@ -75,8 +75,10 @@ export const DEVICE_FILTERS: { value: string; label: string; match: (h: Host) =>
 function showsWallpaper(h: Host, value: string) {
   const state = h.wallpaper_state;
   if (!state) return false;
+  // Несколько хэшей через запятую — варианты одной картинки (lib/wallpapers.ts, currentDistribution)
+  const hashes = new Set(value.split(","));
   return [state.desktop, state.lock_screen].some((c) =>
-    value === "none" ? !c : value.startsWith("path:") ? !!c && !c.sha256 && c.path.toLowerCase() === value.slice(5).toLowerCase() : c?.sha256 === value,
+    value === "none" ? !c : value.startsWith("path:") ? !!c && !c.sha256 && c.path.toLowerCase() === value.slice(5).toLowerCase() : !!c?.sha256 && hashes.has(c.sha256),
   );
 }
 
