@@ -2,7 +2,7 @@ import { ReactNode, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ArrowUpCircle, BellRing, ChevronRight, Clock, KeyRound, Keyboard, PlugZap, XCircle } from "lucide-react";
+import { ArrowUpCircle, BellRing, ChevronRight, Clock, HardDrive, KeyRound, Keyboard, PlugZap, XCircle } from "lucide-react";
 import { apiClient } from "../api/client";
 import { useAlertSummary, useFleet, useHardwareEvents, useTasks } from "../api/queries";
 import { useTheme } from "../context/ThemeContext";
@@ -12,6 +12,7 @@ import PageHeader from "../components/ui/PageHeader";
 import { useOpenTask } from "../components/TaskPanel";
 import { formatDateTime, pcCount, plural, STATUS_LABELS, taskTitle } from "../lib/format";
 import { hasActivationProblem, kmsUnreachable, notActivated } from "../lib/activation";
+import { DISK_CRITICAL_PERCENT, diskUsedPercent, fullestDisk } from "../lib/hardware";
 import { presence } from "../lib/devices";
 import { EventList } from "../components/Workplace";
 
@@ -42,6 +43,10 @@ export default function Dashboard() {
       kmsUnreachable: hosts.filter(kmsUnreachable).length,
       // Только включённые: у выключенного ПК состав — на момент выключения
       noInput: hosts.filter((h) => h.status === "online" && (presence(h, "keyboard") === "missing" || presence(h, "mouse") === "missing")).length,
+      diskFull: hosts.filter((h) => {
+        const disk = fullestDisk(h);
+        return !!disk && diskUsedPercent(disk) >= DISK_CRITICAL_PERCENT;
+      }).length,
     };
   }, [hosts]);
 
@@ -60,6 +65,7 @@ export default function Dashboard() {
 
   const attention: { show: boolean; icon: ReactNode; text: string; to: string; tone: string }[] = [
     { show: failed24h > 0, icon: <XCircle className="h-4 w-4" />, text: `${plural(failed24h, "задача завершилась", "задачи завершились", "задач завершились")} ошибкой за сутки`, to: "/tasks?status=failed", tone: "text-rose-600 dark:text-rose-400" },
+    { show: stats.diskFull > 0, icon: <HardDrive className="h-4 w-4" />, text: `Диск заполнен на ${DISK_CRITICAL_PERCENT}% и больше на ${pcCount(stats.diskFull)}`, to: "/hosts?devices=diskfull", tone: "text-rose-600 dark:text-rose-400" },
     { show: stats.noInput > 0, icon: <Keyboard className="h-4 w-4" />, text: `Нет клавиатуры или мыши на ${pcCount(stats.noInput)} в сети`, to: "/hosts?devices=noinput&status=online", tone: "text-rose-600 dark:text-rose-400" },
     {
       show: stats.activationProblem > 0,
@@ -70,7 +76,7 @@ export default function Dashboard() {
     },
     { show: outdated > 0, icon: <ArrowUpCircle className="h-4 w-4" />, text: `Устаревший агент на ${pcCount(outdated)} (актуальная ${agentVersions?.available_version ?? "—"})`, to: "/hosts?agent=outdated", tone: "text-amber-600 dark:text-amber-400" },
     { show: stats.stale > 0, icon: <Clock className="h-4 w-4" />, text: `${pcCount(stats.stale)} не проверялись больше 7 дней`, to: "/hosts?checked=older", tone: "text-amber-600 dark:text-amber-400" },
-    { show: alerts7d > 0, icon: <BellRing className="h-4 w-4" />, text: `${plural(alerts7d, "алерт", "алерта", "алертов")} от агентов за неделю на ${pcCount(alertHosts)} (оборудование)`, to: "/hosts?alerts=7", tone: "text-amber-600 dark:text-amber-400" },
+    { show: alerts7d > 0, icon: <BellRing className="h-4 w-4" />, text: `${plural(alerts7d, "алерт", "алерта", "алертов")} от агентов за неделю на ${pcCount(alertHosts)} (оборудование и диски)`, to: "/hosts?alerts=7", tone: "text-amber-600 dark:text-amber-400" },
     { show: stats.withoutAgent > 0, icon: <PlugZap className="h-4 w-4" />, text: `${pcCount(stats.withoutAgent)} без агента`, to: "/hosts?agent=without", tone: "text-muted-foreground" },
   ];
   const attentionItems = attention.filter((a) => a.show);

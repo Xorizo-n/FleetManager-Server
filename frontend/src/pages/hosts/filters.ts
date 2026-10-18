@@ -4,6 +4,7 @@ import type { Host, VersionStatus } from "../../api/types";
 import { GroupTree, NO_GROUP } from "../../lib/groupTree";
 import { hasActivationProblem, kmsUnreachable, notActivated } from "../../lib/activation";
 import { presence } from "../../lib/devices";
+import { DISK_CRITICAL_PERCENT, DISK_WARN_PERCENT, diskUsedPercent, fullestDisk } from "../../lib/hardware";
 
 // Фильтры реестра хостов живут в адресной строке: ссылкой можно поделиться,
 // а счётчики дашборда ведут сразу на отфильтрованный список.
@@ -61,11 +62,17 @@ export const ACTIVATION_FILTERS: { value: string; label: string; match: (h: Host
 ];
 
 const DAY = 86_400_000;
+const fullestPercent = (h: Host) => {
+  const disk = fullestDisk(h);
+  return disk ? diskUsedPercent(disk) : 0;
+};
 const changedWithin = (h: Host, days: number) => !!h.hw_changed_at && Date.now() - new Date(h.hw_changed_at).getTime() <= days * DAY;
 
 export const DEVICE_FILTERS: { value: string; label: string; match: (h: Host) => boolean }[] = [
   { value: "noinput", label: "Нет клавиатуры или мыши", match: (h) => presence(h, "keyboard") === "missing" || presence(h, "mouse") === "missing" },
   { value: "nomonitor", label: "Нет монитора", match: (h) => presence(h, "monitor") === "missing" },
+  { value: "diskfull", label: `Диск заполнен на ${DISK_CRITICAL_PERCENT}% и больше`, match: (h) => fullestPercent(h) >= DISK_CRITICAL_PERCENT },
+  { value: "diskwarn", label: `Диск заполнен на ${DISK_WARN_PERCENT}% и больше`, match: (h) => fullestPercent(h) >= DISK_WARN_PERCENT },
   { value: "pending", label: "Устройство пропало недавно", match: (h) => (h.hw_pending_devices ?? []).some((p) => p.missing) },
   { value: "changed7", label: "Изменения за 7 дней", match: (h) => changedWithin(h, 7) },
   { value: "changed30", label: "Изменения за 30 дней", match: (h) => changedWithin(h, 30) },

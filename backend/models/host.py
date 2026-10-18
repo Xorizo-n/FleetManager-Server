@@ -84,6 +84,8 @@ class Host(Base):
     hw_mac_address: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # Локальные диски от агента: имя («C:»), метка, ФС, размер и свободное место в байтах
     hw_disks: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Диски, по которым уже был алерт disk_full и которые ещё не освободились (services/disk_alerts.py)
+    disk_alarms: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # Активация Windows и Office от агента: продукты, CMID, проверка порта KMS (services/activation.py)
     license_activation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Состав рабочего места от агента: плата, BIOS, память, диски, видеокарты, мониторы,

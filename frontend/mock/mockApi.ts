@@ -318,6 +318,12 @@ const hwAlert = (h: Host, message: string, minutes: number) =>
   hwAlert(c, `Процессор: ${c.hw_processor} → Intel(R) Core(TM) i3-10100`, 60 * 50); // заменили процессор
   hwAlert(d, `Производитель: ${d.hw_manufacturer} → ASRock; Модель: ${d.hw_model} → B760 Pro RS/D4; Серийный номер: ${d.hw_serial_number} → M80-F3011200789`, 60 * 74); // заменили плату (или системный блок)
   hwAlert(e, "Память: 32 ГБ → 16 ГБ", 60 * 24 * 12);                            // старше недели: видно только с фильтром «за 30 дней»
+  // disk_full (backend/services/disk_alerts.py) — у ПК, чей диск заполнен на 90% и больше
+  for (const h of withAgent.filter((x) => (x.hw_disks ?? []).some((d: any) => d.size_bytes && 1 - d.free_bytes / d.size_bytes >= 0.895)).slice(0, 4)) {
+    const disk = h.hw_disks!.find((d: any) => 1 - d.free_bytes / d.size_bytes >= 0.895);
+    const gb = (v: number) => `${(v / 1024 ** 3).toFixed(v >= 10 * 1024 ** 3 ? 0 : 1).replace(".", ",")} ГБ`;
+    alerts.push({ id: uuid(), host_id: h.id, alert_type: "disk_full", message: `Диск ${disk.name} заполнен на ${Math.round((1 - disk.free_bytes / disk.size_bytes) * 100)}%: свободно ${gb(disk.free_bytes)} из ${gb(disk.size_bytes)}`, previous_fingerprint: null, current_fingerprint: null, created_at: minutesAgo(Math.floor(rnd() * 60 * 48)) });
+  }
   // Алерты старого формата, как оставшиеся на проде: агент присылал только хэши
   for (const h of withAgent.slice(60, 63)) {
     alerts.push({ id: uuid(), host_id: h.id, alert_type: "hardware_changed", message: "Hardware fingerprint changed.", previous_fingerprint: "315DCFF1A0B2C3D4", current_fingerprint: "2CB17C32E5F6A7B8", created_at: minutesAgo(60 * 24 * (15 + Math.floor(rnd() * 20))) });

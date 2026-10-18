@@ -13,6 +13,7 @@ from database import get_db
 from config import settings
 from dependencies import get_current_user, require_roles
 from models.agent import AgentAlert, AgentEnrollmentToken, HardwareEvent
+from services.disk_alerts import DISK_FULL, check_disks
 from models.credential import Credential, CredentialType
 from models.host import Host, HostStatus
 from models.software import InstallMethod, SoftwareItem, SoftwareStatus
@@ -384,6 +385,11 @@ def heartbeat(
     # Старые агенты диски не присылают — тогда последние известные сохраняются
     if payload.hardware.disks:
         host.hw_disks = [disk.model_dump() for disk in payload.hardware.disks]
+        disk_check = check_disks(host.hw_disks, host.disk_alarms)
+        if disk_check.messages:
+            db.add(AgentAlert(host_id=host.id, alert_type=DISK_FULL, message="; ".join(disk_check.messages)))
+        if disk_check.alarmed != (host.disk_alarms or []):
+            host.disk_alarms = disk_check.alarmed or None
     # Активацию агент собирает раз в час; без неё (старый агент или сбой сбора) остаётся прежняя
     if payload.activation is not None:
         host.license_activation = payload.activation.model_dump(mode="json")
