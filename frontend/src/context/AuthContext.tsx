@@ -13,6 +13,9 @@ export interface CurrentUser {
   /** "ldap" — доменная учётная запись: пароль и роль задаёт AD */
   auth_source: "local" | "ldap";
   display_name: string | null;
+  /** Доменная запись: роль по группам AD и назначенная администратором вручную (важнее групп) */
+  ldap_role?: UserRole | null;
+  role_override?: UserRole | null;
 }
 
 interface AuthContextValue {

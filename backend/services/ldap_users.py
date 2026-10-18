@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from config import settings
-from models.user import User
+from models.user import User, UserRole
 from services.ldap_auth import LdapDenied, LdapIdentity
 
 LDAP = "ldap"
@@ -56,7 +56,22 @@ def sync_user(db: Session, identity: LdapIdentity) -> tuple[User, bool]:
     user.username = identity.username
     user.email = email
     user.display_name = identity.display_name
-    user.role = identity.role
+    apply_role(user, identity.role)
     db.commit()
     db.refresh(user)
     return user, created
+
+
+def apply_role(user: User, group_role: UserRole) -> bool:
+    """Роль по группам AD; назначенная вручную важнее. True — что-то изменилось."""
+    effective = user.role_override or group_role
+    changed = (user.ldap_role, user.role) != (group_role, effective)
+    user.ldap_role = group_role
+    user.role = effective
+    return changed
+
+
+def set_manual_role(user: User, role: UserRole) -> None:
+    """Роль, назначенная администратором. Совпадает с ролью по группам — снова действуют группы."""
+    user.role_override = None if role == user.ldap_role else role
+    user.role = role

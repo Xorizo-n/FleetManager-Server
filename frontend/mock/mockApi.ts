@@ -59,7 +59,8 @@ const users = [
   { id: uuid(), username: "admin", email: "admin@urfu.ru", role: "admin", totp_enabled: true, is_active: true },
   { id: uuid(), username: "operator", email: "operator@urfu.ru", role: "operator", totp_enabled: true, is_active: true },
   { id: uuid(), username: "viewer", email: "viewer@urfu.ru", role: "viewer", totp_enabled: false, is_active: true },
-  { id: uuid(), username: "i.i.ivanov", email: "I.I.Ivanov@urfu.ru", role: "operator", totp_enabled: true, is_active: true, auth_source: "ldap", display_name: "Иванов Иван Иванович" },
+  { id: uuid(), username: "i.i.ivanov", email: "I.I.Ivanov@urfu.ru", role: "operator", totp_enabled: true, is_active: true, auth_source: "ldap", display_name: "Иванов Иван Иванович", ldap_role: "operator", role_override: null },
+  { id: uuid(), username: "p.p.petrov", email: "P.P.Petrov@urfu.ru", role: "admin", totp_enabled: true, is_active: true, auth_source: "ldap", display_name: "Петров Пётр", ldap_role: "operator", role_override: "admin" },
 ];
 
 const groups: Group[] = [];
@@ -486,7 +487,13 @@ route("POST", "/auth/refresh", ({ body }) => ({ access_token: body.refresh_token
 route("GET", "/auth/me", ({ user }) => user);
 route("POST", "/auth/totp/reset/{id}", (ctx, p) => { admin(ctx); const u = find(users, p.id, "Пользователь"); u.totp_enabled = false; return { detail: "TOTP сброшен" }; });
 route("GET", "/users", (ctx) => { admin(ctx); return users; });
-route("PATCH", "/users/{id}/role", (ctx, p) => { admin(ctx); const u = find(users, p.id, "Пользователь"); u.role = ctx.body.role; return u; });
+route("PATCH", "/users/{id}/role", (ctx, p) => {
+  admin(ctx);
+  const u: any = find(users, p.id, "Пользователь");
+  u.role = ctx.body.role;
+  if (u.auth_source === "ldap") u.role_override = u.role === u.ldap_role ? null : u.role;
+  return u;
+});
 
 // hosts
 route("GET", "/hosts", () => hosts);

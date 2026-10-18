@@ -27,6 +27,10 @@ class User(Base):
     auth_source: Mapped[str] = mapped_column(String(16), default="local", server_default="local", nullable=False)
     ldap_guid: Mapped[str | None] = mapped_column(String(36), unique=True, nullable=True)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Доменная запись: роль по группам AD на последнем входе и роль, назначенная администратором
+    # вручную, — она важнее групп (services/ldap_users.apply_role). role — действующая роль.
+    ldap_role: Mapped[UserRole | None] = mapped_column(Enum(UserRole), nullable=True)
+    role_override: Mapped[UserRole | None] = mapped_column(Enum(UserRole), nullable=True)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.viewer, nullable=False)
 
     totp_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)

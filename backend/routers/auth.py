@@ -230,9 +230,9 @@ def _recheck_ldap(db: Session, user: User) -> None:
         return
     if identity is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Учётная запись отключена или исключена из групп доступа")
-    if identity.role != user.role or identity.display_name != user.display_name:
-        user.role = identity.role
-        user.display_name = identity.display_name
+    renamed = identity.display_name != user.display_name
+    user.display_name = identity.display_name
+    if ldap_users.apply_role(user, identity.role) or renamed:
         db.commit()
 
 

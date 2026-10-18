@@ -17,8 +17,9 @@ from services.security import create_refresh_token, hash_password
 settings.ldap_enabled = True
 settings.totp_required = False
 client = TestClient(app)
+mock.patch("routers.auth.check_rate_limit", return_value=False).start()
 db = SessionLocal()
-db.query(User).filter(User.username.in_(["ivanov", "fm-local"])).delete(synchronize_session=False)
+db.query(User).filter(User.username.in_(["ivanov", "fm-local", "fm-helper"])).delete(synchronize_session=False)
 db.commit()
 
 guid = str(uuid.uuid4())
@@ -47,6 +48,41 @@ assert r.status_code == 200
 db.expire_all()
 assert db.query(User).filter(User.ldap_guid == guid).one().role == UserRole.admin
 assert db.query(User).filter(User.username == "ivanov").count() == 1
+
+# Роль, назначенная администратором, переживает вход; роль, равная групповой, снова отдаёт роль группам
+from services import ldap_users  # noqa: E402
+
+user = db.query(User).filter(User.ldap_guid == guid).one()
+ldap_users.set_manual_role(user, UserRole.viewer)
+db.commit()
+assert user.role_override == UserRole.viewer
+r, _ = login(result=ldap_auth.LdapIdentity(**{**identity.__dict__, "role": UserRole.admin}))
+db.expire_all()
+user = db.query(User).filter(User.ldap_guid == guid).one()
+assert (user.role, user.ldap_role, user.role_override) == (UserRole.viewer, UserRole.admin, UserRole.viewer), (user.role, user.ldap_role)
+ldap_users.set_manual_role(user, UserRole.admin)
+db.commit()
+assert user.role_override is None and user.role == UserRole.admin
+
+# Ручное повышение через API администратора
+r, _ = login(result=identity)  # группы: оператор
+admin_token = r.json()["access_token"]
+db.expire_all()
+assert db.query(User).filter(User.ldap_guid == guid).one().role == UserRole.operator
+helper = User(username="fm-helper", email="fm-helper@example.org", password_hash=hash_password("helper-pass-123"), role=UserRole.admin)
+db.add(helper)
+db.commit()
+helper_token = client.post("/auth/login", json={"username": "fm-helper", "password": "helper-pass-123"}).json()["access_token"]
+user = db.query(User).filter(User.ldap_guid == guid).one()
+r = client.patch(f"/users/{user.id}/role", json={"role": "admin"}, headers={"Authorization": "Bearer " + helper_token})
+assert r.status_code == 200 and r.json()["role"] == "admin" and r.json()["role_override"] == "admin" and r.json()["ldap_role"] == "operator", r.text
+r, _ = login(result=identity)
+db.expire_all()
+assert db.query(User).filter(User.ldap_guid == guid).one().role == UserRole.admin
+r = client.patch(f"/users/{user.id}/role", json={"role": "operator"}, headers={"Authorization": "Bearer " + helper_token})
+assert r.status_code == 200 and r.json()["role_override"] is None, r.text
+db.delete(db.get(User, helper.id))
+db.commit()
 
 # Отказ домена и недоступность домена
 r, _ = login(result=ldap_auth.LdapDenied("Неверный логин или пароль"))
@@ -93,6 +129,6 @@ assert r.status_code == 401 and not auth.called
 r, _ = login(username="AT\\fm-local", result=ldap_auth.LdapIdentity(username="fm-local", guid=str(uuid.uuid4()), email=None, display_name=None, role=UserRole.viewer))
 assert r.status_code == 401 and "локальной" in r.json()["detail"], r.text
 
-db.query(User).filter(User.username.in_(["ivanov", "fm-local"])).delete(synchronize_session=False)
+db.query(User).filter(User.username.in_(["ivanov", "fm-local", "fm-helper"])).delete(synchronize_session=False)
 db.commit()
 print("integration_ldap: ok")
