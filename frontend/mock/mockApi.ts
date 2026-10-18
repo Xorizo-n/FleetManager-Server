@@ -510,7 +510,7 @@ route("POST", "/settings/ldap/check", (ctx) => {
   admin(ctx);
   const b = ctx.body;
   const groups = (["admin", "operator", "viewer"] as const).flatMap((role) => (b[`${role}_groups`] as string[]).map((dn) => ({ dn, role, found: ldapGroups.some((g) => g.dn === dn), members: ldapGroups.some((g) => g.dn === dn) ? 9 : null })));
-  const user = b.username ? { username: b.username, found: true, display_name: "Иванов Иван", role: groups.find((g) => g.found)?.role ?? null } : null;
+  const user = b.username ? { username: "Ivan.Ivanov", found: true, matched_by: b.username.includes("@") ? "UPN или почта" : "логин Windows", display_name: "Иванов Иван", role: groups.find((g) => g.found)?.role ?? null } : null;
   return { ok: true, bind: "ok", groups, user };
 });
 route("PATCH", "/users/{id}/role", (ctx, p) => {

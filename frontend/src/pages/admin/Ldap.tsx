@@ -31,7 +31,7 @@ interface CheckReport {
   error?: string;
   bind?: string;
   groups?: { dn: string; role: UserRole; found: boolean; members: number | null }[];
-  user?: { username: string; found: boolean; display_name?: string | null; role?: UserRole | null } | null;
+  user?: { username: string; found: boolean; ambiguous?: boolean; matched_by?: string | null; display_name?: string | null; role?: UserRole | null } | null;
 }
 
 interface FoundGroup {
@@ -339,7 +339,7 @@ export default function Ldap() {
           <p className="mt-1 text-sm text-muted-foreground">Проверяет настройки с этой страницы до сохранения: служебную запись, группы и роль пользователя. Пароль пользователя не нужен.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <input value={checkUser} onChange={(e) => setCheckUser(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); check(); } }} placeholder="Логин для проверки роли (необязательно)" className="input-base max-w-xs py-1.5" aria-label="Логин для проверки" />
+          <input value={checkUser} onChange={(e) => setCheckUser(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); check(); } }} placeholder="Логин, почта или имя (необязательно)" className="input-base max-w-xs py-1.5" aria-label="Логин для проверки" />
           <Button size="sm" variant="secondary" type="button" onClick={check} loading={checking} disabled={!form.bind_dn || !hasPassword}>
             Проверить
           </Button>
@@ -365,10 +365,13 @@ export default function Ldap() {
                 {report.user.role ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" /> : <XCircle className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />}
                 <span>
                   {!report.user.found
-                    ? `${report.user.username}: не найден в домене`
+                    ? report.user.ambiguous
+                      ? `${report.user.username}: под этим именем несколько записей — войти можно только логином Windows`
+                      : `${report.user.username}: не найден в домене`
                     : report.user.role
-                      ? `${report.user.display_name || report.user.username} войдёт с ролью «${ROLE_LABEL[report.user.role]}»`
-                      : `${report.user.display_name || report.user.username}: не войдёт — отключён или не входит в группы`}
+                      ? `${report.user.display_name || report.user.username} (${report.user.username}) войдёт с ролью «${ROLE_LABEL[report.user.role]}»`
+                      : `${report.user.display_name || report.user.username} (${report.user.username}): не войдёт — отключён или не входит в группы`}
+                  {report.user.matched_by && <span className="ml-1 text-xs text-subtle">· найден как {report.user.matched_by}</span>}
                 </span>
               </li>
             )}

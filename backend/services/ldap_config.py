@@ -1,6 +1,6 @@
 """Действующие настройки входа через домен: из интерфейса (таблица ldap_settings), иначе LDAP_* из .env.
 
-Сертификат CA, фильтр поиска пользователя и таймаут задаются только в .env.
+Сертификат CA, фильтр записей пользователей и таймаут задаются только в .env.
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ class LdapConfig:
     viewer_groups: list[str] = field(default_factory=list)
     source: str = "env"
     ca_cert: str = ""
-    user_filter: str = ""
+    person_filter: str = "(&(objectCategory=person)(objectClass=user))"
     timeout_seconds: int = 5
 
 
@@ -54,7 +54,7 @@ def from_settings() -> LdapConfig:
         operator_groups=split_groups(settings.ldap_operator_groups),
         viewer_groups=split_groups(settings.ldap_viewer_groups),
         ca_cert=settings.ldap_ca_cert,
-        user_filter=settings.ldap_user_filter,
+        person_filter=settings.ldap_person_filter,
         timeout_seconds=settings.ldap_timeout_seconds,
     )
 
