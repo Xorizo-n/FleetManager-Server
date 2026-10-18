@@ -113,7 +113,7 @@ export default function Login() {
                 className="input-base"
               />
               {mode === "login" && ldapDomain && (
-                <p className="mt-1 text-xs text-subtle">Учётная запись домена {ldapDomain} — логин как при входе в Windows</p>
+                <p className="mt-1 text-xs text-subtle">Учётная запись домена {ldapDomain}: логин Windows или почта @urfu.ru</p>
               )}
             </div>
             {mode === "register" && (

@@ -19,14 +19,16 @@ class FakeEntry:
 
 
 class FakeConn:
-    """Каталог из одной записи: фильтр по sAMAccountName/objectGUID и проверка членства в группах."""
+    """Каталог из одной записи (copies — сколько одинаковых): поиск по логину/objectGUID и членство в группах."""
 
-    def __init__(self, groups=(), disabled=False):
+    def __init__(self, groups=(), disabled=False, copies=1):
         self.groups = set(groups)
+        self.copies = copies
         self.attrs = {
             "sAMAccountName": ["ivanov"],
+            "cn": ["Иванов Иван"],
             "mail": ["I.I.Ivanov@urfu.ru"],
-            "userPrincipalName": ["ivanov@at.urfu.ru"],
+            "userPrincipalName": ["i.i.ivanov@urfu.ru"],
             "displayName": ["Иванов Иван"],
             "userAccountControl": [514 if disabled else 512],
             "objectGUID": ["{" + GUID + "}"],
@@ -42,9 +44,15 @@ class FakeConn:
             group = search_filter[len(f"(memberOf:{ldap_auth.IN_CHAIN}:="):-1]
             if base == USER_DN and group in self.groups:
                 self.entries = [FakeEntry(USER_DN, {})]
-        elif "sAMAccountName=ivanov)" in search_filter or search_filter.startswith("(objectGUID="):
-            self.entries = [FakeEntry(USER_DN, self.attrs)]
+        elif self.matches(search_filter) or search_filter.startswith("(objectGUID="):
+            self.entries = [FakeEntry(USER_DN, self.attrs)] * self.copies
         return bool(self.entries)
+
+    def matches(self, search_filter):
+        a = {k: v[0] for k, v in self.attrs.items()}
+        atoms = [f"(sAMAccountName={a['sAMAccountName']})", f"(cn={a['cn']})", f"(userPrincipalName={a['userPrincipalName']})",
+                 f"(mail={a['mail']})", f"(userPrincipalName={a['userPrincipalName'].split('@')[0]}@*)", f"(mail={a['mail'].split('@')[0]}@*)"]
+        return any(atom.lower() in search_filter.lower() for atom in atoms)
 
     def unbind(self):
         self.unbound = True
@@ -66,22 +74,60 @@ class LdapAuthTests(unittest.TestCase):
         """Подменяет bind: верный пароль у ivanov и у служебной записи, остальное — неверный пароль."""
         calls = []
 
-        def fake_bind(user, pwd):
+        def fake_bind(user, pwd, timeout=None):
             calls.append(user)
             return conn if pwd == password else None
 
         return mock.patch.object(ldap_auth, "_bind", side_effect=fake_bind), calls
 
-    def test_split_login_accepts_domain_forms(self):
-        self.assertEqual(ldap_auth.split_login("ivanov"), "ivanov")
-        self.assertEqual(ldap_auth.split_login(r"AT\ivanov"), "ivanov")
-        self.assertEqual(ldap_auth.split_login("ivanov@AT.urfu.ru"), "ivanov")
-        self.assertEqual(ldap_auth.split_login(" i.i.ivanov "), "i.i.ivanov")
+    def test_normalize_login_strips_domain_prefix(self):
+        self.assertEqual(ldap_auth.normalize_login(r"AT\ivanov"), "ivanov")
+        self.assertEqual(ldap_auth.normalize_login(" i.i.ivanov@urfu.ru "), "i.i.ivanov@urfu.ru")
+        self.assertEqual(ldap_auth.normalize_login("Иванов Иван"), "Иванов Иван")
 
-    def test_split_login_rejects_other_domain_and_filter_syntax(self):
-        self.assertIsNone(ldap_auth.split_login("ivanov@gmail.com"))
-        self.assertIsNone(ldap_auth.split_login("*)(objectClass=*"))
-        self.assertIsNone(ldap_auth.split_login(""))
+    def test_normalize_login_rejects_filter_syntax(self):
+        self.assertIsNone(ldap_auth.normalize_login("*)(objectClass=*"))
+        self.assertIsNone(ldap_auth.normalize_login("a@b@c"))
+        self.assertIsNone(ldap_auth.normalize_login(""))
+
+    def test_login_matches_go_from_exact_to_loose(self):
+        self.assertEqual([how for how, _ in ldap_auth.login_matches("m.i.rapoport")], ["логин Windows", "имя записи", "UPN или почта без домена"])
+        self.assertEqual(ldap_auth.login_matches("m.i.rapoport")[2][1], "(|(userPrincipalName=m.i.rapoport@*)(mail=m.i.rapoport@*))")
+        self.assertEqual([how for how, _ in ldap_auth.login_matches("m.i.rapoport@urfu.ru")], ["UPN или почта"])
+        # @домен AD — это и неявный UPN: sAMAccountName@at.urfu.ru
+        self.assertEqual(ldap_auth.login_matches("Mikhail.Rapoport@at.urfu.ru")[0], ("логин Windows", "(sAMAccountName=Mikhail.Rapoport)"))
+
+    def test_every_login_form_finds_the_same_account(self):
+        conn = FakeConn(groups=[ADMINS])
+        with mock.patch.multiple(settings, ldap_bind_dn="CN=svc-fleet,DC=at,DC=urfu,DC=ru", ldap_bind_password="secret"):
+            for login in ("ivanov", r"AT\ivanov", "ivanov@at.urfu.ru", "Иванов Иван", "i.i.ivanov", "i.i.ivanov@urfu.ru", "I.I.IVANOV@URFU.RU"):
+                patch, calls = self.bind_as(conn)
+                with patch:
+                    identity = ldap_auth.authenticate(login, "secret")
+                self.assertEqual((identity.username, calls[-1]), ("ivanov", USER_DN), login)
+
+    def test_timeout_in_the_middle_of_a_search_is_domain_unavailable(self):
+        from ldap3.core.exceptions import LDAPSocketReceiveError
+
+        conn = FakeConn(groups=[ADMINS])
+        conn.search = mock.Mock(side_effect=LDAPSocketReceiveError("The read operation timed out"))
+        patch, _ = self.bind_as(conn)
+        with patch, self.assertRaises(ldap_auth.LdapUnavailable):
+            ldap_auth.authenticate("ivanov", "secret")
+
+    def test_ambiguous_login_is_denied(self):
+        conn = FakeConn(groups=[ADMINS], copies=2)
+        with mock.patch.multiple(settings, ldap_bind_dn="CN=svc-fleet,DC=at,DC=urfu,DC=ru", ldap_bind_password="secret"):
+            patch, calls = self.bind_as(conn)
+            with patch, self.assertRaisesRegex(ldap_auth.LdapDenied, "несколько"):
+                ldap_auth.authenticate("Иванов Иван", "secret")
+        self.assertNotIn(USER_DN, calls)
+
+    def test_without_service_account_upn_binds_as_is(self):
+        patch, calls = self.bind_as(FakeConn(groups=[ADMINS]))
+        with patch:
+            self.assertEqual(ldap_auth.authenticate("i.i.ivanov@urfu.ru", "secret").username, "ivanov")
+        self.assertEqual(calls, ["i.i.ivanov@urfu.ru"])
 
     def test_role_groups_split_on_semicolon_because_dn_has_commas(self):
         with mock.patch.object(settings, "ldap_admin_groups", f"{ADMINS}; CN=Other,DC=at,DC=urfu,DC=ru"):
@@ -144,7 +190,7 @@ class LdapAuthTests(unittest.TestCase):
             self.assertEqual(calls, ["CN=svc-fleet,DC=at,DC=urfu,DC=ru", USER_DN])
             self.assertEqual(identity.role, UserRole.admin)
 
-            with mock.patch.object(ldap_auth, "_bind", side_effect=lambda u, p: conn if u.startswith("CN=svc") else None):
+            with mock.patch.object(ldap_auth, "_bind", side_effect=lambda u, p, t=None: conn if u.startswith("CN=svc") else None):
                 with self.assertRaisesRegex(ldap_auth.LdapDenied, "Неверный логин"):
                     ldap_auth.authenticate("ivanov", "wrong")
 
@@ -176,9 +222,9 @@ class LdapAuthTests(unittest.TestCase):
         draft = ldap_config.LdapConfig(enabled=True, url="ldaps://dc", domain="example.org", base_dn="DC=example,DC=org",
                                        operator_groups=[VIEWERS])
         with ldap_config.use(draft):
-            self.assertEqual(ldap_auth.split_login("ivanov@example.org"), "ivanov")
+            self.assertEqual(ldap_auth.login_matches("ivanov@example.org")[0][0], "логин Windows")
             self.assertEqual(dict(ldap_auth.role_groups())[UserRole.operator], [VIEWERS])
-        self.assertIsNone(ldap_auth.split_login("ivanov@example.org"))
+        self.assertEqual(ldap_auth.login_matches("ivanov@example.org")[0][0], "UPN или почта")
 
     def test_diagnose_reports_groups_and_user_role(self):
         conn = FakeConn(groups=[VIEWERS])
@@ -188,7 +234,7 @@ class LdapAuthTests(unittest.TestCase):
             if search_filter == "(objectClass=group)":
                 conn.entries = [FakeEntry(base, {})] if base == VIEWERS else []
                 return bool(conn.entries)
-            if search_filter.startswith("(&(objectCategory=person)") and "memberOf:" in search_filter:
+            if search_filter.startswith("(&") and "memberOf:" in search_filter:
                 conn.entries = [FakeEntry(USER_DN, {})] * 3
                 return True
             return conn_search(base, search_filter, scope, attributes, size_limit)
@@ -197,10 +243,10 @@ class LdapAuthTests(unittest.TestCase):
         with mock.patch.multiple(settings, ldap_bind_dn="CN=svc-fleet,DC=at,DC=urfu,DC=ru", ldap_bind_password="secret"):
             patch, _ = self.bind_as(conn)
             with patch:
-                report = ldap_auth.diagnose("AT\ivanov")
+                report = ldap_auth.diagnose(r"AT\ivanov")
         self.assertEqual(report["bind"], "ok")
         self.assertEqual([(g["dn"], g["found"], g["members"]) for g in report["groups"]], [(ADMINS, False, None), (VIEWERS, True, 3)])
-        self.assertEqual(report["user"], {"username": "ivanov", "found": True, "display_name": "Иванов Иван", "role": "viewer"})
+        self.assertEqual(report["user"], {"username": "ivanov", "found": True, "matched_by": "логин Windows", "display_name": "Иванов Иван", "role": "viewer"})
 
     def test_service_account_required_for_group_search(self):
         with self.assertRaisesRegex(ldap_auth.LdapUnavailable, "служебная"):

@@ -32,7 +32,8 @@ class Settings(BaseSettings):
     ldap_domain: str = "at.urfu.ru"
     ldap_base_dn: str = "DC=at,DC=urfu,DC=ru"
     ldap_ca_cert: str = "/app/trust/urfu-root-ca.pem"
-    ldap_user_filter: str = "(&(objectCategory=person)(objectClass=user)(sAMAccountName={username}))"
+    # Какие записи считаются пользователями; к нему добавляется совпадение по логину (ldap_auth.login_matches)
+    ldap_person_filter: str = "(&(objectCategory=person)(objectClass=user))"
     ldap_bind_dn: str = ""
     ldap_bind_password: str = ""
     ldap_admin_groups: str = ""
