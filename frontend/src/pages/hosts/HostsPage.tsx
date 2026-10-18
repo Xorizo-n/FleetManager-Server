@@ -18,7 +18,6 @@ import {
   Trash2,
   Upload,
   X,
-  XCircle,
 } from "lucide-react";
 import { apiClient } from "../../api/client";
 import { keys, useAlertSummary, useCanEdit, useFleet } from "../../api/queries";
@@ -27,7 +26,6 @@ import PageHeader from "../../components/ui/PageHeader";
 import Button from "../../components/ui/Button";
 import Menu from "../../components/ui/Menu";
 import Modal from "../../components/ui/Modal";
-import SearchInput from "../../components/ui/SearchInput";
 import { Empty, Loading } from "../../components/ui/States";
 import { useToast } from "../../components/ui/Toast";
 import { useOpenTask } from "../../components/TaskPanel";
@@ -37,17 +35,19 @@ import GroupSidebar from "./GroupSidebar";
 import HostTable, { ColumnSet } from "./HostTable";
 import HostDrawer from "./HostDrawer";
 import { AddHostDialog, CredentialDialog, GroupDialog } from "./dialogs";
-import { ACTIVATION_FILTERS, DEVICE_FILTERS, AGENT_FILTERS, ALERT_FILTERS, alertDays, CHECKED_FILTERS, filterHosts, useHostFilters } from "./filters";
+import FilterPanel from "./FilterPanel";
+import { alertDays, filterHosts, useHostFilters } from "./filters";
 import { downloadFromApi } from "../../lib/download";
-import { apiError, OS_OPTIONS, osLabel, pcCount, waitingNotice } from "../../lib/format";
+import { apiError, pcCount, waitingNotice } from "../../lib/format";
 
 const VIEW_KEY = "fm.hosts.view";
 
-function readView(): { columns: ColumnSet; grouped: boolean } {
+function readView(): { columns: ColumnSet; grouped: boolean; filtersOpen: boolean } {
+  const defaults = { columns: "main" as ColumnSet, grouped: true, filtersOpen: false };
   try {
-    return { columns: "main", grouped: true, ...JSON.parse(localStorage.getItem(VIEW_KEY) ?? "{}") };
+    return { ...defaults, ...JSON.parse(localStorage.getItem(VIEW_KEY) ?? "{}") };
   } catch {
-    return { columns: "main", grouped: true };
+    return defaults;
   }
 }
 
@@ -57,7 +57,7 @@ export default function HostsPage() {
   const toast = useToast();
   const openTask = useOpenTask();
   const { hosts, tree, hostById, versionOf, agentVersions, isLoading } = useFleet();
-  const { filters, setFilter, reset, activeCount } = useHostFilters();
+  const { filters, setFilter, reset } = useHostFilters();
   const [params, setParams] = useSearchParams();
   const [view, setView] = useState(readView);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -214,55 +214,17 @@ export default function HostsPage() {
         </aside>
 
         <div className="min-w-0 space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <SearchInput value={filters.q} onChange={(v) => setFilter("q", v)} placeholder="Имя, IP, серийный номер, комментарий" className="min-w-[220px] flex-1" />
-            <select value={filters.group} onChange={(e) => setFilter("group", e.target.value)} className="input-base w-auto max-w-[14rem] py-2 xl:hidden" aria-label="Группа">
-              <option value="">Все группы</option>
-              {tree.options.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
-            </select>
-            <select value={filters.status} onChange={(e) => setFilter("status", e.target.value)} className="input-base w-auto py-2" aria-label="Статус">
-              <option value="">Статус</option>
-              <option value="online">online</option>
-              <option value="offline">offline</option>
-              <option value="unknown">неизвестно</option>
-            </select>
-            <select value={filters.agent} onChange={(e) => setFilter("agent", e.target.value)} className="input-base w-auto py-2" aria-label="Агент">
-              <option value="">Агент</option>
-              {AGENT_FILTERS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-            <select value={filters.os} onChange={(e) => setFilter("os", e.target.value)} className="input-base w-auto py-2" aria-label="ОС">
-              <option value="">ОС</option>
-              {OS_OPTIONS.map((o) => <option key={o} value={o}>{osLabel(o)}</option>)}
-            </select>
-            <select value={filters.checked} onChange={(e) => setFilter("checked", e.target.value)} className="input-base w-auto py-2" aria-label="Проверен">
-              <option value="">Проверен</option>
-              {CHECKED_FILTERS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-            <select value={filters.alerts} onChange={(e) => setFilter("alerts", e.target.value)} className="input-base w-auto py-2" aria-label="Алерты">
-              <option value="">Алерты</option>
-              {ALERT_FILTERS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-            <select value={filters.activation} onChange={(e) => setFilter("activation", e.target.value)} className="input-base w-auto py-2" aria-label="Активация">
-              <option value="">Активация</option>
-              {ACTIVATION_FILTERS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-            <select value={filters.devices} onChange={(e) => setFilter("devices", e.target.value)} className="input-base w-auto py-2" aria-label="Оборудование">
-              <option value="">Оборудование</option>
-              {DEVICE_FILTERS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-            {filters.wallpaper && (
-              <button className="btn-secondary btn-sm" onClick={() => setFilter("wallpaper", "")} title="Фильтр со страницы «Обои»">
-                Обои: выбранное изображение
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-            {(activeCount > 0 || filters.group) && (
-              <button className="btn-ghost btn-sm" onClick={reset}>
-                <XCircle className="h-3.5 w-3.5" />
-                Сбросить
-              </button>
-            )}
-          </div>
+          <FilterPanel
+            hosts={hosts}
+            filters={filters}
+            setFilter={setFilter}
+            reset={reset}
+            tree={tree}
+            versionOf={versionOf}
+            alertCounts={alertCounts}
+            open={view.filtersOpen}
+            onToggle={(filtersOpen) => updateView({ filtersOpen })}
+          />
 
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
             <span className="text-muted-foreground">
