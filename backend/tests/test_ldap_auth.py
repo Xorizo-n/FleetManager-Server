@@ -160,6 +160,14 @@ class LdapAuthTests(unittest.TestCase):
             with patch:
                 self.assertIsNone(ldap_auth.recheck(GUID))
 
+    def test_raw_guid_bytes_as_returned_without_schema(self):
+        conn = FakeConn(groups=[ADMINS])
+        conn.attrs["objectGUID"] = [uuid.UUID(GUID).bytes_le]
+        conn.attrs["userAccountControl"] = ["512"]
+        patch, _ = self.bind_as(conn)
+        with patch:
+            self.assertEqual(ldap_auth.authenticate("ivanov", "secret").guid, GUID)
+
     def test_group_dn_is_escaped_in_the_filter(self):
         group = "CN=FM (admins),OU=Groups,DC=at,DC=urfu,DC=ru"
         conn = FakeConn()
