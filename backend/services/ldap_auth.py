@@ -153,6 +153,13 @@ def _role(conn, user_dn: str) -> UserRole | None:
     return None
 
 
+def _guid(value) -> str:
+    """objectGUID: без схемы (get_info=NONE) ldap3 отдаёт сырые 16 байт, со схемой — строку «{…}»."""
+    if isinstance(value, (bytes, bytearray)):
+        return str(uuid.UUID(bytes_le=bytes(value)))
+    return str(uuid.UUID(str(value).strip("{}")))
+
+
 def _identity(conn, entry) -> LdapIdentity | None:
     attrs = entry.entry_attributes_as_dict
     control = _first(attrs, "userAccountControl")
@@ -163,7 +170,7 @@ def _identity(conn, entry) -> LdapIdentity | None:
         return None
     return LdapIdentity(
         username=str(_first(attrs, "sAMAccountName")),
-        guid=str(uuid.UUID(str(_first(attrs, "objectGUID")).strip("{}"))),
+        guid=_guid(_first(attrs, "objectGUID")),
         email=_first(attrs, "mail") or _first(attrs, "userPrincipalName"),
         display_name=_first(attrs, "displayName"),
         role=role,
