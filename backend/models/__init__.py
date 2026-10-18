@@ -6,8 +6,10 @@ from models.playbook import PlaybookRepo, PlaybookSchedule
 from models.task import TaskRun, TaskType, TaskStatus
 from models.agent import AgentEnrollmentToken, AgentAlert
 from models.wallpaper import Wallpaper, WallpaperAssignment, WallpaperSchedule, ObservedWallpaper
+from models.ldap_settings import LdapSettings
 
 __all__ = [
+    "LdapSettings",
     "User",
     "AuditLog",
     "UserRole",

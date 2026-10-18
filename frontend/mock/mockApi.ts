@@ -487,6 +487,32 @@ route("POST", "/auth/refresh", ({ body }) => ({ access_token: body.refresh_token
 route("GET", "/auth/me", ({ user }) => user);
 route("POST", "/auth/totp/reset/{id}", (ctx, p) => { admin(ctx); const u = find(users, p.id, "Пользователь"); u.totp_enabled = false; return { detail: "TOTP сброшен" }; });
 route("GET", "/users", (ctx) => { admin(ctx); return users; });
+const ldapSettings: any = {
+  enabled: true, url: "ldaps://at.urfu.ru", domain: "at.urfu.ru", base_dn: "DC=at,DC=urfu,DC=ru", bind_dn: "bazisldap.srv@at.urfu.ru",
+  has_bind_password: true, admin_groups: [], operator_groups: ["CN=IRITRTF OOD Staff,OU=OOD,OU=IRITRTF,OU=Auto,DC=at,DC=urfu,DC=ru"],
+  viewer_groups: [], source: "db", updated_at: new Date().toISOString(),
+};
+const ldapGroups = [
+  { dn: "CN=IRITRTF OOD Staff,OU=OOD,OU=IRITRTF,OU=Auto,DC=at,DC=urfu,DC=ru", name: "IRITRTF OOD Staff", description: "Отдел обеспечения деятельности (Сотрудники)" },
+  { dn: "CN=IRITRTF OOD AUP,OU=OOD,OU=IRITRTF,OU=Auto,DC=at,DC=urfu,DC=ru", name: "IRITRTF OOD AUP", description: "Отдел обеспечения деятельности (Административно-управленческий персонал)" },
+  { dn: "CN=IRITRTF OOD Valid Access,OU=OOD,OU=IRITRTF,OU=Auto,DC=at,DC=urfu,DC=ru", name: "IRITRTF OOD Valid Access", description: null },
+];
+route("GET", "/settings/ldap", (ctx) => { admin(ctx); return ldapSettings; });
+route("PUT", "/settings/ldap", (ctx) => {
+  admin(ctx);
+  const { bind_password, ...rest } = ctx.body;
+  Object.assign(ldapSettings, rest, { source: "db", updated_at: new Date().toISOString() });
+  if (bind_password !== null && bind_password !== undefined) ldapSettings.has_bind_password = bind_password !== "";
+  return ldapSettings;
+});
+route("POST", "/settings/ldap/groups", (ctx) => { admin(ctx); const q = String(ctx.body.query).toLowerCase(); return ldapGroups.filter((g) => g.name.toLowerCase().includes(q) || (g.description ?? "").toLowerCase().includes(q)); });
+route("POST", "/settings/ldap/check", (ctx) => {
+  admin(ctx);
+  const b = ctx.body;
+  const groups = (["admin", "operator", "viewer"] as const).flatMap((role) => (b[`${role}_groups`] as string[]).map((dn) => ({ dn, role, found: ldapGroups.some((g) => g.dn === dn), members: ldapGroups.some((g) => g.dn === dn) ? 9 : null })));
+  const user = b.username ? { username: b.username, found: true, display_name: "Иванов Иван", role: groups.find((g) => g.found)?.role ?? null } : null;
+  return { ok: true, bind: "ok", groups, user };
+});
 route("PATCH", "/users/{id}/role", (ctx, p) => {
   admin(ctx);
   const u: any = find(users, p.id, "Пользователь");

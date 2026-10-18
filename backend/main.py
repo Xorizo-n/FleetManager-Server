@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
-from routers import auth, hosts, credentials, software, playbooks, tasks, dashboard, users, installers, agent, hardware, wallpapers
+from routers import auth, hosts, credentials, software, playbooks, tasks, dashboard, users, installers, agent, hardware, wallpapers, ldap_settings
 
 app = FastAPI(title="Fleet Manager API", version="1.0.0")
 
@@ -15,6 +15,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(ldap_settings.router)
 app.include_router(hosts.router)
 app.include_router(credentials.router)
 app.include_router(software.router)

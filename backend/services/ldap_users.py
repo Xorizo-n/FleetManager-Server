@@ -3,7 +3,7 @@ from pydantic import EmailStr, TypeAdapter, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from config import settings
+from services import ldap_config
 from models.user import User, UserRole
 from services.ldap_auth import LdapDenied, LdapIdentity
 
@@ -46,7 +46,7 @@ def sync_user(db: Session, identity: LdapIdentity) -> tuple[User, bool]:
         # Запись пересоздали в домене с тем же логином — продолжаем старую
         user = user or same_name
 
-    fallback = f"{identity.username}@{settings.ldap_domain}".lower()
+    fallback = f"{identity.username}@{ldap_config.current().domain}".lower()
     email = _free_email(db, user, [e for e in (identity.email, fallback) if e])
     created = user is None
     if created:

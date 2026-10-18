@@ -11,11 +11,12 @@ from config import settings
 from database import SessionLocal
 from main import app
 from models.user import User, UserRole
-from services import ldap_auth
+from services import ldap_auth, ldap_config
 from services.security import create_refresh_token, hash_password
 
 settings.ldap_enabled = True
 settings.totp_required = False
+ldap_config.CACHE_SECONDS = 0
 client = TestClient(app)
 mock.patch("routers.auth.check_rate_limit", return_value=False).start()
 db = SessionLocal()
@@ -128,6 +129,37 @@ assert r.status_code == 401 and not auth.called
 # Доменная запись с именем локальной не создаётся
 r, _ = login(username="AT\\fm-local", result=ldap_auth.LdapIdentity(username="fm-local", guid=str(uuid.uuid4()), email=None, display_name=None, role=UserRole.viewer))
 assert r.status_code == 401 and "локальной" in r.json()["detail"], r.text
+
+# Настройки в интерфейсе: сохраняются в БД, пароль не возвращается, без групп не включить
+from models.ldap_settings import LdapSettings  # noqa: E402
+
+helper = User(username="fm-helper", email="fm-helper@example.org", password_hash=hash_password("helper-pass-123"), role=UserRole.admin)
+db.add(helper)
+db.commit()
+auth_h = {"Authorization": "Bearer " + client.post("/auth/login", json={"username": "fm-helper", "password": "helper-pass-123"}).json()["access_token"]}
+assert client.get("/settings/ldap", headers=auth_h).json()["source"] == "env"
+body = {"enabled": True, "url": "ldaps://at.urfu.ru", "domain": "at.urfu.ru", "base_dn": "DC=at,DC=urfu,DC=ru",
+        "bind_dn": "svc@at.urfu.ru", "bind_password": "svc-secret", "operator_groups": ["CN=Staff,DC=at,DC=urfu,DC=ru"]}
+assert client.put("/settings/ldap", json={**body, "operator_groups": []}, headers=auth_h).status_code == 400
+r = client.put("/settings/ldap", json=body, headers=auth_h)
+assert r.status_code == 200, r.text
+out = client.get("/settings/ldap", headers=auth_h).json()
+assert out["source"] == "db" and out["has_bind_password"] and "bind_password" not in out and "svc-secret" not in r.text, out
+row = db.get(LdapSettings, 1)
+assert row.bind_password_encrypted and "svc-secret" not in row.bind_password_encrypted
+assert ldap_config.current().bind_password == "svc-secret" and ldap_config.current().operator_groups == ["CN=Staff,DC=at,DC=urfu,DC=ru"]
+# Пароль не введён заново — остаётся; пустая строка — удаляется
+client.put("/settings/ldap", json={**body, "bind_password": None, "viewer_groups": ["CN=V,DC=at,DC=urfu,DC=ru"]}, headers=auth_h)
+assert ldap_config.current().bind_password == "svc-secret"
+client.put("/settings/ldap", json={**body, "bind_password": ""}, headers=auth_h)
+assert ldap_config.current().bind_password == "" and not client.get("/settings/ldap", headers=auth_h).json()["has_bind_password"]
+# Проверка черновика без служебной записи — понятная ошибка, а не 500
+r = client.post("/settings/ldap/check", json={**body, "bind_password": ""}, headers=auth_h)
+assert r.status_code == 200 and r.json()["ok"] is False and "служебная" in r.json()["error"].lower(), r.text
+# Не администратор настройки не видит
+assert client.get("/settings/ldap").status_code == 401
+db.delete(db.get(LdapSettings, 1))
+db.commit()
 
 db.query(User).filter(User.username.in_(["ivanov", "fm-local", "fm-helper"])).delete(synchronize_session=False)
 db.commit()
