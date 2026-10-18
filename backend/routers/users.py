@@ -8,6 +8,7 @@ from database import get_db
 from dependencies import require_roles
 from models.user import User, UserRole
 from schemas.auth import UserCreate, UserOut, UserRoleUpdate
+from services import ldap_users
 from services.audit import record_audit
 from services.permissions import validate_role_change
 from services.security import hash_password
@@ -69,8 +70,6 @@ def update_user_role(
     target = db.get(User, user_id)
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
-    if target.auth_source == "ldap":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Роль доменной учётной записи задают её группы в AD")
 
     active_admins = db.execute(
         select(User)
@@ -93,14 +92,20 @@ def update_user_role(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     old_role = target.role
-    target.role = payload.role
+    if target.auth_source == ldap_users.LDAP:
+        # Роль доменной записи по умолчанию задают группы AD; ручная остаётся и после входа
+        ldap_users.set_manual_role(target, payload.role)
+        note = " (вручную)" if target.role_override else " (по группам AD)"
+    else:
+        target.role = payload.role
+        note = ""
     db.commit()
     db.refresh(target)
     record_audit(
         db,
         admin.id,
         "user.role_update",
-        f"{target.username}: {old_role.value} -> {target.role.value}",
+        f"{target.username}: {old_role.value} -> {target.role.value}{note}",
         request,
     )
     return target

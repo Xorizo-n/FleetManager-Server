@@ -168,5 +168,38 @@ class LdapAuthTests(unittest.TestCase):
         self.assertIn(r"CN=FM \28admins\29", conn.filters[0])
 
 
+class ManualRoleTests(unittest.TestCase):
+    def user(self):
+        from models.user import User
+
+        return User(username="ivanov", role=UserRole.operator, ldap_role=UserRole.operator, role_override=None)
+
+    def test_group_role_applies_without_manual_role(self):
+        from services.ldap_users import apply_role
+
+        user = self.user()
+        self.assertTrue(apply_role(user, UserRole.viewer))
+        self.assertEqual((user.role, user.ldap_role), (UserRole.viewer, UserRole.viewer))
+        self.assertFalse(apply_role(user, UserRole.viewer))
+
+    def test_manual_promotion_survives_group_sync(self):
+        from services.ldap_users import apply_role, set_manual_role
+
+        user = self.user()
+        set_manual_role(user, UserRole.admin)
+        apply_role(user, UserRole.operator)
+        self.assertEqual((user.role, user.role_override), (UserRole.admin, UserRole.admin))
+
+    def test_choosing_the_group_role_returns_role_to_groups(self):
+        from services.ldap_users import apply_role, set_manual_role
+
+        user = self.user()
+        set_manual_role(user, UserRole.admin)
+        set_manual_role(user, UserRole.operator)
+        self.assertIsNone(user.role_override)
+        apply_role(user, UserRole.viewer)
+        self.assertEqual(user.role, UserRole.viewer)
+
+
 if __name__ == "__main__":
     unittest.main()

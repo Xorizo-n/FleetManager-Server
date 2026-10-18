@@ -16,6 +16,8 @@ const ROLE_OPTIONS: { value: UserRole; label: string; hint: string }[] = [
   { value: "viewer", label: "Наблюдатель", hint: "только просмотр" },
 ];
 
+const roleLabel = (role: UserRole) => ROLE_OPTIONS.find((r) => r.value === role)?.label ?? role;
+
 function PasswordInput({
   id,
   value,
@@ -121,7 +123,7 @@ export default function Users() {
     <div className="animate-fade-in space-y-4">
       <PageHeader
         title="Пользователи"
-        description="Роли и второй фактор. Свою роль изменить нельзя, последнего активного администратора понизить тоже нельзя. Доменные пользователи появляются при первом входе, их роль задают группы AD."
+        description="Роли и второй фактор. Свою роль изменить нельзя, последнего активного администратора понизить тоже нельзя. Доменные пользователи появляются при первом входе с ролью по группам AD; роль, назначенная здесь, важнее групп — чтобы вернуть роль по группам, выберите её снова."
       />
       <div className="table-shell">
         <table className="table-base">
@@ -151,14 +153,21 @@ export default function Users() {
                   <td>
                     <select
                       value={u.role}
-                      disabled={self || domain}
+                      disabled={self}
                       onChange={(e) => changeRole(u, e.target.value as UserRole)}
                       className="input-base w-auto min-w-40 py-1.5"
                       aria-label={`Роль ${u.username}`}
-                      title={domain ? "Роль задают группы AD, обновляется при входе" : ROLE_OPTIONS.find((r) => r.value === u.role)?.hint}
+                      title={ROLE_OPTIONS.find((r) => r.value === u.role)?.hint}
                     >
                       {ROLE_OPTIONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                     </select>
+                    {domain && u.ldap_role && (
+                      <div className="mt-1 text-xs text-subtle">
+                        {u.role_override
+                          ? `вручную · по группам AD: ${roleLabel(u.ldap_role)}`
+                          : "по группам AD"}
+                      </div>
+                    )}
                   </td>
                   <td>
                     {u.totp_enabled ? (
@@ -224,7 +233,7 @@ export default function Users() {
               <KeyRound className="h-4 w-4 text-blue-600 dark:text-blue-400" />
               <h2 className="text-base font-semibold text-foreground">Пароль</h2>
             </div>
-            <p className="text-sm text-muted-foreground">Вы вошли доменной учётной записью: пароль меняется в Windows (Ctrl+Alt+Del → «Изменить пароль»), роль задают группы AD.</p>
+            <p className="text-sm text-muted-foreground">Вы вошли доменной учётной записью: пароль меняется в Windows (Ctrl+Alt+Del → «Изменить пароль»).</p>
           </div>
         ) : (
         <div className="surface-card p-5">

@@ -34,6 +34,8 @@ class UserOut(BaseModel):
     is_active: bool
     auth_source: str = "local"
     display_name: str | None = None
+    ldap_role: UserRole | None = None
+    role_override: UserRole | None = None
 
 
 class UserRoleUpdate(BaseModel):
