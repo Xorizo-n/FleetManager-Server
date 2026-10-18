@@ -18,9 +18,11 @@ export interface HostFilters {
   alerts: string;
   activation: string;
   devices: string;
+  /** sha256 обоев (рабочий стол или экран блокировки), «path:…» — файл без хэша, «none» — не заданы */
+  wallpaper: string;
 }
 
-const FILTER_KEYS: (keyof HostFilters)[] = ["q", "group", "status", "agent", "os", "checked", "alerts", "activation", "devices"];
+const FILTER_KEYS: (keyof HostFilters)[] = ["q", "group", "status", "agent", "os", "checked", "alerts", "activation", "devices", "wallpaper"];
 
 export const AGENT_FILTERS: { value: string; label: string }[] = [
   { value: "with", label: "С агентом" },
@@ -69,6 +71,14 @@ export const DEVICE_FILTERS: { value: string; label: string; match: (h: Host) =>
   { value: "changed30", label: "Изменения за 30 дней", match: (h) => changedWithin(h, 30) },
   { value: "unknown", label: "Нет данных", match: (h) => !h.hw_components },
 ];
+
+function showsWallpaper(h: Host, value: string) {
+  const state = h.wallpaper_state;
+  if (!state) return false;
+  return [state.desktop, state.lock_screen].some((c) =>
+    value === "none" ? !c : value.startsWith("path:") ? !!c && !c.sha256 && c.path.toLowerCase() === value.slice(5).toLowerCase() : c?.sha256 === value,
+  );
+}
 
 export const alertDays = (value: string) => ALERT_FILTERS.find((f) => f.value === value)?.days ?? 7;
 
@@ -122,6 +132,7 @@ export function filterHosts(
     if (filters.status && h.status !== filters.status) return false;
     if (filters.alerts && !alertCounts.get(h.id)) return false;
     if (filters.os && h.os !== filters.os) return false;
+    if (filters.wallpaper && !showsWallpaper(h, filters.wallpaper)) return false;
     if (filters.devices && !DEVICE_FILTERS.find((f) => f.value === filters.devices)?.match(h)) return false;
     if (filters.activation && !ACTIVATION_FILTERS.find((f) => f.value === filters.activation)?.match(h)) return false;
     if (filters.agent) {

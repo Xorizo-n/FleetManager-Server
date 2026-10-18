@@ -52,6 +52,8 @@ from services.agent_version import (
 from services.audit import record_audit
 from services.hardware_change import hardware_changes
 from services.workplace_devices import DeviceChange, apply_components
+from services.wallpapers import heartbeat_wallpaper, store_report, wallpaper_path
+from models.wallpaper import Wallpaper
 from services.host_grouping import apply_auto_group, cleanup_auto_groups
 from services.waiting_tasks import create_task_runs, enqueue, release_waiting_tasks
 from services.wake_on_lan import agent_lan_address, normalize_mac, primary_adapter
@@ -385,6 +387,8 @@ def heartbeat(
     # Активацию агент собирает раз в час; без неё (старый агент или сбой сбора) остаётся прежняя
     if payload.activation is not None:
         host.license_activation = payload.activation.model_dump(mode="json")
+    if payload.wallpaper is not None:
+        store_report(db, host, payload.wallpaper, now)
     if payload.ssh_port:
         host.ssh_port = payload.ssh_port
     if payload.ssh_login and host.credential_id:
@@ -428,7 +432,16 @@ def heartbeat(
     except Exception:  # noqa: BLE001
         db.rollback()
 
-    return {"status": "accepted", "host_id": host.id, "last_seen_at": now, "software_count": stored}
+    # Назначенные обои агент применяет сам; ошибка здесь не должна сорвать heartbeat
+    try:
+        wallpaper = heartbeat_wallpaper(db, host)
+    except Exception:  # noqa: BLE001
+        logger.exception("Wallpaper target for %s", host.hostname)
+        wallpaper = None
+    response = {"status": "accepted", "host_id": host.id, "last_seen_at": now, "software_count": stored}
+    if wallpaper is not None:
+        response["wallpaper"] = wallpaper
+    return response
 
 
 @router.post("/alerts", response_model=AgentAlertOut, status_code=status.HTTP_201_CREATED)
@@ -549,6 +562,15 @@ def download_agent_installer(host: Host = Depends(_require_agent_host)):
             detail="Установщик агента ещё не синхронизирован на сервере",
         )
     return FileResponse(path, filename=INSTALLER_FILENAME, media_type="application/octet-stream")
+
+
+@router.get("/wallpapers/{wallpaper_id}")
+def download_wallpaper(wallpaper_id: uuid.UUID, host: Host = Depends(_require_agent_host), db: Session = Depends(get_db)):
+    """Изображение каталога для агента: он скачивает назначенные обои своим токеном."""
+    wallpaper = db.get(Wallpaper, wallpaper_id)
+    if wallpaper is None or not os.path.isfile(wallpaper_path(wallpaper)):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Изображение не найдено")
+    return FileResponse(wallpaper_path(wallpaper), media_type=wallpaper.content_type, filename=wallpaper.file_name)
 
 
 @router.get("/versions", response_model=AgentVersionOverviewOut)

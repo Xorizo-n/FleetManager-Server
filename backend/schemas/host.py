@@ -185,6 +185,8 @@ class HostOut(BaseModel):
     hw_components: dict | None = None
     hw_pending_devices: list[dict] = []
     hw_changed_at: datetime | None = None
+    # Обои на ПК по отчёту агента: desktop/lock_screen {path, sha256, source}, applied_*_id, error
+    wallpaper_state: dict | None = None
     created_at: datetime
     updated_at: datetime
 

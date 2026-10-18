@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
-from routers import auth, hosts, credentials, software, playbooks, tasks, dashboard, users, installers, agent, hardware
+from routers import auth, hosts, credentials, software, playbooks, tasks, dashboard, users, installers, agent, hardware, wallpapers
 
 app = FastAPI(title="Fleet Manager API", version="1.0.0")
 
@@ -26,6 +26,7 @@ app.include_router(installers.router)
 app.include_router(agent.router)
 app.include_router(agent.router, prefix="/api")
 app.include_router(hardware.router)
+app.include_router(wallpapers.router)
 
 
 @app.get("/health")

@@ -6,6 +6,10 @@ import type {
   AlertSummary,
   AgentVersionOverview,
   HardwareEvent,
+  ObservedWallpaper,
+  Wallpaper,
+  WallpaperAssignment,
+  WallpaperSchedule,
   Credential,
   Host,
   HostGroup,
@@ -133,6 +137,12 @@ export const useInstallers = () =>
 
 export const useAlertSummary = (days = 7) =>
   useQuery({ queryKey: ["alerts-summary", days], queryFn: () => get<AlertSummary>("/agent/alerts/summary", { days }) });
+
+export const useWallpapers = () => useQuery({ queryKey: ["wallpapers"], queryFn: () => get<Wallpaper[]>("/wallpapers") });
+export const useObservedWallpapers = () => useQuery({ queryKey: ["wallpapers", "observed"], queryFn: () => get<ObservedWallpaper[]>("/wallpapers/observed") });
+export const useWallpaperAssignments = () => useQuery({ queryKey: ["wallpapers", "assignments"], queryFn: () => get<WallpaperAssignment[]>("/wallpapers/assignments") });
+export const useWallpaperSchedules = () =>
+  useQuery({ queryKey: ["wallpapers", "schedules"], queryFn: () => get<WallpaperSchedule[]>("/wallpapers/schedules"), refetchInterval: 60_000 });
 
 export const useHardwareEvents = (params: { host_id?: string; days?: number; limit?: number }) =>
   useQuery({ queryKey: ["hardware-events", params], queryFn: () => get<HardwareEvent[]>("/hosts/hardware-events", params) });

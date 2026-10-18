@@ -2,7 +2,9 @@ import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Keyboard, Monitor, Mouse } from "lucide-react";
 import type { HardwareEvent, Host, Peripheral } from "../api/types";
-import { useHardwareEvents } from "../api/queries";
+import { useFleet, useHardwareEvents, useWallpaperAssignments, useWallpapers } from "../api/queries";
+import WallpaperThumb, { useThumbnails } from "./WallpaperThumb";
+import { effectiveAssignment, indexAssignments, KIND_LABELS, KINDS, STATUS_LABELS, wallpaperStatus } from "../lib/wallpapers";
 import { Empty, Loading } from "./ui/States";
 import { formatDateTime, relativeTime } from "../lib/format";
 import { formatDiskSize } from "../lib/hardware";
@@ -173,9 +175,60 @@ export function WorkplaceTab({ host }: { host: Host }) {
         </>
       )}
 
+      <Group title="Обои">
+        <HostWallpapers host={host} />
+      </Group>
+
       <Group title="Журнал изменений">
         <HardwareLog hostId={host.id} />
       </Group>
+    </div>
+  );
+}
+
+const WALLPAPER_STATUS_COLORS = {
+  applied: "text-emerald-600 dark:text-emerald-400",
+  pending: "text-amber-600 dark:text-amber-400",
+  error: "text-rose-600 dark:text-rose-400",
+  unmanaged: "text-subtle",
+  unknown: "text-subtle",
+};
+
+/** Что стоит на ПК сейчас и что назначено */
+function HostWallpapers({ host }: { host: Host }) {
+  const { tree } = useFleet();
+  const catalog = useWallpapers();
+  const assignments = useWallpaperAssignments();
+  const thumbnails = useThumbnails();
+  const index = indexAssignments(assignments.data);
+  const state = host.wallpaper_state;
+  if (!state && !host.has_agent) return <p className="text-sm text-subtle">Обои сообщает агент</p>;
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {KINDS.map((kind) => {
+          const effective = effectiveAssignment(host, kind, index, tree);
+          const wallpaper = effective ? catalog.data?.find((w) => w.id === effective.assignment.wallpaper_id) : null;
+          const status = wallpaperStatus(host, kind, wallpaper);
+          const current = state?.[kind];
+          return (
+            <div key={kind} className="min-w-0">
+              <div className="mb-1 text-xs font-medium text-muted-foreground">{KIND_LABELS[kind]}</div>
+              {state ? (
+                <WallpaperThumb sha256={current?.sha256} path={current?.path} thumbnails={thumbnails} className="w-full max-w-xs" />
+              ) : (
+                <p className="text-sm text-subtle">Агент ещё не сообщил обои — нужна версия 2026.10.18</p>
+              )}
+              <p className="mt-1 text-xs">
+                <span className={WALLPAPER_STATUS_COLORS[status]}>
+                  {wallpaper ? `Назначены «${wallpaper.name}»${effective?.from ? ` группой ${effective.from}` : ""}: ${STATUS_LABELS[status]}` : "Не назначены — стоят обои образа"}
+                </span>
+              </p>
+            </div>
+          );
+        })}
+      </div>
+      {state?.error && <p className="text-xs text-rose-600 dark:text-rose-400">Агент: {state.error}</p>}
     </div>
   );
 }

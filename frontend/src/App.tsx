@@ -20,6 +20,7 @@ const Credentials = lazy(() => import("./pages/admin/Credentials"));
 const Groups = lazy(() => import("./pages/admin/Groups"));
 const Agent = lazy(() => import("./pages/admin/Agent"));
 const Files = lazy(() => import("./pages/admin/Files"));
+const Wallpapers = lazy(() => import("./pages/Wallpapers"));
 
 const EDITORS: UserRole[] = ["admin", "operator"];
 
@@ -46,6 +47,7 @@ export default function App() {
                   <Route path="/software" element={<Software />} />
                   <Route path="/automation" element={guard(EDITORS, <Automation />)} />
                   <Route path="/tasks" element={<Tasks />} />
+                  <Route path="/wallpapers" element={<Wallpapers />} />
                   <Route path="/admin/users" element={guard(["admin"], <Users />)} />
                   <Route path="/admin/credentials" element={guard(EDITORS, <Credentials />)} />
                   <Route path="/admin/groups" element={guard(EDITORS, <Groups />)} />

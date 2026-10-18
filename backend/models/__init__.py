@@ -5,6 +5,7 @@ from models.software import SoftwareItem, SoftwareHistory, InstallMethod, Softwa
 from models.playbook import PlaybookRepo, PlaybookSchedule
 from models.task import TaskRun, TaskType, TaskStatus
 from models.agent import AgentEnrollmentToken, AgentAlert
+from models.wallpaper import Wallpaper, WallpaperAssignment, WallpaperSchedule, ObservedWallpaper
 
 __all__ = [
     "User",
@@ -29,4 +30,8 @@ __all__ = [
     "TaskStatus",
     "AgentEnrollmentToken",
     "AgentAlert",
+    "Wallpaper",
+    "WallpaperAssignment",
+    "WallpaperSchedule",
+    "ObservedWallpaper",
 ]
