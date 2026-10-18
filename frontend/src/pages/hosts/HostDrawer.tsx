@@ -472,7 +472,7 @@ function HostTasks({ hostId }: { hostId: string }) {
   );
 }
 
-const ALERT_TYPE_LABELS: Record<string, string> = { hardware_changed: "Смена оборудования", device_missing: "Пропало устройство" };
+const ALERT_TYPE_LABELS: Record<string, string> = { hardware_changed: "Смена оборудования", device_missing: "Пропало устройство", disk_full: "Диск заполнен" };
 
 // До определения смены железа сервером агент присылал только хэши отпечатков
 const isLegacyHardwareAlert = (a: AgentAlert) => a.alert_type === "hardware_changed" && a.message.startsWith("Hardware fingerprint changed");

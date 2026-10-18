@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     # Falls back to the request base_url when empty.
     agent_public_url: str = ""
 
+    # Алерт disk_full (services/disk_alerts.py): диск заполнен на N% и больше; повторный —
+    # только после того, как диск освободится ниже DISK_FULL_CLEAR_PERCENT
+    disk_full_percent: int = 90
+    disk_full_clear_percent: int = 85
+
     # Сколько задача ждёт выключенный ПК, прежде чем отмениться (services/waiting_tasks.py)
     waiting_task_ttl_days: int = 7
 
