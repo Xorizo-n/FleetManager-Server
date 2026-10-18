@@ -91,6 +91,27 @@ wp = heartbeat_wallpaper(db, host)
 # У ПК своё назначение рабочего стола; экран блокировки «снят» у ПК — остаётся от корпуса
 assert wp["desktop"]["id"] == str(winter.id) and wp["lock_screen"]["id"] == str(autumn.id), wp
 
+# Назначение группы заменяет свои назначения аудиторий и ПК внутри: «обои на весь корпус»
+# Аудитория: собственное назначение ПК (из расписания выше) снимается, аудитории ставится своё
+assert apply_assignment(db, [], [room.id], str(autumn.id), None, None) == 2
+db.flush()
+assert heartbeat_wallpaper(db, host)["desktop"]["id"] == str(autumn.id)
+# Корпус: назначение аудитории снимается, у корпуса меняется
+assert apply_assignment(db, [], [building.id], str(winter.id), None, None) == 2
+db.flush()
+assert db.query(WallpaperAssignment).filter(WallpaperAssignment.kind == "desktop", WallpaperAssignment.group_id == room.id).count() == 0
+assert heartbeat_wallpaper(db, host)["desktop"]["id"] == str(winter.id)
+# ПК, выбранный в том же запросе отдельно, получает своё
+assert apply_assignment(db, [host.id], [building.id], str(autumn.id), None, None) == 2
+db.flush()
+assert heartbeat_wallpaper(db, host)["desktop"]["id"] == str(autumn.id)
+# Снятие у корпуса тоже действует на всю группу
+assert apply_assignment(db, [], [building.id], CLEAR, None, None) == 2
+db.flush()
+assert heartbeat_wallpaper(db, host)["desktop"] is None
+assert heartbeat_wallpaper(db, host)["lock_screen"]["id"] == str(autumn.id)
+db.commit()
+
 # Удаление группы снимает её назначения
 extra = HostGroup(name=f"{building.name}-X")
 db.add(extra)

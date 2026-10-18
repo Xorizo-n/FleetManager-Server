@@ -173,11 +173,47 @@ def host_effective_wallpapers(db: Session, host: Host) -> dict[str, Wallpaper | 
     return effective_wallpapers(host, list(assignments), group_chain)
 
 
+def group_subtree(db: Session, group_id) -> tuple[set, set]:
+    """Подгруппы группы (без неё самой) и все ПК поддерева, включая ПК самой группы."""
+    children: dict = {}
+    for gid, parent_id in db.execute(select(HostGroup.id, HostGroup.parent_id)).all():
+        children.setdefault(parent_id, []).append(gid)
+    descendants, stack = set(), list(children.get(group_id, []))
+    while stack:
+        gid = stack.pop()
+        if gid in descendants:
+            continue
+        descendants.add(gid)
+        stack.extend(children.get(gid, []))
+    hosts = set(db.execute(select(Host.id).where(Host.group_id.in_(descendants | {group_id}))).scalars())
+    return descendants, hosts
+
+
+def narrower_assignments(db: Session, group_id, kind: str) -> list[WallpaperAssignment]:
+    """Назначения вида kind у подгрупп и ПК внутри группы — их перекрыло бы назначение группы."""
+    descendants, hosts = group_subtree(db, group_id)
+    if not descendants and not hosts:
+        return []
+    from sqlalchemy import or_
+
+    conditions = []
+    if descendants:
+        conditions.append(WallpaperAssignment.group_id.in_(descendants))
+    if hosts:
+        conditions.append(WallpaperAssignment.host_id.in_(hosts))
+    return list(db.execute(select(WallpaperAssignment).where(WallpaperAssignment.kind == kind, or_(*conditions))).scalars())
+
+
 def apply_assignment(db: Session, host_ids: list, group_ids: list, desktop: str | None, lock_screen: str | None, user_id) -> int:
     """Ставит или снимает назначения. desktop/lock_screen: id обоев, CLEAR — снять, None — не менять.
-    Возвращает число изменённых назначений."""
+    Возвращает число изменённых назначений.
+
+    Назначение или снятие у группы действует на всю группу: назначения того же вида у её
+    аудиторий и ПК внутри снимаются. Иначе «обои на весь SU5» не доходили до аудиторий, которым
+    раньше назначили свои, — у ПК действует ближайшее назначение. Группы обрабатываются раньше
+    отдельных ПК, поэтому ПК, выбранный в том же запросе отдельно, получает своё назначение."""
     changed = 0
-    targets = [("host", uuid.UUID(str(h))) for h in host_ids] + [("group", uuid.UUID(str(g))) for g in group_ids]
+    targets = [("group", uuid.UUID(str(g))) for g in group_ids] + [("host", uuid.UUID(str(h))) for h in host_ids]
     for kind, value in ((DESKTOP, desktop), (LOCK_SCREEN, lock_screen)):
         if value is None:
             continue
@@ -185,6 +221,11 @@ def apply_assignment(db: Session, host_ids: list, group_ids: list, desktop: str 
         if wallpaper_id is not None and db.get(Wallpaper, wallpaper_id) is None:
             raise WallpaperError("Изображение удалено из каталога")
         for target_type, target_id in targets:
+            if target_type == "group":
+                for narrower in narrower_assignments(db, target_id, kind):
+                    db.delete(narrower)
+                    changed += 1
+                db.flush()
             column = WallpaperAssignment.host_id if target_type == "host" else WallpaperAssignment.group_id
             existing = db.execute(select(WallpaperAssignment).where(column == target_id, WallpaperAssignment.kind == kind)).scalar_one_or_none()
             if wallpaper_id is None:
