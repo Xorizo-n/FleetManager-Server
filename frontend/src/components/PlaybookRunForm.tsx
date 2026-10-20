@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CalendarClock, GitBranch, Play } from "lucide-react";
+import { Link } from "react-router-dom";
+import { AlertTriangle, CalendarClock, FileCode2, Play, Plus } from "lucide-react";
 import { apiClient } from "../api/client";
-import { keys, useFleet, usePlaybookFiles, useRepos } from "../api/queries";
+import { keys, useFleet, usePlaybookCatalog } from "../api/queries";
 import HostPicker from "./HostPicker";
-import PlaybookSelect, { rememberPlaybook } from "./PlaybookSelect";
+import PlaybookSelect, { catalogKey, rememberPlaybook } from "./PlaybookSelect";
 import ExtraVarsEditor, { VarPair, varsToObject } from "./ExtraVarsEditor";
 import Button from "./ui/Button";
 import Switch from "./ui/Switch";
@@ -22,18 +23,24 @@ interface Props {
   onDone?: () => void;
   pickerHeight?: number;
   initialMode?: "now" | "schedule";
+  /** Сразу выбранный плейбук — например, после сохранения в редакторе */
+  initialRepoId?: string;
+  initialPlaybook?: string;
 }
 
 /** Запуск плейбука: что (каталог) → где (дерево хостов) → параметры → сейчас или по расписанию. */
-export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHeight = 340, initialMode = "now" }: Props) {
+export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHeight = 340, initialMode = "now", initialRepoId, initialPlaybook }: Props) {
   const queryClient = useQueryClient();
   const toast = useToast();
   const openTask = useOpenTask();
   const { tree, hostById } = useFleet();
-  const repos = useRepos();
-  const [repoId, setRepoId] = useState("");
-  const files = usePlaybookFiles(repoId || null);
-  const [playbook, setPlaybook] = useState("");
+  const catalog = usePlaybookCatalog();
+  const repos = catalog.repos;
+  // Ключ каталога repo_id::path: плейбуки всех источников в одном списке
+  const [selectedKey, setSelectedKey] = useState(initialRepoId && initialPlaybook ? catalogKey(initialRepoId, initialPlaybook) : "");
+  const selectedFile = catalog.files.find((f) => f.key === selectedKey);
+  const repoId = selectedFile?.repo_id ?? "";
+  const playbook = selectedFile?.path ?? "";
   const [selection, setSelection] = useState<Set<string>>(() => new Set(initialHostIds));
   const [vars, setVars] = useState<VarPair[]>([]);
   const [mode, setMode] = useState<"now" | "schedule">(initialMode);
@@ -43,19 +50,17 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!repoId && repos.data?.length) setRepoId(repos.data[0].id);
-  }, [repos.data, repoId]);
-
   const offline = useMemo(() => [...selection].filter((id) => hostById.get(id)?.status !== "online").length, [selection, hostById]);
-  const repo = repos.data?.find((r) => r.id === repoId);
+  const gitRepos = (repos.data ?? []).filter((r) => r.kind !== "local");
 
   async function syncRepo() {
-    if (!repoId) return;
+    if (gitRepos.length === 0) return;
     setBusy(true);
     try {
-      await apiClient.post(`/playbooks/repos/${repoId}/sync`);
-      await queryClient.invalidateQueries({ queryKey: keys.files(repoId) });
+      for (const r of gitRepos) {
+        await apiClient.post(`/playbooks/repos/${r.id}/sync`);
+        await queryClient.invalidateQueries({ queryKey: keys.files(r.id) });
+      }
       toast({ tone: "success", message: "Каталог плейбуков обновлён из git" });
     } catch (err) {
       toast({ tone: "error", message: apiError(err, "Не удалось обновить репозиторий") });
@@ -80,7 +85,7 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
           extra_vars: varsToObject(vars),
           defer_offline: deferOffline,
         });
-        rememberPlaybook(playbook);
+        rememberPlaybook(selectedKey);
         queryClient.invalidateQueries({ queryKey: ["tasks"] });
         onDone?.();
         const waiting = data.waiting_task_ids?.length ?? 0;
@@ -96,7 +101,7 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
           cron_expression: cron,
           enabled: true,
         });
-        rememberPlaybook(playbook);
+        rememberPlaybook(selectedKey);
         queryClient.invalidateQueries({ queryKey: keys.schedules });
         toast({ tone: "success", message: `Расписание создано: ${describeCron(cron) ?? cron}` });
         onDone?.();
@@ -108,34 +113,36 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
     }
   }
 
-  if (repos.data && repos.data.length === 0) {
-    return <p className="text-sm text-muted-foreground">Нет подключённых репозиториев — подключите его на вкладке «Репозитории».</p>;
-  }
 
   return (
     <div className="space-y-5">
       <section className="space-y-2">
         <div className="flex items-center justify-between gap-2">
           <label className="field-label mb-0">1. Плейбук</label>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            {(repos.data?.length ?? 0) > 1 ? (
-              <select value={repoId} onChange={(e) => { setRepoId(e.target.value); setPlaybook(""); }} className="input-base w-auto py-1 text-xs">
-                {repos.data!.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select>
-            ) : (
-              repo && (
-                <span className="inline-flex items-center gap-1">
-                  <GitBranch className="h-3 w-3" />
-                  {repo.name} · <span className="font-mono">{repo.branch}</span>
-                </span>
-              )
-            )}
-            <button type="button" className="text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400" onClick={syncRepo} disabled={busy || !repoId}>
+          {gitRepos.length > 0 && (
+            <button type="button" className="text-xs text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400" onClick={syncRepo} disabled={busy}>
               обновить из git
             </button>
-          </div>
+          )}
         </div>
-        <PlaybookSelect files={files.data ?? []} value={playbook} onChange={setPlaybook} loading={repos.isLoading || !repoId || files.isLoading} />
+        <div className="flex gap-2">
+          <div className="min-w-0 flex-1">
+            <PlaybookSelect files={catalog.files} value={selectedKey} onChange={setSelectedKey} loading={catalog.isLoading} />
+          </div>
+          {selectedFile && (
+            <Link
+              to={`/automation/editor?repo=${selectedFile.repo_id}&path=${encodeURIComponent(selectedFile.path)}`}
+              className="btn-secondary px-2.5"
+              title={selectedFile.local ? "Открыть в редакторе" : "Открыть текст плейбука (из git — только просмотр и копия в локальные)"}
+              aria-label="Открыть плейбук в редакторе"
+            >
+              <FileCode2 className="h-4 w-4" />
+            </Link>
+          )}
+          <Link to="/automation/editor" className="btn-secondary px-2.5" title="Новый плейбук" aria-label="Новый плейбук">
+            <Plus className="h-4 w-4" />
+          </Link>
+        </div>
       </section>
 
       <section className="space-y-2">

@@ -274,6 +274,8 @@ export interface TaskRunDetail extends TaskRun {
 export interface Repo {
   id: string;
   name: string;
+  /** "local" — плейбуки из редактора Fleet Manager, хранятся только на сервере */
+  kind?: "git" | "local";
   git_url: string;
   branch: string;
   credential_id: string | null;

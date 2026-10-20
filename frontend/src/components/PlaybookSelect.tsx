@@ -6,6 +6,18 @@ import { playbookShortName } from "../lib/format";
 
 const RECENT_KEY = "fm.recentPlaybooks";
 
+/** Плейбук каталога: несколько источников (git-репозитории и локальные из редактора) в одном списке */
+export interface CatalogFile extends PlaybookFile {
+  /** Уникальный ключ в каталоге: repo_id::path */
+  key: string;
+  repo_id: string;
+  /** Имя источника для группы; у основного git-репозитория пусто — группы по папкам, как раньше */
+  source?: string;
+  local?: boolean;
+}
+
+export const catalogKey = (repoId: string, path: string) => `${repoId}::${path}`;
+
 export function playbookLabel(file: PlaybookFile) {
   return file.display_name || playbookShortName(file.path).replace(/_/g, " ");
 }
@@ -25,20 +37,24 @@ function readRecent(): string[] {
   }
 }
 
-export function rememberPlaybook(path: string) {
+export function rememberPlaybook(key: string) {
   try {
-    localStorage.setItem(RECENT_KEY, JSON.stringify([path, ...readRecent().filter((p) => p !== path)].slice(0, 5)));
+    localStorage.setItem(RECENT_KEY, JSON.stringify([key, ...readRecent().filter((p) => p !== key)].slice(0, 5)));
   } catch {
     // localStorage может быть недоступен — недавние плейбуки просто не запоминаются
   }
 }
 
 interface Props {
-  files: PlaybookFile[];
+  files: CatalogFile[];
+  /** Ключ выбранного плейбука (catalogKey) */
   value: string;
-  onChange: (path: string) => void;
+  onChange: (key: string) => void;
   loading?: boolean;
 }
+
+// Недавние до общего каталога хранились путём файла — они относятся к основному git-репозиторию
+const isRecent = (f: CatalogFile, saved: string) => f.key === saved || (!f.source && f.path === saved);
 
 /** Каталог плейбуков: поиск, группы по папкам (install, check, diagnose…), недавние сверху. */
 export default function PlaybookSelect({ files, value, onChange, loading }: Props) {
@@ -54,20 +70,22 @@ export default function PlaybookSelect({ files, value, onChange, loading }: Prop
   }, [open]);
 
   const commonRoot = useMemo(() => {
-    const roots = new Set(files.map((f) => (f.path.includes("/") ? f.path.split("/")[0] : "")));
+    const roots = new Set(files.filter((f) => !f.source).map((f) => (f.path.includes("/") ? f.path.split("/")[0] : "")));
     return roots.size === 1 ? [...roots][0] : "";
   }, [files]);
 
   const groups = useMemo(() => {
     const q = search.trim().toLowerCase();
     const matched = files.filter((f) => !q || f.path.toLowerCase().includes(q) || playbookLabel(f).toLowerCase().includes(q));
-    const map = new Map<string, PlaybookFile[]>();
+    const map = new Map<string, CatalogFile[]>();
     if (!q) {
-      const recent = readRecent().map((p) => files.find((f) => f.path === p)).filter((f): f is PlaybookFile => !!f);
+      const recent = readRecent().map((p) => files.find((f) => isRecent(f, p))).filter((f): f is CatalogFile => !!f);
       if (recent.length) map.set("Недавние", recent);
     }
-    for (const f of [...matched].sort((a, b) => playbookLabel(a).localeCompare(playbookLabel(b), "ru"))) {
-      const folder = folderOf(f.path, commonRoot) || "Общие";
+    // Сначала основной репозиторий по папкам, затем остальные источники (локальные — последними)
+    const sorted = [...matched].sort((a, b) => Number(!!a.source) - Number(!!b.source) || playbookLabel(a).localeCompare(playbookLabel(b), "ru"));
+    for (const f of sorted) {
+      const folder = f.source ? [f.source, folderOf(f.path, "")].filter(Boolean).join(" · ") : folderOf(f.path, commonRoot) || "Общие";
       if (!map.has(folder)) map.set(folder, []);
       map.get(folder)!.push(f);
     }
@@ -75,7 +93,7 @@ export default function PlaybookSelect({ files, value, onChange, loading }: Prop
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files, search, commonRoot, open]);
 
-  const selected = files.find((f) => f.path === value);
+  const selected = files.find((f) => f.key === value);
 
   return (
     <div ref={ref} className="relative">
@@ -89,7 +107,7 @@ export default function PlaybookSelect({ files, value, onChange, loading }: Prop
         {selected ? (
           <span className="flex min-w-0 items-baseline gap-2.5">
             <span className="truncate font-medium text-foreground">{playbookLabel(selected)}</span>
-            <span className="hidden shrink-0 font-mono text-xs text-subtle sm:inline">{selected.path}</span>
+            <span className="hidden shrink-0 font-mono text-xs text-subtle sm:inline">{selected.source ? `${selected.source}: ` : ""}{selected.path}</span>
           </span>
         ) : (
           <span className="text-subtle">{loading ? "Загрузка каталога…" : `Выберите плейбук (${files.length})`}</span>
@@ -113,16 +131,16 @@ export default function PlaybookSelect({ files, value, onChange, loading }: Prop
                 </div>
                 {items.map((f) => (
                   <button
-                    key={`${folder}-${f.path}`}
+                    key={`${folder}-${f.key}`}
                     type="button"
                     role="option"
-                    aria-selected={f.path === value}
+                    aria-selected={f.key === value}
                     onClick={() => {
-                      onChange(f.path);
+                      onChange(f.key);
                       setOpen(false);
                       setSearch("");
                     }}
-                    className={`flex w-full items-baseline justify-between gap-3 px-4 py-2 text-left hover:bg-muted ${f.path === value ? "bg-blue-500/10" : ""}`}
+                    className={`flex w-full items-baseline justify-between gap-3 px-4 py-2 text-left hover:bg-muted ${f.key === value ? "bg-blue-500/10" : ""}`}
                   >
                     <span className="truncate text-sm font-medium text-foreground">{playbookLabel(f)}</span>
                     <span className="shrink-0 font-mono text-xs text-subtle">{f.name}</span>

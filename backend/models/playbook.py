@@ -13,6 +13,8 @@ class PlaybookRepo(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    # "git" — клон репозитория, "local" — плейбуки из редактора Fleet Manager (services/local_playbooks.py)
+    kind: Mapped[str] = mapped_column(String(16), default="git", server_default="git", nullable=False)
     git_url: Mapped[str] = mapped_column(String(512), nullable=False)
     git_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     credential_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("credentials.id", ondelete="SET NULL"), nullable=True)

@@ -21,7 +21,12 @@ from schemas.playbook import (
     PlaybookScheduleCreate,
     PlaybookScheduleOut,
     PlaybookScheduleUpdate,
+    PlaybookContentOut,
+    PlaybookCheckRequest,
+    PlaybookSaveRequest,
 )
+from services import local_playbooks
+from services.local_playbooks import PlaybookError
 from services.audit import record_audit
 from services.crypto import encrypt_secret, decrypt_secret
 from services.git_ssh import build_git_ssh_command
@@ -58,7 +63,8 @@ EDITOR_ROLES = (UserRole.admin, UserRole.operator)
 
 @router.get("/repos", response_model=list[PlaybookRepoOut])
 def list_repos(db: Session = Depends(get_db), _: User = Depends(require_roles(*EDITOR_ROLES))):
-    return db.execute(select(PlaybookRepo).order_by(PlaybookRepo.name)).scalars().all()
+    local_playbooks.ensure_local_repo(db)
+    return db.execute(select(PlaybookRepo).order_by(PlaybookRepo.kind, PlaybookRepo.name)).scalars().all()
 
 
 @router.post("/repos", response_model=PlaybookRepoOut, status_code=status.HTTP_201_CREATED)
@@ -120,6 +126,8 @@ def sync_repo(
     repo = db.get(PlaybookRepo, repo_id)
     if repo is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Репозиторий не найден")
+    if repo.kind == local_playbooks.LOCAL:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Локальные плейбуки не связаны с git")
 
     try:
         git_repo = git.Repo(repo.local_path)
@@ -157,11 +165,106 @@ def list_playbook_files(repo_id: uuid.UUID, db: Session = Depends(get_db), _: Us
     files = []
     for pattern in ("*.yml", "*.yaml"):
         for path in base.rglob(pattern):
-            if ".git" in path.parts:
+            # .git и служебные .check-* / .*.tmp редактора
+            if any(part.startswith(".") for part in path.relative_to(base).parts):
                 continue
             display_name = _read_play_name(path)
             files.append(PlaybookFileOut(name=path.name, path=str(path.relative_to(base)).replace("\\", "/"), display_name=display_name))
     return files
+
+
+def _repo(db: Session, repo_id) -> PlaybookRepo:
+    repo = db.get(PlaybookRepo, repo_id)
+    if repo is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Репозиторий не найден")
+    return repo
+
+
+@router.get("/repos/{repo_id}/content", response_model=PlaybookContentOut)
+def get_playbook_content(repo_id: uuid.UUID, path: str, db: Session = Depends(get_db), _: User = Depends(require_roles(*EDITOR_ROLES))):
+    """Текст плейбука для редактора: локальный — для правки, из git — для просмотра и копии."""
+    repo = _repo(db, repo_id)
+    try:
+        target = local_playbooks.resolve(repo, path)
+    except PlaybookError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if not target.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Плейбук не найден")
+    from datetime import datetime, timezone
+
+    return PlaybookContentOut(
+        repo_id=repo.id,
+        path=path,
+        content=target.read_text(encoding="utf-8", errors="replace"),
+        editable=repo.kind == local_playbooks.LOCAL,
+        modified_at=datetime.fromtimestamp(target.stat().st_mtime, tz=timezone.utc),
+    )
+
+
+@router.get("/local/template")
+def local_playbook_template(_: User = Depends(require_roles(*EDITOR_ROLES))):
+    return {"content": local_playbooks.TEMPLATE}
+
+
+@router.post("/local/check")
+def check_local_playbook(payload: PlaybookCheckRequest, _: User = Depends(require_roles(*EDITOR_ROLES))):
+    error = local_playbooks.check(payload.content)
+    return {"ok": error is None, "error": error}
+
+
+@router.put("/local/file", response_model=PlaybookContentOut)
+def save_local_playbook(
+    payload: PlaybookSaveRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*EDITOR_ROLES)),
+):
+    repo = local_playbooks.ensure_local_repo(db)
+    try:
+        path = local_playbooks.check_path(payload.path)
+        target = local_playbooks.resolve(repo, path)
+        original = local_playbooks.resolve(repo, local_playbooks.check_path(payload.original_path)) if payload.original_path else None
+    except PlaybookError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if original is not None and not original.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Плейбук удалён — сохраните его как новый")
+    if target.exists() and target != original:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Плейбук {path} уже есть — выберите другое имя")
+    error = local_playbooks.check(payload.content)
+    if error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error)
+
+    local_playbooks.write(target, payload.content)
+    renamed = original is not None and original != target
+    if renamed:
+        original.unlink()
+        local_playbooks.prune_empty_dirs(repo, original)
+        # Расписания запускают плейбук по имени файла — переезжают вместе с ним
+        for schedule in db.execute(select(PlaybookSchedule).where(PlaybookSchedule.repo_id == repo.id,
+                                                                  PlaybookSchedule.playbook_name == payload.original_path)).scalars():
+            schedule.playbook_name = path
+        db.commit()
+    action = "playbook.local.create" if original is None else "playbook.local.update"
+    record_audit(db, user.id, action, f"{payload.original_path} -> {path}" if renamed else path, request)
+    return get_playbook_content(repo.id, path, db, user)
+
+
+@router.delete("/local/file", status_code=status.HTTP_204_NO_CONTENT)
+def delete_local_playbook(path: str, request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles(*EDITOR_ROLES))):
+    repo = local_playbooks.ensure_local_repo(db)
+    try:
+        target = local_playbooks.resolve(repo, local_playbooks.check_path(path))
+    except PlaybookError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if not target.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Плейбук не найден")
+    used = db.execute(select(PlaybookSchedule).where(PlaybookSchedule.repo_id == repo.id, PlaybookSchedule.playbook_name == path)).scalars().all()
+    if used:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"Плейбук запускается по {len(used)} расписани{'ю' if len(used) == 1 else 'ям'} — сначала удалите их")
+    target.unlink()
+    local_playbooks.prune_empty_dirs(repo, target)
+    record_audit(db, user.id, "playbook.local.delete", path, request)
 
 
 @router.post("/run")
