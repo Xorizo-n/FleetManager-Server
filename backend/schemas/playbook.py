@@ -17,6 +17,7 @@ class PlaybookRepoOut(BaseModel):
 
     id: uuid.UUID
     name: str
+    kind: str = "git"
     git_url: str
     credential_id: uuid.UUID | None
     branch: str
@@ -104,3 +105,22 @@ class PlaybookScheduleOut(BaseModel):
     @classmethod
     def none_as_empty_dict(cls, value):
         return value or {}
+
+
+class PlaybookContentOut(BaseModel):
+    repo_id: uuid.UUID
+    path: str
+    content: str
+    editable: bool
+    modified_at: datetime | None = None
+
+
+class PlaybookCheckRequest(BaseModel):
+    content: str
+
+
+class PlaybookSaveRequest(BaseModel):
+    path: str
+    content: str
+    # Путь до сохранения: другой — переименование (расписания переезжают вместе с файлом); None — новый файл
+    original_path: str | None = None

@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     # Ansible
     ansible_playbooks_repo_dir: str = "/app/ansible_data/playbooks_repo"
     ansible_private_key_dir: str = "/app/ansible_data/keys"
+    # Плейбуки, созданные в редакторе (services/local_playbooks.py): только на этом сервере, не в git
+    local_playbooks_dir: str = "/app/ansible_data/local_playbooks"
     # SSH-порт хостов с агентом по умолчанию (агент не передаёт свой порт при
     # регистрации). Агент держит sshd на 22 и пускает туда только этот сервер.
     ansible_ssh_port: int = 22

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { QueryClient, useQuery } from "@tanstack/react-query";
+import { QueryClient, useQueries, useQuery } from "@tanstack/react-query";
 import { apiClient } from "./client";
 import type {
   AgentAlert,
@@ -113,6 +113,34 @@ export const useRepos = () => {
 };
 export const usePlaybookFiles = (repoId: string | null) =>
   useQuery({ queryKey: keys.files(repoId ?? ""), queryFn: () => get<PlaybookFile[]>(`/playbooks/repos/${repoId}/files`), enabled: !!repoId });
+/**
+ * Все плейбуки всех источников одним каталогом: основной git-репозиторий — по папкам, остальные
+ * (в том числе локальные из редактора, «Fleet Manager») — отдельными группами.
+ */
+export function usePlaybookCatalog() {
+  const repos = useRepos();
+  const list = repos.data ?? [];
+  const results = useQueries({
+    queries: list.map((r) => ({ queryKey: keys.files(r.id), queryFn: () => get<PlaybookFile[]>(`/playbooks/repos/${r.id}/files`) })),
+  });
+  const primary = list.find((r) => r.kind !== "local")?.id;
+  const files = useMemo(
+    () =>
+      list.flatMap((r, i) =>
+        (results[i]?.data ?? []).map((f) => ({
+          ...f,
+          key: `${r.id}::${f.path}`,
+          repo_id: r.id,
+          source: r.id === primary ? undefined : r.name,
+          local: r.kind === "local",
+        })),
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [list, primary, ...results.map((q) => q.data)],
+  );
+  return { repos, files, isLoading: repos.isLoading || results.some((q) => q.isLoading) };
+}
+
 export const useSchedules = () => {
   const canEdit = useCanEdit();
   return useQuery({ queryKey: keys.schedules, queryFn: () => get<Schedule[]>("/playbooks/schedules"), enabled: canEdit });

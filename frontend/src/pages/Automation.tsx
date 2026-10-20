@@ -1,5 +1,5 @@
 import { FormEvent, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { GitBranch, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { apiClient } from "../api/client";
@@ -43,7 +43,13 @@ export default function Automation() {
       />
       {tab === "run" && (
         <div className="surface-panel max-w-4xl">
-          <PlaybookRunForm key={params.get("mode") ?? "now"} initialMode={params.get("mode") === "schedule" ? "schedule" : "now"} pickerHeight={380} />
+          <PlaybookRunForm
+            key={`${params.get("mode") ?? "now"}:${params.get("playbook") ?? ""}`}
+            initialMode={params.get("mode") === "schedule" ? "schedule" : "now"}
+            initialRepoId={params.get("repo") ?? undefined}
+            initialPlaybook={params.get("playbook") ?? undefined}
+            pickerHeight={380}
+          />
         </div>
       )}
       {tab === "schedules" && <SchedulesTab />}
@@ -321,22 +327,39 @@ function ReposTab() {
             </tr>
           </thead>
           <tbody>
-            {(repos.data ?? []).map((r) => (
-              <tr key={r.id}>
-                <td>
-                  <div className="font-medium text-foreground">{r.name}</div>
-                  <div className="font-mono text-xs text-subtle">{r.git_url}</div>
-                </td>
-                <td className="font-mono text-sm">{r.branch}</td>
-                <td className="text-muted-foreground">{r.credential_id ? credentials.data?.find((c) => c.id === r.credential_id)?.name ?? "SSH-ключ" : "HTTPS"}</td>
-                <td className="text-right">
-                  <Button size="sm" variant="secondary" onClick={() => sync(r.id)} loading={busy === r.id}>
-                    {busy !== r.id && <RefreshCw className="h-3.5 w-3.5" />}
-                    Обновить
-                  </Button>
-                </td>
-              </tr>
-            ))}
+            {(repos.data ?? []).map((r) =>
+              r.kind === "local" ? (
+                <tr key={r.id}>
+                  <td>
+                    <div className="font-medium text-foreground">{r.name}</div>
+                    <div className="text-xs text-subtle">Плейбуки из редактора: хранятся только на этом сервере, в git не попадают</div>
+                  </td>
+                  <td className="text-subtle">—</td>
+                  <td className="text-muted-foreground">Локально</td>
+                  <td className="text-right">
+                    <Link to="/automation/editor" className="btn-secondary btn-sm">
+                      <Plus className="h-3.5 w-3.5" />
+                      Новый плейбук
+                    </Link>
+                  </td>
+                </tr>
+              ) : (
+                <tr key={r.id}>
+                  <td>
+                    <div className="font-medium text-foreground">{r.name}</div>
+                    <div className="font-mono text-xs text-subtle">{r.git_url}</div>
+                  </td>
+                  <td className="font-mono text-sm">{r.branch}</td>
+                  <td className="text-muted-foreground">{r.credential_id ? credentials.data?.find((c) => c.id === r.credential_id)?.name ?? "SSH-ключ" : "HTTPS"}</td>
+                  <td className="text-right">
+                    <Button size="sm" variant="secondary" onClick={() => sync(r.id)} loading={busy === r.id}>
+                      {busy !== r.id && <RefreshCw className="h-3.5 w-3.5" />}
+                      Обновить
+                    </Button>
+                  </td>
+                </tr>
+              ),
+            )}
           </tbody>
         </table>
         {repos.data?.length === 0 && <Empty>Репозитории не подключены</Empty>}

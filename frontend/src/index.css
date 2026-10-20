@@ -21,6 +21,11 @@
   --c-subtle: 100 116 139;
   --c-scrollbar: 203 213 225;
   --c-scrollbar-hover: 148 163 184;
+  /* Подсветка YAML в редакторе плейбуков (components/YamlEditor.tsx) */
+  --c-code-key: 29 78 216;
+  --c-code-string: 21 128 61;
+  --c-code-number: 180 83 9;
+  --c-code-keyword: 126 34 206;
   --shadow-panel: 0 1px 2px rgb(15 23 42 / 0.05), 0 8px 24px -12px rgb(15 23 42 / 0.08);
   --shadow-panel-lg: 0 4px 6px rgb(15 23 42 / 0.04), 0 16px 40px -16px rgb(15 23 42 / 0.12);
 }
@@ -36,6 +41,10 @@
   --c-subtle: 100 116 139;
   --c-scrollbar: 51 65 85;
   --c-scrollbar-hover: 71 85 105;
+  --c-code-key: 125 175 255;
+  --c-code-string: 134 239 172;
+  --c-code-number: 252 211 77;
+  --c-code-keyword: 216 180 254;
   --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -8px rgb(0 0 0 / 0.6);
   --shadow-panel-lg: 0 4px 6px rgb(0 0 0 / 0.3), 0 16px 40px -12px rgb(0 0 0 / 0.7);
 }

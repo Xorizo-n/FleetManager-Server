@@ -335,7 +335,23 @@ for (let i = 0; i < 30; i++) {
 }
 
 const repo = { id: uuid(), name: "Playbooks", git_url: "git@github.com:kozlov174/RTF_OOD_AnsiblePlaybooks.git", credential_id: credentials[2].id, branch: "main", created_at: minutesAgo(60 * 24 * 100) };
-const repos = [repo];
+// Локальные плейбуки из редактора (backend/services/local_playbooks.py)
+const localRepo = { id: uuid(), name: "Fleet Manager", kind: "local", git_url: "", credential_id: null, branch: "", created_at: minutesAgo(60 * 24 * 3) };
+const repos = [{ ...repo, kind: "git" }, localRepo];
+const PB_TEMPLATE = "---\n- name: Новый плейбук\n  hosts: Win_Hosts\n  gather_facts: false\n  ignore_unreachable: true\n  vars:\n    ansible_remote_tmp: 'C:\\Windows\\Temp'\n  tasks:\n    - name: Проверить связь с ПК\n      ansible.windows.win_ping:\n";
+const localFiles = new Map<string, { content: string; modified_at: string }>([
+  ["check/restart_spooler.yml", { content: "---\n- name: Перезапуск диспетчера печати\n  hosts: Win_Hosts\n  gather_facts: false\n  tasks:\n    - name: Restart Spooler\n      ansible.windows.win_service:\n        name: Spooler\n        state: restarted\n", modified_at: minutesAgo(90) }],
+]);
+const playName = (content: string) => content.match(/^- name:\s*(.+)$/m)?.[1]?.trim() ?? null;
+function mockCheck(content: string): string | null {
+  if (!content.trim()) return "Плейбук пустой";
+  if (!/^\s*-\s/m.test(content)) return "Плейбук — это список play: начинается с «- name: …» и «hosts: …»";
+  if (!/hosts:/.test(content)) return "У play №1 не задано «hosts»";
+  const bad = content.split("\n").findIndex((l) => /\t/.test(l));
+  if (bad >= 0) return `Ошибка YAML (строка ${bad + 1}, позиция 1): found character '\\t' that cannot start any token`;
+  const unknown = content.match(/^\s+(ansible\.\w+\.\w+):/gm)?.map((m) => m.trim().slice(0, -1)).find((m) => !/^ansible\.(builtin|windows)\.(win_ping|win_service|win_copy|raw|debug|fail|set_fact|win_shell|win_command|win_reboot|win_file)$/.test(m));
+  return unknown ? `ERROR! couldn't resolve module/action '${unknown}'. This often indicates a misspelling, missing collection, or incorrect module path.` : null;
+}
 const INSTALL = ["7zip", "chrome", "firefox", "vscode", "git", "python", "putty", "vlc", "zoom", "gimp", "inkscape", "docker_desktop", "virtualbox", "wireshark", "pycharm", "idea", "kompas3d", "matlab_runtime_2021a", "termidesk_client", "veyon", "seb", "1c_edu", "notepadpp", "nodejs", "obs", "anaconda", "blender", "qgis", "rstudio", "android_studio"];
 const playbookFiles = [
   { name: "install_all_software.yml", path: "playbooks/install_all_software.yml", display_name: "Установка базового набора ПО" },
@@ -796,7 +812,39 @@ route("POST", "/installers/agent/sync", (ctx) => { editor(ctx); return { updated
 route("GET", "/playbooks/repos", (ctx) => { editor(ctx); return repos; });
 route("POST", "/playbooks/repos", (ctx) => { editor(ctx); const r = { id: uuid(), name: ctx.body.name, git_url: ctx.body.git_url, credential_id: ctx.body.credential_id, branch: ctx.body.branch || "main", created_at: now().toISOString() }; repos.push(r); return r; });
 route("POST", "/playbooks/repos/{id}/sync", (ctx, p) => { editor(ctx); return find(repos, p.id, "Репозиторий"); });
-route("GET", "/playbooks/repos/{id}/files", (ctx, p) => { editor(ctx); return p.id === repo.id ? playbookFiles : playbookFiles.slice(0, 5); });
+route("GET", "/playbooks/repos/{id}/files", (ctx, p) => {
+  editor(ctx);
+  if (p.id === localRepo.id) return [...localFiles.entries()].map(([path, f]) => ({ name: path.split("/").pop(), path, display_name: playName(f.content) }));
+  return p.id === repo.id ? playbookFiles : playbookFiles.slice(0, 5);
+});
+route("GET", "/playbooks/repos/{id}/content", (ctx, p) => {
+  editor(ctx);
+  const path = String(ctx.query.get("path") ?? "");
+  if (p.id === localRepo.id) {
+    const f = localFiles.get(path);
+    if (!f) throw new HttpError(404, "Плейбук не найден");
+    return { repo_id: localRepo.id, path, content: f.content, editable: true, modified_at: f.modified_at };
+  }
+  const file = playbookFiles.find((f) => f.path === path);
+  if (!file) throw new HttpError(404, "Плейбук не найден");
+  return { repo_id: p.id, path, editable: false, modified_at: minutesAgo(60 * 24 * 5),
+    content: `---\n- name: ${file.display_name ?? file.name}\n  hosts: Win_Hosts\n  gather_facts: false\n  ignore_unreachable: true\n  tasks:\n    - name: Check\n      ansible.builtin.raw: |\n        chcp 65001 | Out-Null\n        Write-Output "OK"\n      register: result\n      changed_when: false\n\n    - name: Show result\n      ansible.builtin.debug:\n        msg: "{{ result.stdout_lines }}"\n` };
+});
+route("GET", "/playbooks/local/template", (ctx) => { editor(ctx); return { content: PB_TEMPLATE }; });
+route("POST", "/playbooks/local/check", (ctx) => { editor(ctx); const error = mockCheck(ctx.body.content); return { ok: !error, error }; });
+route("PUT", "/playbooks/local/file", (ctx) => {
+  editor(ctx);
+  const { path, content, original_path } = ctx.body;
+  if (!/^(?:[A-Za-z0-9][A-Za-z0-9_-]{0,63}\/)?[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\.ya?ml$/.test(path)) throw new HttpError(400, "Имя файла: латиница, цифры, «_», «-», «.», окончание .yml; можно одну папку — install/firefox.yml");
+  if (localFiles.has(path) && path !== original_path) throw new HttpError(409, `Плейбук ${path} уже есть — выберите другое имя`);
+  const error = mockCheck(content);
+  if (error) throw new HttpError(422, error);
+  if (original_path && original_path !== path) localFiles.delete(original_path);
+  const saved = { content: content.endsWith("\n") ? content : content + "\n", modified_at: now().toISOString() };
+  localFiles.set(path, saved);
+  return { repo_id: localRepo.id, path, editable: true, ...saved };
+});
+route("DELETE", "/playbooks/local/file", (ctx) => { editor(ctx); localFiles.delete(String(ctx.query.get("path"))); return null; });
 route("POST", "/playbooks/run", (ctx) => {
   editor(ctx);
   const ids = resolveTargets(ctx.body.host_ids, [...(ctx.body.host_group_ids ?? []), ...(ctx.body.host_group_id ? [ctx.body.host_group_id] : [])]);
