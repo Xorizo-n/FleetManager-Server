@@ -32,7 +32,9 @@ class SoftwareItem(Base):
     __tablename__ = "software_items"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    host_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("hosts.id", ondelete="CASCADE"), nullable=False)
+    # index: heartbeat на каждый вызов делает DELETE ... WHERE host_id = ? по таблице
+    # на сотни тысяч строк — без индекса это Seq Scan и исчерпание пула соединений.
+    host_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("hosts.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     version: Mapped[str | None] = mapped_column(String(128), nullable=True)
     install_method: Mapped[InstallMethod] = mapped_column(Enum(InstallMethod), nullable=False)
