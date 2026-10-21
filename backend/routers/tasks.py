@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from database import SessionLocal, get_db
-from dependencies import get_current_user, require_roles
+from dependencies import get_current_user, oauth2_scheme, require_roles
+from services.security import decode_token
 from models.task import TaskRun, TaskStatus, TaskType
 from models.user import User, UserRole
 from schemas.task import TaskRunOut, TaskRunDetailOut
@@ -83,12 +84,30 @@ def cancel_task(
 
 
 @router.get("/{task_id}/stream")
-async def stream_task_log(task_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    task_run = db.get(TaskRun, task_id)
-    if task_run is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="task not found")
-    if not can_view_task_type(user.role, task_run.task_type):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient permissions")
+async def stream_task_log(task_id: uuid.UUID, token: str = Depends(oauth2_scheme)):
+    # ВАЖНО: не используем Depends(get_db)/get_current_user — для SSE-ответа FastAPI
+    # держит yield-зависимости (и их соединение с БД, с открытой транзакцией) весь
+    # стрим, что копит «idle in transaction» и исчерпывает пул. Авторизацию и начальную
+    # проверку делаем короткоживущей сессией и закрываем её ДО старта стрима.
+    db = SessionLocal()
+    try:
+        try:
+            payload = decode_token(token)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc))
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Требуется access-токен")
+        user = db.get(User, uuid.UUID(payload["sub"]))
+        if user is None or not user.is_active:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Пользователь не найден или деактивирован")
+
+        task_run = db.get(TaskRun, task_id)
+        if task_run is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="task not found")
+        if not can_view_task_type(user.role, task_run.task_type):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient permissions")
+    finally:
+        db.close()
 
     async def event_generator():
         last_len = 0
