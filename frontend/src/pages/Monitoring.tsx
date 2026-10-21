@@ -1,7 +1,7 @@
-import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Activity, AlertCircle, AlertTriangle, ArrowUpCircle, Bell, BellOff, CheckCircle2, Cpu, HardDrive, Info,
+  Activity, AlertCircle, AlertTriangle, ArrowUpCircle, Bell, BellOff, Building2, CheckCircle2, Cpu, HardDrive, Info,
   KeyRound, MemoryStick, MonitorDot, Network, OctagonAlert, Server, ServerOff, ShieldAlert, Wifi, WifiOff,
 } from "lucide-react";
 import { apiClient } from "../api/client";
@@ -74,7 +74,6 @@ interface ServerMetrics {
   net_recv_mbps: number;
   disks: { mount: string; total_gb: number; used_gb: number; percent: number }[];
   uptime_seconds: number;
-  process_count: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -120,9 +119,21 @@ interface Problem {
   weight?: number;
 }
 
+/** Аудитория с отклонением: часть ПК выпала при работающих остальных, алерты или полный диск.
+ *  Полностью выключенная аудитория — норма (в ней нет занятий), отклонением не считается. */
+interface Deviation extends Room {
+  where: string;
+  missing: number;
+}
+
 const ALERT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const STALE_MS = 60_000; // данные старше минуты — экран «не знает», что происходит
-const MAX_PROBLEMS = 8;
+const PROBLEM_ROW_PX = 44;
+const DEVIATION_ROW_PX = 36;
+const TASK_ROWS = 4;
+// На невысоком экране (ноутбук 1366×768) второстепенное прячем, отдавая высоту спискам.
+// Строка целиком — чтобы Tailwind увидел класс при сборке.
+const SHORT_HIDE = "[@media(max-height:820px)]:hidden";
 
 // ---------------------------------------------------------------------------
 // Утилиты
@@ -156,7 +167,34 @@ function loadTone(p: number): { bar: string; text: string } {
   return { bar: "bg-emerald-500", text: "text-emerald-500" };
 }
 
-const floorLabel = (name: string | null) => (name ? name.replace(/\s*этаж\s*/i, " эт.").trim() : "—");
+const floorLabel = (name: string | null) => (name ? name.replace(/\s*этаж\s*/i, " эт.").trim() : null);
+
+/**
+ * Сколько строк фиксированной высоты помещается в контейнер. Экран ТВ не прокручивается,
+ * а разрешение заранее неизвестно, поэтому списки показывают ровно столько, сколько влезает,
+ * а остаток сворачивают в «и ещё N» — без строк, обрезанных посередине.
+ */
+function useRowCapacity<T extends HTMLElement>(rowPx: number) {
+  const ref = useRef<T>(null);
+  const [rows, setRows] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => setRows(Math.max(0, Math.floor(el.clientHeight / rowPx)));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [rowPx]);
+  return [ref, rows] as const;
+}
+
+/** Первые элементы под ёмкость; если всё не влезло, последнее место отдаётся под «и ещё N» */
+function fit<T>(items: T[], capacity: number): { shown: T[]; hidden: number } {
+  if (items.length <= capacity) return { shown: items, hidden: 0 };
+  const shown = items.slice(0, Math.max(0, capacity - 1));
+  return { shown, hidden: items.length - shown.length };
+}
 
 function useBeeper(active: boolean, enabled: boolean) {
   const ctxRef = useRef<AudioContext | null>(null);
@@ -251,7 +289,7 @@ function UpdatedAgo({ at }: { at: number }) {
     return () => window.clearInterval(id);
   }, []);
   if (!at) return null;
-  return <span className="text-xs tabular-nums text-muted-foreground">обновлено {ago(at, now)} назад</span>;
+  return <span className="hidden text-xs tabular-nums text-muted-foreground lg:inline">обновлено {ago(at, now)} назад</span>;
 }
 
 type KpiTone = "good" | "neutral" | Sev;
@@ -270,15 +308,16 @@ function Kpi({ icon, label, value, suffix, sub, tone, meter }: {
 }) {
   return (
     <div className="surface-card flex min-w-0 flex-col p-3">
-      <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
-        <span className={tone === "neutral" ? "text-muted-foreground" : KPI_TONE[tone]}>{icon}</span>
+      <div className="flex items-start justify-between gap-1.5">
+        {/* Подпись в две строки, а не обрезанная: на узком экране «Windows без активации» не влезает в одну */}
+        <span className="line-clamp-2 min-h-[2rem] text-xs font-medium leading-4 text-muted-foreground">{label}</span>
+        <span className={`shrink-0 ${tone === "neutral" ? "text-muted-foreground" : KPI_TONE[tone]}`}>{icon}</span>
       </div>
       <div className="mt-1 flex items-baseline gap-1">
         <span className={`text-3xl font-bold leading-none tabular-nums ${KPI_TONE[tone]}`}>{value}</span>
         {suffix && <span className="text-sm tabular-nums text-muted-foreground">{suffix}</span>}
       </div>
-      <div className="mt-1 truncate text-[11px] text-muted-foreground">{sub}</div>
+      <div className="mt-1 truncate text-[11px] text-muted-foreground" title={sub}>{sub}</div>
       {meter !== undefined && (
         <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted">
           <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${meter}%` }} />
@@ -288,52 +327,38 @@ function Kpi({ icon, label, value, suffix, sub, tone, meter }: {
   );
 }
 
-/** Аудитория: заливка — доля ПК в сети (один тон, светлый → тёмный), значок — острые проблемы */
-function RoomTile({ room }: { room: Room }) {
-  const share = room.total ? room.online / room.total : 0;
-  const off = room.online === 0;
-  const tip = [
-    room.name,
-    `в сети ${room.online} из ${room.total}`,
-    room.alerts ? `алертов за сутки: ${room.alerts}` : null,
-    room.disk ? `заполнен диск: ${pcCount(room.disk)}` : null,
-    room.not_activated ? `без активации: ${pcCount(room.not_activated)}` : null,
-  ].filter(Boolean).join("\n");
+/** Корпус: сколько ПК в сети и где отклонения — без перечисления всех аудиторий */
+function BuildingCard({ b, deviating }: { b: Building; deviating: number }) {
+  const rooms = b.floors.flatMap((f) => f.rooms);
+  const share = pct(b.online, b.total);
+  const alerts = rooms.reduce((n, r) => n + r.alerts, 0);
+  const disks = rooms.reduce((n, r) => n + r.disk, 0);
+  const dark = rooms.filter((r) => r.online === 0).length;
   return (
-    <div
-      title={tip}
-      className={`relative flex h-14 min-w-0 flex-col justify-center rounded-md px-1.5 leading-tight ${
-        off ? "bg-muted text-muted-foreground" : share >= 0.8 ? "text-white" : "text-foreground"
-      }`}
-      style={off ? undefined : { backgroundColor: `rgba(28, 92, 171, ${0.16 + 0.68 * share})` }}
-    >
-      <span className="truncate text-sm font-semibold">{room.short_name}</span>
-      <span className="text-xs tabular-nums opacity-90">{off ? "выкл." : `${room.online}/${room.total}`}</span>
-      {room.alerts > 0 && (
-        <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-bold text-white ring-2 ring-surface">
-          {room.alerts}
-        </span>
-      )}
-      {room.disk > 0 && (
-        <span className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-orange-500 text-white ring-2 ring-surface">
-          <HardDrive className="h-2.5 w-2.5" />
-        </span>
-      )}
-    </div>
-  );
-}
-
-function MapLegend() {
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-      <span className="flex items-center gap-1.5">
-        в сети
-        <span className="h-2.5 w-16 rounded-sm" style={{ background: "linear-gradient(90deg, rgba(28,92,171,0.16), rgba(28,92,171,0.84))" }} />
-        100%
-      </span>
-      <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-muted ring-1 ring-border" /> все выключены</span>
-      <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-rose-600" /> алерты</span>
-      <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-orange-500" /> диск</span>
+    <div className="surface-card flex min-w-0 flex-col p-3">
+      <div className="flex items-center gap-2">
+        <Building2 className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+        <span className="truncate text-base font-semibold text-foreground">{b.name}</span>
+        <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">{rooms.length} ауд.</span>
+      </div>
+      <div className="mt-1.5 flex items-baseline gap-1">
+        <span className="text-2xl font-bold leading-none tabular-nums text-foreground" title="ПК в сети">{b.online}</span>
+        <span className="text-sm tabular-nums text-muted-foreground">/ {b.total}</span>
+        <span className="ml-auto text-sm font-semibold tabular-nums text-foreground">{share}%</span>
+      </div>
+      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
+        <div className="h-full rounded-full bg-blue-600 transition-all duration-500" style={{ width: `${share}%` }} />
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+        {deviating > 0 ? (
+          <span className="flex items-center gap-1 text-amber-700 dark:text-amber-300"><AlertCircle className="h-3.5 w-3.5" />{deviating} с отклонениями</span>
+        ) : (
+          <span className="flex items-center gap-1 text-emerald-700 dark:text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" />без отклонений</span>
+        )}
+        {alerts > 0 && <span className="flex items-center gap-1 text-rose-700 dark:text-rose-300"><Bell className="h-3.5 w-3.5" />{alerts}</span>}
+        {disks > 0 && <span className="flex items-center gap-1 text-orange-700 dark:text-orange-300"><HardDrive className="h-3.5 w-3.5" />{disks}</span>}
+        {dark > 0 && <span>выкл. {dark}</span>}
+      </div>
     </div>
   );
 }
@@ -345,19 +370,23 @@ function MetricCell({ icon, label, value, pctValue, detail, spark, sparkClass }:
   return (
     <div className="surface-card flex min-w-0 flex-col justify-center gap-1 p-2.5">
       <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-          <span className="text-blue-600 dark:text-blue-400">{icon}</span>
-          {label}
+        <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-foreground">
+          <span className="shrink-0 text-blue-600 dark:text-blue-400">{icon}</span>
+          <span className="truncate">{label}</span>
         </span>
-        <span className="text-sm font-semibold tabular-nums text-foreground">{value}</span>
+        <span className="shrink-0 text-sm font-semibold tabular-nums text-foreground">{value}</span>
       </div>
       {tone && (
         <div className="h-1.5 overflow-hidden rounded-full bg-muted">
           <div className={`h-full rounded-full transition-all duration-500 ${tone.bar}`} style={{ width: `${Math.min(100, Math.max(0, pctValue ?? 0))}%` }} />
         </div>
       )}
-      {spark && <Sparkline data={spark} className={sparkClass} />}
-      <div className="truncate text-[11px] text-muted-foreground">{detail}</div>
+      {spark && (
+        <div className={SHORT_HIDE}>
+          <Sparkline data={spark} className={sparkClass} />
+        </div>
+      )}
+      <div className={`truncate text-[11px] text-muted-foreground ${SHORT_HIDE}`} title={detail}>{detail}</div>
     </div>
   );
 }
@@ -387,7 +416,7 @@ export default function Monitoring() {
   });
   const recentTasks = useQuery({
     queryKey: ["mon", "recent-tasks"],
-    queryFn: () => apiClient.get<TaskRun[]>("/dashboard/recent-tasks", { params: { limit: 6 } }).then((r) => r.data),
+    queryFn: () => apiClient.get<TaskRun[]>("/dashboard/recent-tasks", { params: { limit: TASK_ROWS } }).then((r) => r.data),
     refetchInterval: 10_000,
   });
 
@@ -434,6 +463,32 @@ export default function Monitoring() {
   const kick = useBeeper(unacked.length > 0, soundOn);
 
   const stale = summary.isError || (summary.dataUpdatedAt > 0 && Date.now() - summary.dataUpdatedAt > STALE_MS);
+
+  // Аудитории с отклонениями — показываем исключения, а не всё подряд
+  const deviations = useMemo<Deviation[]>(() => {
+    const list: Deviation[] = [];
+    for (const b of s?.buildings ?? []) {
+      for (const f of b.floors) {
+        for (const r of f.rooms) {
+          const missing = r.online > 0 ? r.total - r.online : 0;
+          if (missing > 0 || r.alerts > 0 || r.disk > 0) {
+            const floor = floorLabel(f.name);
+            list.push({ ...r, missing, where: floor ? `${b.name} · ${floor}` : b.name });
+          }
+        }
+      }
+    }
+    // Острое (алерты, диск) — выше; дальше — где выпало больше машин
+    return list.sort((x, y) => y.alerts + y.disk - (x.alerts + x.disk) || y.missing - x.missing || x.name.localeCompare(y.name));
+  }, [s]);
+  const deviatingByBuilding = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const b of s?.buildings ?? []) {
+      const ids = new Set(b.floors.flatMap((f) => f.rooms.map((r) => r.id)));
+      map.set(b.id, deviations.filter((d) => ids.has(d.id)).length);
+    }
+    return map;
+  }, [s, deviations]);
 
   // Единый список проблем по серьёзности — как Problems в Zabbix
   const problems = useMemo<Problem[]>(() => {
@@ -496,10 +551,13 @@ export default function Monitoring() {
         ? "bg-rose-600 text-white"
         : SEV[overall.sev].chip;
 
+  const [problemsRef, problemsCap] = useRowCapacity<HTMLDivElement>(PROBLEM_ROW_PX);
+  const [devRef, devCap] = useRowCapacity<HTMLDivElement>(DEVIATION_ROW_PX);
+  const problemsFit = fit(problems, problemsCap);
+  const devFit = fit(deviations, devCap);
+
   const availability = s ? pct(s.online, s.total) : 0;
   const timelineData = (timeline.data ?? []).map((p) => p.online);
-  const shown = problems.slice(0, MAX_PROBLEMS);
-  const hidden = problems.length - shown.length;
   const tasks = recentTasks.data ?? [];
 
   return (
@@ -510,11 +568,11 @@ export default function Monitoring() {
       <header className="flex shrink-0 items-center justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
           <MonitorDot className="h-6 w-6 shrink-0 text-blue-600 dark:text-blue-400" />
-          <h1 className="truncate text-xl font-semibold tracking-tight text-foreground">Мониторинг инфраструктуры</h1>
+          <h1 className="hidden truncate text-xl font-semibold tracking-tight text-foreground md:block">Мониторинг инфраструктуры</h1>
           <span className={`inline-flex min-w-0 items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold ${overallClass} ${overall.sev === "critical" ? "animate-pulse" : ""}`}>
             <OverallIcon className="h-4 w-4 shrink-0" />
             <span className="shrink-0">{overall.title}</span>
-            <span className="hidden truncate font-normal opacity-90 xl:inline">· {overall.reason}</span>
+            <span className="truncate font-normal opacity-90">· {overall.reason}</span>
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-4">
@@ -557,52 +615,93 @@ export default function Monitoring() {
           sub={s?.agent_available_version ? `актуальная ${s.agent_available_version}` : ""} tone={s?.agent_outdated ? "info" : "good"} />
       </div>
 
-      {/* Центр: карта аудиторий + проблемы и задачи */}
+      {/* Центр: корпуса и отклонения + проблемы и задачи */}
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-2.5 lg:grid-cols-12">
-        {/* Карта аудиторий: корпус → этажи сверху вниз → аудитории */}
-        <section className="surface-card flex min-h-0 flex-col p-3 lg:col-span-8">
-          <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-foreground">Карта аудиторий</h2>
-            <MapLegend />
+        <div className="flex min-h-0 flex-col gap-2.5 lg:col-span-7">
+          {/* Корпуса */}
+          <div className="grid shrink-0 grid-cols-2 gap-2.5 xl:grid-cols-4">
+            {!s && <div className="surface-card col-span-full p-4 text-center text-sm text-muted-foreground">{summary.isError ? "Нет данных" : "Загрузка…"}</div>}
+            {(s?.buildings ?? []).map((b) => <BuildingCard key={b.id} b={b} deviating={deviatingByBuilding.get(b.id) ?? 0} />)}
           </div>
-          <div className="min-h-0 flex-1 space-y-2.5 overflow-hidden">
-            {!s && <p className="py-8 text-center text-sm text-muted-foreground">{summary.isError ? "Нет данных" : "Загрузка…"}</p>}
-            {(s?.buildings ?? []).map((b) => {
-              const share = pct(b.online, b.total);
-              return (
-                <div key={b.id}>
-                  <div className="mb-1 flex items-center gap-2">
-                    <span className="text-sm font-semibold text-foreground">{b.name}</span>
-                    <span className="text-xs tabular-nums text-muted-foreground">{b.online} / {b.total} в сети</span>
-                    <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
-                      <div className="h-full rounded-full" style={{ width: `${share}%`, backgroundColor: "rgb(28, 92, 171)" }} />
-                    </div>
-                    <span className="w-9 text-right text-xs tabular-nums text-muted-foreground">{share}%</span>
-                  </div>
-                  <div className="space-y-1">
-                    {b.floors.map((f) => (
-                      <div key={f.name ?? "-"} className="flex gap-1.5">
-                        <div className="w-11 shrink-0 pt-1.5 text-[11px] text-muted-foreground">{floorLabel(f.name)}</div>
-                        <div className="grid min-w-0 flex-1 gap-1" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(4.2rem, 1fr))" }}>
-                          {f.rooms.map((r) => <RoomTile key={r.id} room={r} />)}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
 
-        <div className="flex min-h-0 flex-col gap-2.5 lg:col-span-4">
+          {/* Аудитории с отклонениями: только исключения, отсортированы по остроте */}
+          <section className="surface-card flex min-h-0 flex-1 flex-col p-3">
+            <div className="mb-2 flex shrink-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <div className="flex items-baseline gap-2">
+                <h2 className="text-sm font-semibold text-foreground">Аудитории с отклонениями</h2>
+                {s && <span className="text-xs tabular-nums text-muted-foreground">{deviations.length} из {s.buildings.reduce((n, b) => n + b.floors.reduce((k, f) => k + f.rooms.length, 0), 0)}</span>}
+              </div>
+              <span className="text-[11px] text-muted-foreground">часть ПК выключена при работающих остальных · алерты · заполненный диск</span>
+            </div>
+            <div className="grid shrink-0 grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.4fr)_4.5rem_3.5rem_3rem] gap-3 border-b border-border px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              <span>Аудитория</span>
+              <span>Где</span>
+              <span>В сети</span>
+              <span className="text-right">Не в сети</span>
+              <span className="text-right">Алерты</span>
+              <span className="text-right">Диск</span>
+            </div>
+            <div ref={devRef} className="min-h-0 flex-1 overflow-hidden pt-0.5">
+              {s && deviations.length === 0 && (
+                <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+                  <CheckCircle2 className="h-10 w-10 text-emerald-500" />
+                  <p className="text-base font-semibold text-foreground">Отклонений нет</p>
+                  <p className="text-sm text-muted-foreground">Во всех работающих аудиториях полный состав ПК</p>
+                </div>
+              )}
+              {devFit.shown.map((d) => {
+                const share = pct(d.online, d.total);
+                return (
+                  <div
+                    key={d.id}
+                    style={{ height: DEVIATION_ROW_PX }}
+                    className={`grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.4fr)_4.5rem_3.5rem_3rem] items-center gap-3 rounded-md px-2 text-sm ${
+                      d.alerts || d.disk ? "bg-rose-500/5" : "odd:bg-muted/40"
+                    }`}
+                  >
+                    <span className="truncate font-semibold text-foreground">{d.name}</span>
+                    <span className="truncate text-xs text-muted-foreground">{d.where}</span>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="w-14 shrink-0 tabular-nums text-foreground">{d.online} / {d.total}</span>
+                      <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
+                        <span className="block h-full rounded-full bg-blue-600" style={{ width: `${share}%` }} />
+                      </span>
+                    </span>
+                    <span className={`text-right tabular-nums ${d.missing ? "font-semibold text-amber-700 dark:text-amber-300" : "text-subtle"}`}>
+                      {d.missing ? pcCount(d.missing) : "—"}
+                    </span>
+                    <span className="flex justify-end">
+                      {d.alerts ? (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-rose-600 px-1.5 py-0.5 text-xs font-bold tabular-nums text-white">
+                          <Bell className="h-3 w-3" />{d.alerts}
+                        </span>
+                      ) : (
+                        <span className="text-subtle">—</span>
+                      )}
+                    </span>
+                    <span className="flex justify-end">
+                      {d.disk ? <HardDrive className="h-4 w-4 text-orange-600 dark:text-orange-400" aria-label="заполнен диск" /> : <span className="text-subtle">—</span>}
+                    </span>
+                  </div>
+                );
+              })}
+              {devFit.hidden > 0 && (
+                <div style={{ height: DEVIATION_ROW_PX }} className="flex items-center px-2 text-xs text-muted-foreground">
+                  и ещё {devFit.hidden} {devFit.hidden === 1 ? "аудитория" : devFit.hidden < 5 ? "аудитории" : "аудиторий"}
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+
+        <div className="flex min-h-0 flex-col gap-2.5 lg:col-span-5">
           {/* Проблемы — по серьёзности; новые алерты подсвечивают блок и пищат */}
           <section
             className={`flex min-h-0 flex-1 flex-col rounded-xl p-3 ${
               unacked.length ? "border-2 border-rose-500/70 bg-rose-500/5 shadow-panel-lg" : "surface-card"
             }`}
           >
-            <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2">
+            <div className="mb-1.5 flex shrink-0 flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <AlertTriangle className={`h-4 w-4 ${unacked.length ? "animate-pulse text-rose-600 dark:text-rose-400" : "text-blue-600 dark:text-blue-400"}`} />
                 <h2 className="text-sm font-semibold text-foreground">Проблемы</h2>
@@ -624,38 +723,44 @@ export default function Monitoring() {
                 </button>
               )}
             </div>
-            {problems.length === 0 ? (
-              <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 text-center">
-                <CheckCircle2 className="h-12 w-12 text-emerald-500" />
-                <p className="text-lg font-semibold text-foreground">Проблем нет</p>
-                <p className="text-sm text-muted-foreground">Всё работает штатно</p>
-              </div>
-            ) : (
-              <div className="min-h-0 flex-1 space-y-0.5 overflow-hidden">
-                {shown.map((p) => {
-                  const Icon = SEV[p.sev].icon;
-                  return (
-                    <div key={p.key} className={`flex items-start gap-2.5 rounded-lg px-2 py-1.5 ${p.isNew ? "bg-rose-500/10" : ""}`}>
-                      <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${SEV[p.sev].text}`} aria-label={SEV[p.sev].label} />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="truncate text-sm font-semibold text-foreground">{p.title}</span>
-                          {p.isNew && <span className="shrink-0 rounded bg-rose-600 px-1 py-px text-[10px] font-bold uppercase text-white">новый</span>}
+            <div ref={problemsRef} className="min-h-0 flex-1 overflow-hidden">
+              {problems.length === 0 ? (
+                <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+                  <CheckCircle2 className="h-12 w-12 text-emerald-500" />
+                  <p className="text-lg font-semibold text-foreground">Проблем нет</p>
+                  <p className="text-sm text-muted-foreground">Всё работает штатно</p>
+                </div>
+              ) : (
+                <>
+                  {problemsFit.shown.map((p) => {
+                    const Icon = SEV[p.sev].icon;
+                    return (
+                      <div key={p.key} style={{ height: PROBLEM_ROW_PX }} className={`flex items-center gap-2.5 rounded-lg px-2 ${p.isNew ? "bg-rose-500/10" : ""}`}>
+                        <Icon className={`h-4 w-4 shrink-0 ${SEV[p.sev].text}`} aria-label={SEV[p.sev].label} />
+                        <div className="min-w-0 flex-1 leading-tight">
+                          <div className="flex items-center gap-1.5">
+                            <span className="truncate text-sm font-semibold text-foreground">{p.title}</span>
+                            {p.isNew && <span className="shrink-0 rounded bg-rose-600 px-1 py-px text-[10px] font-bold uppercase text-white">новый</span>}
+                          </div>
+                          <div className="truncate text-xs text-muted-foreground" title={p.detail}>{p.detail}</div>
                         </div>
-                        <div className="truncate text-xs text-muted-foreground">{p.detail}</div>
+                        {p.at && <span className="shrink-0 text-xs tabular-nums text-subtle">{ago(p.at, now)}</span>}
                       </div>
-                      {p.at && <span className="shrink-0 pt-0.5 text-xs tabular-nums text-subtle">{ago(p.at, now)}</span>}
+                    );
+                  })}
+                  {problemsFit.hidden > 0 && (
+                    <div style={{ height: PROBLEM_ROW_PX }} className="flex items-center px-2 text-xs text-muted-foreground">
+                      и ещё {problemsFit.hidden}
                     </div>
-                  );
-                })}
-                {hidden > 0 && <p className="px-2 pt-1 text-xs text-muted-foreground">и ещё {hidden}</p>}
-              </div>
-            )}
+                  )}
+                </>
+              )}
+            </div>
           </section>
 
           {/* Задачи */}
           <section className="surface-card flex shrink-0 flex-col p-3">
-            <div className="mb-1.5 flex items-center gap-2">
+            <div className="mb-1.5 flex flex-wrap items-center gap-2">
               <Activity className="h-4 w-4 text-blue-600 dark:text-blue-400" />
               <h2 className="text-sm font-semibold text-foreground">Задачи</h2>
               {s && s.tasks_running > 0 && (
@@ -671,14 +776,14 @@ export default function Monitoring() {
             </div>
             <div className="space-y-0.5">
               {tasks.length === 0 && <p className="py-2 text-center text-xs text-muted-foreground">Задач пока нет</p>}
-              {tasks.slice(0, 5).map((t) => {
+              {tasks.slice(0, TASK_ROWS).map((t, i) => {
                 const st = TASK_STATUS[t.status] ?? { label: t.status, dot: "bg-slate-400", text: "text-muted-foreground" };
                 return (
-                  <div key={t.id} className="flex items-center gap-2 rounded-md px-1.5 py-1 text-sm odd:bg-muted/40">
+                  <div key={t.id} className={`flex h-7 items-center gap-2 rounded-md px-1.5 text-sm odd:bg-muted/40 ${i >= 2 ? SHORT_HIDE : ""}`}>
                     <span className={`h-2 w-2 shrink-0 rounded-full ${st.dot} ${st.pulse ? "animate-pulse" : ""}`} />
                     <span className="min-w-0 flex-1 truncate text-foreground">{taskTitle(t)}</span>
                     <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{pcCount(t.host_ids.length)}</span>
-                    <span className={`w-16 shrink-0 text-right text-xs font-medium ${st.text}`}>{st.label}</span>
+                    <span className={`w-14 shrink-0 text-right text-xs font-medium ${st.text}`}>{st.label}</span>
                     <span className="w-11 shrink-0 text-right text-xs tabular-nums text-subtle">{ago(t.created_at, now)}</span>
                   </div>
                 );
@@ -693,7 +798,7 @@ export default function Monitoring() {
         <div className="mb-1.5 flex items-center gap-2 text-xs text-muted-foreground">
           {m ? <Server className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" /> : <ServerOff className="h-3.5 w-3.5 text-rose-500" />}
           <span className="font-medium text-foreground">Сервер Fleet Manager</span>
-          {m && <span className="tabular-nums">· аптайм {formatUptime(m.uptime_seconds)} · {m.process_count} процессов · load {m.load_avg.map((x) => x.toFixed(1)).join(" / ")}</span>}
+          {m && <span className="truncate tabular-nums">· аптайм {formatUptime(m.uptime_seconds)} · нагрузка {m.load_avg.map((x) => x.toFixed(1)).join(" / ")}</span>}
           {!m && <span>{metrics.isError ? "метрики недоступны" : "загрузка…"}</span>}
         </div>
         <div className="grid grid-cols-3 gap-2.5 xl:grid-cols-6">
