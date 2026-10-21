@@ -1,10 +1,30 @@
+import logging
+
+import anyio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from routers import auth, hosts, credentials, software, playbooks, tasks, dashboard, users, installers, agent, hardware, wallpapers, ldap_settings
 
+logger = logging.getLogger(__name__)
+
+# Число воркеров threadpool, в котором FastAPI крутит sync-зависимости и хендлеры.
+# Держим его НЕ БОЛЬШЕ суммарного размера пула БД (database.py: 20+30=50), иначе
+# потоки конкурируют за соединения и возникает кольцевой дедлок (см. database.py).
+DB_THREADPOOL_TOKENS = 40
+
 app = FastAPI(title="Fleet Manager API", version="1.0.0")
+
+
+@app.on_event("startup")
+async def _cap_threadpool() -> None:
+    # Фиксируем размер threadpool явно: по умолчанию anyio даёт 40, но полагаться
+    # на умолчание нельзя — инвариант «потоков <= соединений в пуле» критичен.
+    try:
+        anyio.to_thread.current_default_thread_limiter().total_tokens = DB_THREADPOOL_TOKENS
+    except Exception:  # noqa: BLE001
+        logger.exception("Не удалось зафиксировать размер threadpool")
 
 app.add_middleware(
     CORSMiddleware,
