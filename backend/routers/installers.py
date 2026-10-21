@@ -7,8 +7,8 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from config import settings
-from database import get_db
-from dependencies import get_current_user, require_roles
+from database import SessionLocal, get_db
+from dependencies import authenticate_user, get_current_user, oauth2_scheme, require_roles
 from models.user import User, UserRole
 from schemas.installer import AgentInstallerSyncResult, InstallerFileOut, InstallerUploadResult
 from services.agent_installer_sync import sync_agent_installer
@@ -113,7 +113,16 @@ def sync_agent_installer_endpoint(
 
 
 @router.get("/{name}/download")
-def download_installer(name: str, _: User = Depends(require_roles(UserRole.admin, UserRole.operator))):
+def download_installer(name: str, token: str = Depends(oauth2_scheme)):
+    # Аутентификацию делаем короткоживущей сессией и закрываем её ДО FileResponse:
+    # установщики крупные, а get_db-зависимость держала бы соединение весь download.
+    db = SessionLocal()
+    try:
+        user = authenticate_user(db, token)
+        if user.role not in (UserRole.admin, UserRole.operator):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
+    finally:
+        db.close()
     path = _resolve_safe(name)
     if not os.path.isfile(path):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Файл не найден")

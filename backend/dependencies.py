@@ -11,7 +11,13 @@ from services.security import decode_token
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+def authenticate_user(db: Session, token: str) -> User:
+    """Проверяет access-токен в переданной сессии и возвращает пользователя.
+
+    Вынесено из get_current_user, чтобы стримящие файлы эндпоинты (FileResponse)
+    могли аутентифицировать на короткоживущей сессии и закрыть её ДО отдачи файла:
+    yield-зависимость get_db держала бы соединение с БД весь download.
+    """
     try:
         payload = decode_token(token)
     except ValueError as exc:
@@ -25,6 +31,10 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Пользователь не найден или деактивирован")
 
     return user
+
+
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+    return authenticate_user(db, token)
 
 
 def require_roles(*roles: UserRole):

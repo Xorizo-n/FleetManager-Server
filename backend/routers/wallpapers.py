@@ -7,8 +7,8 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from database import get_db
-from dependencies import get_current_user, require_roles
+from database import SessionLocal, get_db
+from dependencies import authenticate_user, get_current_user, oauth2_scheme, require_roles
 from models.host import Host, HostGroup
 from models.user import User, UserRole
 from models.wallpaper import ObservedWallpaper, Wallpaper, WallpaperAssignment, WallpaperSchedule
@@ -95,11 +95,20 @@ def delete_wallpaper(wallpaper_id: uuid.UUID, request: Request, db: Session = De
 
 
 @router.get("/{wallpaper_id}/image")
-def wallpaper_image(wallpaper_id: uuid.UUID, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    wallpaper = db.get(Wallpaper, wallpaper_id)
-    if wallpaper is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Изображение не найдено")
-    return FileResponse(wallpaper_path(wallpaper), media_type=wallpaper.content_type)
+def wallpaper_image(wallpaper_id: uuid.UUID, token: str = Depends(oauth2_scheme)):
+    # Сессию закрываем ДО FileResponse, чтобы соединение с БД не висело весь
+    # показ картинки в админке (тот же класс утечки, что SSE).
+    db = SessionLocal()
+    try:
+        authenticate_user(db, token)
+        wallpaper = db.get(Wallpaper, wallpaper_id)
+        if wallpaper is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Изображение не найдено")
+        path = wallpaper_path(wallpaper)
+        media_type = wallpaper.content_type
+    finally:
+        db.close()
+    return FileResponse(path, media_type=media_type)
 
 
 @router.get("/observed", response_model=list[ObservedWallpaperOut])

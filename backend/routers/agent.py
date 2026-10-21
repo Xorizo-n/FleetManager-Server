@@ -9,7 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from database import get_db
+from database import SessionLocal, get_db
 from config import settings
 from dependencies import get_current_user, require_roles
 from models.agent import AgentAlert, AgentEnrollmentToken, HardwareEvent
@@ -86,10 +86,10 @@ def _client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
-def _require_agent_host(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
-    db: Session = Depends(get_db),
-) -> Host:
+def _authenticate_agent(db: Session, credentials: HTTPAuthorizationCredentials | None) -> Host:
+    """Проверяет agent-токен в переданной сессии. Вынесено, чтобы стримящие файлы
+    эндпоинты (установщик, обои) аутентифицировали на короткоживущей сессии и
+    закрывали её ДО отдачи файла — иначе соединение висит весь download."""
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Agent bearer token is required")
     token_hash = hash_agent_token(credentials.credentials)
@@ -97,6 +97,13 @@ def _require_agent_host(
     if host is None or host.agent_id is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or revoked agent token")
     return host
+
+
+def _require_agent_host(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+    db: Session = Depends(get_db),
+) -> Host:
+    return _authenticate_agent(db, credentials)
 
 
 def _check_machine(host: Host, machine_id: uuid.UUID) -> None:
@@ -555,12 +562,21 @@ def uninstall_agent(
 
 
 @router.get("/installer")
-def download_agent_installer(host: Host = Depends(_require_agent_host)):
+def download_agent_installer(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
     """Отдаёт установщик самому хосту по его agent-токену.
 
     Так удалённое обновление (services/agent_update.py) не требует передавать на
     хост никаких серверных секретов: хост скачивает файл своим токеном.
+
+    ВАЖНО: аутентифицируем короткоживущей сессией и закрываем её ДО FileResponse.
+    Установщик весит десятки МБ; если держать get_db-сессию весь download, при
+    массовом обновлении агентов пул соединений исчерпывается (как было с SSE).
     """
+    db = SessionLocal()
+    try:
+        _authenticate_agent(db, credentials)
+    finally:
+        db.close()
     path = installer_path()
     if not os.path.isfile(path):
         raise HTTPException(
@@ -571,12 +587,23 @@ def download_agent_installer(host: Host = Depends(_require_agent_host)):
 
 
 @router.get("/wallpapers/{wallpaper_id}")
-def download_wallpaper(wallpaper_id: uuid.UUID, host: Host = Depends(_require_agent_host), db: Session = Depends(get_db)):
-    """Изображение каталога для агента: он скачивает назначенные обои своим токеном."""
-    wallpaper = db.get(Wallpaper, wallpaper_id)
-    if wallpaper is None or not os.path.isfile(wallpaper_path(wallpaper)):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Изображение не найдено")
-    return FileResponse(wallpaper_path(wallpaper), media_type=wallpaper.content_type, filename=wallpaper.file_name)
+def download_wallpaper(wallpaper_id: uuid.UUID, credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
+    """Изображение каталога для агента: он скачивает назначенные обои своим токеном.
+
+    Сессию (аутентификация + чтение метаданных) закрываем ДО FileResponse, чтобы
+    соединение с БД не висело на время скачивания картинки."""
+    db = SessionLocal()
+    try:
+        _authenticate_agent(db, credentials)
+        wallpaper = db.get(Wallpaper, wallpaper_id)
+        if wallpaper is None or not os.path.isfile(wallpaper_path(wallpaper)):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Изображение не найдено")
+        path = wallpaper_path(wallpaper)
+        media_type = wallpaper.content_type
+        file_name = wallpaper.file_name
+    finally:
+        db.close()
+    return FileResponse(path, media_type=media_type, filename=file_name)
 
 
 @router.get("/versions", response_model=AgentVersionOverviewOut)
