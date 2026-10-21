@@ -1,5 +1,8 @@
 import os
+import re
 import time
+import uuid
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 import psutil
@@ -10,10 +13,13 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from dependencies import get_current_user
-from models.host import Host, HostStatus, HostStatusHistory
+from models.agent import AgentAlert
+from models.host import Host, HostGroup, HostStatus, HostStatusHistory
 from models.software import SoftwareItem, SoftwareHistory, SoftwareStatus
-from models.task import TaskRun
+from models.task import TaskRun, TaskStatus
 from models.user import User
+from services.activation import GRACE, UNLICENSED, activation_state
+from services.agent_version import STATUS_OUTDATED, available_agent_version, version_status
 from routers.software import _GUID_REGEX, _SYSTEM_PREFIXES
 from schemas.software import SoftwareHistoryOut, SoftwareSummaryItem
 from schemas.task import TaskRunOut
@@ -232,4 +238,196 @@ def server_metrics(_: User = Depends(get_current_user)):
         disks=disks,
         uptime_seconds=int(time.time() - psutil.boot_time()),
         process_count=len(psutil.pids()),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Дашборд мониторинга (настенный экран): всё одним запросом. Телевизор опрашивает
+# его каждые 15 с, поэтому полный список хостов (968 записей с инвентарём) клиенту не
+# отдаём — считаем агрегаты на сервере, читая только нужные столбцы.
+# ---------------------------------------------------------------------------
+
+
+class MonitoringRoom(BaseModel):
+    id: uuid.UUID
+    name: str
+    short_name: str
+    total: int
+    online: int
+    alerts: int
+    disk: int
+    not_activated: int
+
+
+class MonitoringFloor(BaseModel):
+    name: str | None
+    rooms: list[MonitoringRoom]
+
+
+class MonitoringBuilding(BaseModel):
+    id: uuid.UUID
+    name: str
+    total: int
+    online: int
+    floors: list[MonitoringFloor]
+
+
+class MonitoringAlert(BaseModel):
+    id: uuid.UUID
+    host_id: uuid.UUID
+    hostname: str | None
+    room: str | None
+    alert_type: str
+    message: str
+    created_at: datetime
+
+
+class MonitoringOut(BaseModel):
+    generated_at: datetime
+    total: int
+    online: int
+    offline: int
+    unknown: int
+    stale_7d: int
+    without_agent: int
+    agent_available_version: str | None
+    agent_outdated: int
+    win_not_activated: int
+    office_not_activated: int
+    kms_unreachable: int
+    disks_critical: int
+    tasks_running: int
+    tasks_failed_24h: int
+    alerts_24h: int
+    alerts: list[MonitoringAlert]
+    buildings: list[MonitoringBuilding]
+
+
+_FLOOR_NUMBER = re.compile(r"-?\d+")
+_NOT_ACTIVATED = (UNLICENSED, GRACE)  # как notActivated на фронте: не активирован или пробный период
+
+
+def _floor_key(name: str | None) -> tuple[int, int, str]:
+    """Этажи сверху вниз, как в здании; без номера — в конец."""
+    if not name:
+        return (1, 0, "")
+    match = _FLOOR_NUMBER.search(name)
+    return (0, -int(match.group()) if match else 0, name)
+
+
+@router.get("/monitoring", response_model=MonitoringOut)
+def monitoring(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    now = datetime.now(timezone.utc)
+    day_ago = now - timedelta(hours=24)
+    week_ago = now - timedelta(days=7)
+
+    groups = {gid: (name, parent) for gid, name, parent in db.execute(select(HostGroup.id, HostGroup.name, HostGroup.parent_id)).all()}
+    hosts = db.execute(
+        select(Host.id, Host.hostname, Host.group_id, Host.status, Host.agent_id, Host.agent_version,
+               Host.disk_alarms, Host.license_activation, Host.last_checked_at)
+    ).all()
+    alert_rows = db.execute(
+        select(AgentAlert.id, AgentAlert.host_id, AgentAlert.alert_type, AgentAlert.message, AgentAlert.created_at)
+        .where(AgentAlert.created_at >= day_ago)
+        .order_by(AgentAlert.created_at.desc())
+    ).all()
+    tasks_running = db.execute(
+        select(func.count()).select_from(TaskRun).where(TaskRun.status.in_([TaskStatus.queued, TaskStatus.running]))
+    ).scalar_one()
+    tasks_failed = db.execute(
+        select(func.count()).select_from(TaskRun).where(TaskRun.status == TaskStatus.failed, TaskRun.created_at >= day_ago)
+    ).scalar_one()
+
+    def path(gid) -> list:
+        """Цепочка групп от корня (корпус) до gid."""
+        chain, seen = [], set()
+        while gid is not None and gid in groups and gid not in seen:
+            seen.add(gid)
+            chain.append(gid)
+            gid = groups[gid][1]
+        return list(reversed(chain))
+
+    available = available_agent_version()
+    alerts_by_host = Counter(row.host_id for row in alert_rows)
+    host_info = {}
+    rooms: dict = {}
+    totals = Counter()
+
+    for h in hosts:
+        la = h.license_activation if isinstance(h.license_activation, dict) else None
+        win_bad = activation_state(la, "windows") in _NOT_ACTIVATED
+        office_bad = activation_state(la, "office") in _NOT_ACTIVATED
+        disk_bad = bool(h.disk_alarms)
+        checked = h.last_checked_at
+        if checked is not None and checked.tzinfo is None:
+            checked = checked.replace(tzinfo=timezone.utc)
+
+        totals["total"] += 1
+        totals[h.status.value if h.status else "unknown"] += 1
+        totals["stale"] += checked is None or checked < week_ago
+        totals["win"] += win_bad
+        totals["office"] += office_bad
+        totals["kms"] += bool(la and (la.get("kms_probe") or {}).get("reachable") is False)
+        totals["disk"] += disk_bad
+        if h.agent_id is None:
+            totals["no_agent"] += 1
+        elif version_status(h.agent_version, available, has_agent=True) == STATUS_OUTDATED:
+            totals["outdated"] += 1
+
+        host_info[h.id] = (h.hostname, groups[h.group_id][0] if h.group_id in groups else None)
+        if h.group_id in groups:
+            room = rooms.setdefault(h.group_id, Counter())
+            room["total"] += 1
+            room["online"] += h.status == HostStatus.online
+            room["alerts"] += alerts_by_host.get(h.id, 0)
+            room["disk"] += disk_bad
+            room["not_activated"] += win_bad or office_bad
+
+    # Корпус -> этаж -> аудитория: корпус — корень дерева, этаж — второй уровень (если есть)
+    buildings: dict = {}
+    for gid, stats in rooms.items():
+        chain = path(gid)
+        root = chain[0]
+        floor = groups[chain[1]][0] if len(chain) >= 3 else None
+        building_name = groups[root][0]
+        name = groups[gid][0]
+        prefix = f"{building_name}-"
+        short = name[len(prefix):] if name.startswith(prefix) else name
+        b = buildings.setdefault(root, {"name": building_name, "floors": {}})
+        b["floors"].setdefault(floor, []).append(MonitoringRoom(
+            id=gid, name=name, short_name=short, total=stats["total"], online=stats["online"],
+            alerts=stats["alerts"], disk=stats["disk"], not_activated=stats["not_activated"],
+        ))
+
+    building_out = []
+    for root, b in buildings.items():
+        floors = [
+            MonitoringFloor(name=floor, rooms=sorted(room_list, key=lambda r: r.short_name))
+            for floor, room_list in sorted(b["floors"].items(), key=lambda item: _floor_key(item[0]))
+        ]
+        building_out.append(MonitoringBuilding(
+            id=root, name=b["name"], floors=floors,
+            total=sum(r.total for f in floors for r in f.rooms),
+            online=sum(r.online for f in floors for r in f.rooms),
+        ))
+    building_out.sort(key=lambda b: -b.total)
+
+    alerts = [
+        MonitoringAlert(
+            id=row.id, host_id=row.host_id, hostname=host_info.get(row.host_id, (None, None))[0],
+            room=host_info.get(row.host_id, (None, None))[1], alert_type=row.alert_type,
+            message=row.message, created_at=row.created_at,
+        )
+        for row in alert_rows[:40]
+    ]
+
+    return MonitoringOut(
+        generated_at=now,
+        total=totals["total"], online=totals["online"], offline=totals["offline"], unknown=totals["unknown"],
+        stale_7d=totals["stale"], without_agent=totals["no_agent"],
+        agent_available_version=available, agent_outdated=totals["outdated"],
+        win_not_activated=totals["win"], office_not_activated=totals["office"],
+        kms_unreachable=totals["kms"], disks_critical=totals["disk"],
+        tasks_running=tasks_running, tasks_failed_24h=tasks_failed,
+        alerts_24h=len(alert_rows), alerts=alerts, buildings=building_out,
     )
