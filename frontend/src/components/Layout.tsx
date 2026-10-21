@@ -50,6 +50,9 @@ export default function Layout() {
   const navItems = NAV_ITEMS.filter((i) => allowed(i.roles));
   const adminItems = ADMIN_ITEMS.filter((i) => allowed(i.roles));
   const adminActive = location.pathname.startsWith("/admin");
+  // Мониторинг — настенный дисплей (ТВ): страница сама занимает всю высоту под
+  // шапкой и управляет своим скроллом, поэтому убираем отступы и ограничение ширины.
+  const wallboard = location.pathname === "/monitoring";
 
   function handleLogout() {
     logout();
@@ -135,7 +138,7 @@ export default function Layout() {
           )}
         </header>
 
-        <main className="mx-auto max-w-[96rem] px-4 py-6">
+        <main className={wallboard ? "" : "mx-auto max-w-[96rem] px-4 py-6"}>
           <Suspense fallback={<Loading />}>
             <Outlet />
           </Suspense>
