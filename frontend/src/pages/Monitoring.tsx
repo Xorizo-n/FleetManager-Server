@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Bell, BellOff, CheckCircle2, MonitorDot, ServerCrash, Wifi } from "lucide-react";
+import { Activity, AlertTriangle, Bell, BellOff, CheckCircle2, Clock, Cpu, HardDrive, MemoryStick, MonitorDot, Network, ServerCrash, Wifi } from "lucide-react";
 import { apiClient } from "../api/client";
 
 interface HostsSummary {
@@ -21,6 +21,61 @@ interface AgentAlert {
 interface HostLite {
   id: string;
   hostname: string;
+}
+
+interface DiskUsage {
+  mount: string;
+  total_gb: number;
+  used_gb: number;
+  percent: number;
+}
+
+interface ServerMetrics {
+  cpu_percent: number;
+  cpu_count: number;
+  load_avg: number[];
+  mem_total_gb: number;
+  mem_used_gb: number;
+  mem_percent: number;
+  swap_percent: number;
+  net_sent_mbps: number;
+  net_recv_mbps: number;
+  disks: DiskUsage[];
+  uptime_seconds: number;
+  process_count: number;
+}
+
+function formatUptime(sec: number): string {
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (d > 0) return `${d} д ${h} ч`;
+  if (h > 0) return `${h} ч ${m} мин`;
+  return `${m} мин`;
+}
+
+function barTone(pct: number): string {
+  if (pct >= 90) return "bg-rose-500";
+  if (pct >= 75) return "bg-amber-500";
+  return "bg-emerald-500";
+}
+
+function MetricBar({ icon, label, pct, detail }: { icon: React.ReactNode; label: string; pct: number; detail: string }) {
+  return (
+    <div className="surface-card p-4">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <span className="text-blue-600 dark:text-blue-400">{icon}</span>
+          {label}
+        </span>
+        <span className="text-sm font-semibold tabular-nums text-foreground">{Math.round(pct)}%</span>
+      </div>
+      <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
+        <div className={`h-full rounded-full transition-all duration-500 ${barTone(pct)}`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
+      </div>
+      <div className="mt-1.5 text-xs text-muted-foreground">{detail}</div>
+    </div>
+  );
 }
 
 const ALERT_WINDOW_MS = 24 * 60 * 60 * 1000; // «активными» считаем алерты за последние сутки
@@ -105,6 +160,11 @@ export default function Monitoring() {
     queryFn: () => apiClient.get<AgentAlert[]>("/agent/alerts", { params: { limit: 100 } }).then((r) => r.data),
     refetchInterval: 15000,
   });
+  const metrics = useQuery({
+    queryKey: ["mon", "server-metrics"],
+    queryFn: () => apiClient.get<ServerMetrics>("/dashboard/server-metrics").then((r) => r.data),
+    refetchInterval: 5000,
+  });
 
   // пересчитываем «свежесть» алертов каждые 30с
   useEffect(() => {
@@ -127,6 +187,7 @@ export default function Monitoring() {
   const kick = useBeeper(hasAlerts, soundOn);
 
   const s = summary.data;
+  const m = metrics.data;
 
   return (
     <div className="animate-fade-in space-y-5">
@@ -191,6 +252,62 @@ export default function Monitoring() {
           <p className="text-muted-foreground">Активных алертов за последние 24 часа нет.</p>
         </div>
       )}
+
+      {/* Состояние сервера Fleet Manager */}
+      <div>
+        <div className="mb-3 flex items-center gap-2">
+          <Activity className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+          <h2 className="text-lg font-semibold text-foreground">Состояние сервера</h2>
+          {m && (
+            <span className="ml-1 inline-flex items-center gap-1 text-xs text-muted-foreground">
+              <Clock className="h-3.5 w-3.5" /> аптайм {formatUptime(m.uptime_seconds)} · {m.process_count} процессов
+            </span>
+          )}
+        </div>
+        {m ? (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <MetricBar
+              icon={<Cpu className="h-4 w-4" />}
+              label="CPU"
+              pct={m.cpu_percent}
+              detail={`${m.cpu_count} ядер${m.load_avg.length ? ` · load ${m.load_avg.map((x) => x.toFixed(2)).join(" / ")}` : ""}`}
+            />
+            <MetricBar
+              icon={<MemoryStick className="h-4 w-4" />}
+              label="Память"
+              pct={m.mem_percent}
+              detail={`${m.mem_used_gb} / ${m.mem_total_gb} ГБ${m.swap_percent > 0 ? ` · swap ${Math.round(m.swap_percent)}%` : ""}`}
+            />
+            <div className="surface-card p-4">
+              <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
+                <span className="text-blue-600 dark:text-blue-400"><Network className="h-4 w-4" /></span>
+                Сеть
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">↓ {m.net_recv_mbps.toFixed(2)}</div>
+                  <div className="text-xs text-muted-foreground">Мбит/с приём</div>
+                </div>
+                <div>
+                  <div className="text-lg font-bold tabular-nums text-blue-600 dark:text-blue-400">↑ {m.net_sent_mbps.toFixed(2)}</div>
+                  <div className="text-xs text-muted-foreground">Мбит/с отдача</div>
+                </div>
+              </div>
+            </div>
+            {m.disks.map((d) => (
+              <MetricBar
+                key={d.mount}
+                icon={<HardDrive className="h-4 w-4" />}
+                label={`Диск ${d.mount === "/" ? "система" : d.mount}`}
+                pct={d.percent}
+                detail={`${d.used_gb} / ${d.total_gb} ГБ`}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="surface-card p-6 text-center text-muted-foreground">{metrics.isError ? "Метрики сервера недоступны" : "Загрузка метрик..."}</div>
+        )}
+      </div>
 
       {(alerts.isError || summary.isError) && (
         <p className="text-sm text-rose-600 dark:text-rose-400">Не удалось загрузить данные мониторинга — проверяется автоматически каждые 15 секунд.</p>

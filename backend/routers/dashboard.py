@@ -1,5 +1,8 @@
+import os
+import time
 from datetime import datetime, timedelta, timezone
 
+import psutil
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import String, cast, func, select
@@ -145,3 +148,73 @@ def weekly_run_stats(db: Session = Depends(get_db), _: User = Depends(get_curren
             buckets[day][status_value.value] += 1
 
     return [WeeklyRunStats(day=day.strftime("%d.%m"), success=v["success"], failed=v["failed"]) for day, v in buckets.items()]
+
+
+class DiskUsageOut(BaseModel):
+    mount: str
+    total_gb: float
+    used_gb: float
+    percent: float
+
+
+class ServerMetrics(BaseModel):
+    cpu_percent: float
+    cpu_count: int
+    load_avg: list[float]
+    mem_total_gb: float
+    mem_used_gb: float
+    mem_percent: float
+    swap_percent: float
+    net_sent_mbps: float
+    net_recv_mbps: float
+    disks: list[DiskUsageOut]
+    uptime_seconds: int
+    process_count: int
+
+
+@router.get("/server-metrics", response_model=ServerMetrics)
+def server_metrics(_: User = Depends(get_current_user)):
+    """Метрики сервера Fleet Manager: CPU, память, сеть, диски, load average, uptime.
+
+    Из контейнера psutil читает /proc, поэтому CPU/память/сеть/uptime — это показатели
+    хоста. Диск «/» — это контейнер, /mnt/soft-share — рабочий диск с данными.
+    """
+    # Сеть: считаем скорость по дельте счётчиков за окно измерения CPU
+    net1 = psutil.net_io_counters()
+    t1 = time.monotonic()
+    cpu = psutil.cpu_percent(interval=0.6)
+    net2 = psutil.net_io_counters()
+    dt = max(time.monotonic() - t1, 0.1)
+    sent_mbps = (net2.bytes_sent - net1.bytes_sent) * 8 / 1_000_000 / dt
+    recv_mbps = (net2.bytes_recv - net1.bytes_recv) * 8 / 1_000_000 / dt
+
+    vm = psutil.virtual_memory()
+    sw = psutil.swap_memory()
+
+    try:
+        load = [round(x, 2) for x in os.getloadavg()]
+    except (OSError, AttributeError):
+        load = []
+
+    disks: list[DiskUsageOut] = []
+    for mount in ("/", "/mnt/soft-share"):
+        try:
+            u = psutil.disk_usage(mount)
+            disks.append(DiskUsageOut(mount=mount, total_gb=round(u.total / 1_000_000_000, 1), used_gb=round(u.used / 1_000_000_000, 1), percent=u.percent))
+        except (FileNotFoundError, PermissionError, OSError):
+            pass
+
+    return ServerMetrics(
+        cpu_percent=round(cpu, 1),
+        cpu_count=psutil.cpu_count() or 0,
+        load_avg=load,
+        mem_total_gb=round(vm.total / 1_000_000_000, 1),
+        mem_used_gb=round(vm.used / 1_000_000_000, 1),
+        mem_percent=vm.percent,
+        swap_percent=sw.percent,
+        net_sent_mbps=round(sent_mbps, 2),
+        net_recv_mbps=round(recv_mbps, 2),
+        disks=disks,
+        uptime_seconds=int(time.time() - psutil.boot_time()),
+        process_count=len(psutil.pids()),
+    )
