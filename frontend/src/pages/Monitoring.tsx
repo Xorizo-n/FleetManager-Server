@@ -184,7 +184,31 @@ export default function Monitoring() {
   );
   const hasAlerts = activeAlerts.length > 0;
 
-  const kick = useBeeper(hasAlerts, soundOn);
+  // Принятые алерты: по ним звук больше не пищит. Храним id в localStorage, чтобы
+  // перезагрузка страницы не включала сигнал заново по уже увиденным алертам.
+  const [acked, setAcked] = useState<Set<string>>(() => {
+    try {
+      return new Set<string>(JSON.parse(localStorage.getItem("mon.acked") || "[]"));
+    } catch {
+      return new Set<string>();
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("mon.acked", JSON.stringify([...acked]));
+    } catch {
+      /* localStorage недоступен — не критично */
+    }
+  }, [acked]);
+
+  const unacked = useMemo(() => activeAlerts.filter((a) => !acked.has(a.id)), [activeAlerts, acked]);
+
+  function acknowledgeAll() {
+    setAcked(new Set(activeAlerts.map((a) => a.id)));
+  }
+
+  // Звук — только пока есть НОВЫЕ (непринятые) алерты. Новый алерт снова включит сигнал.
+  const kick = useBeeper(unacked.length > 0, soundOn);
 
   const s = summary.data;
   const m = metrics.data;
@@ -222,18 +246,31 @@ export default function Monitoring() {
       {/* Крупный блок алертов */}
       {hasAlerts ? (
         <div className="rounded-2xl border-2 border-rose-500/70 bg-rose-500/5 p-5 shadow-panel-lg">
-          <div className="mb-4 flex items-center gap-3">
-            <AlertTriangle className="h-8 w-8 animate-pulse text-rose-600 dark:text-rose-400" />
-            <h2 className="text-2xl font-bold text-rose-600 dark:text-rose-400">
-              {activeAlerts.length} {activeAlerts.length === 1 ? "активный алерт" : "активных алертов"}
-            </h2>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className={`h-8 w-8 text-rose-600 dark:text-rose-400 ${unacked.length > 0 ? "animate-pulse" : ""}`} />
+              <h2 className="text-2xl font-bold text-rose-600 dark:text-rose-400">
+                {activeAlerts.length} {activeAlerts.length === 1 ? "активный алерт" : "активных алертов"}
+                {unacked.length > 0 && <span className="ml-2 text-base font-semibold">· {unacked.length} новых</span>}
+              </h2>
+            </div>
+            {unacked.length > 0 && (
+              <button
+                onClick={acknowledgeAll}
+                className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-rose-700"
+                title="Заглушить звук по текущим алертам (новый алерт снова включит сигнал)"
+              >
+                <BellOff className="h-4 w-4" /> Принять ({unacked.length})
+              </button>
+            )}
           </div>
           <div className="space-y-3">
             {activeAlerts.map((a) => (
               <div key={a.id} className="rounded-xl border border-rose-500/40 bg-background/60 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-lg font-bold text-rose-600 dark:text-rose-400">
+                  <span className="flex items-center gap-2 text-lg font-bold text-rose-600 dark:text-rose-400">
                     {hostName.get(a.host_id) ?? a.host_id.slice(0, 8)}
+                    {!acked.has(a.id) && <span className="rounded bg-rose-600 px-1.5 py-0.5 text-xs font-bold uppercase text-white">новый</span>}
                   </span>
                   <span className="rounded-md bg-rose-500/15 px-2 py-0.5 text-sm font-semibold text-rose-600 dark:text-rose-400">
                     {a.alert_type}
