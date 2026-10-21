@@ -40,6 +40,8 @@ export default function Dashboard() {
       // Активация Windows и Office и доступность KMS — одним пунктом: без KMS слетает и то и другое
       activationProblem: hosts.filter(hasActivationProblem).length,
       notActivated: hosts.filter((h) => notActivated(h.activation_windows) || notActivated(h.activation_office)).length,
+      winNotActivated: hosts.filter((h) => notActivated(h.activation_windows)).length,
+      officeNotActivated: hosts.filter((h) => notActivated(h.activation_office)).length,
       kmsUnreachable: hosts.filter(kmsUnreachable).length,
       // Только включённые: у выключенного ПК состав — на момент выключения
       noInput: hosts.filter((h) => h.status === "online" && (presence(h, "keyboard") === "missing" || presence(h, "mouse") === "missing")).length,
@@ -86,13 +88,15 @@ export default function Dashboard() {
     { label: "Online", value: stats.online, to: "/hosts?status=online", accent: "text-emerald-600 dark:text-emerald-400" },
     { label: "Offline", value: stats.offline, to: "/hosts?status=offline", accent: "text-rose-600 dark:text-rose-400" },
     { label: "Выполняется задач", value: running, to: "/tasks?status=running", accent: running ? "text-sky-600 dark:text-sky-400" : "text-foreground" },
+    { label: "Без активации Windows", value: stats.winNotActivated, to: "/hosts?activation=problem", accent: stats.winNotActivated ? "text-rose-600 dark:text-rose-400" : "text-foreground" },
+    { label: "Без активации Office", value: stats.officeNotActivated, to: "/hosts?activation=problem", accent: stats.officeNotActivated ? "text-rose-600 dark:text-rose-400" : "text-foreground" },
   ];
 
   return (
     <div className="animate-fade-in space-y-6">
       <PageHeader title="Обзор" />
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
         {tiles.map((t) => (
           <Link key={t.label} to={t.to} className="surface-panel group transition-colors hover:border-blue-500/40">
             <div className="flex items-center justify-between text-sm font-medium text-muted-foreground">
