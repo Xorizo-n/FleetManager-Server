@@ -45,7 +45,7 @@ const ROLES: { field: GroupField; role: UserRole; label: string; hint: string }[
   { field: "operator_groups", role: "operator", label: "Операторы", hint: "запуск плейбуков, управление хостами" },
   { field: "viewer_groups", role: "viewer", label: "Наблюдатели", hint: "только просмотр" },
 ];
-const ROLE_LABEL: Record<UserRole, string> = { admin: "администратор", operator: "оператор", viewer: "наблюдатель" };
+const ROLE_LABEL: Record<UserRole, string> = { admin: "администратор", operator: "оператор", viewer: "наблюдатель", monitoring: "мониторинг" };
 const MEMBER_LIMIT = 1000;
 
 /** CN группы из DN: «CN=IRITRTF OOD Staff,OU=…» → «IRITRTF OOD Staff». */

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { apiClient, getAccessToken, clearTokens } from "../api/client";
 
-export type UserRole = "admin" | "operator" | "viewer";
+export type UserRole = "admin" | "operator" | "viewer" | "monitoring";
 
 export interface CurrentUser {
   id: string;

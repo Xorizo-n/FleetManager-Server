@@ -11,6 +11,7 @@ const EDITORS: UserRole[] = ["admin", "operator"];
 
 export const NAV_ITEMS: { to: string; label: string; end?: boolean; roles?: UserRole[] }[] = [
   { to: "/", label: "Обзор", end: true },
+  { to: "/monitoring", label: "Мониторинг", roles: ["monitoring", "admin"] },
   { to: "/hosts", label: "Хосты" },
   { to: "/software", label: "ПО" },
   { to: "/automation", label: "Автоматизация", roles: EDITORS },
@@ -27,7 +28,7 @@ export const ADMIN_ITEMS: { to: string; label: string; roles: UserRole[] }[] = [
   { to: "/admin/files", label: "Хранилище установщиков", roles: EDITORS },
 ];
 
-const ROLE_LABELS: Record<UserRole, string> = { admin: "админ", operator: "оператор", viewer: "наблюдатель" };
+const ROLE_LABELS: Record<UserRole, string> = { admin: "админ", operator: "оператор", viewer: "наблюдатель", monitoring: "мониторинг" };
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   `whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-150 ${

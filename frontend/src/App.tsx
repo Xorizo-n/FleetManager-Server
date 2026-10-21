@@ -1,7 +1,7 @@
 import { lazy } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { AuthProvider, UserRole } from "./context/AuthContext";
+import { AuthProvider, UserRole, useAuth } from "./context/AuthContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import { queryClient } from "./api/queries";
 import { ToastProvider } from "./components/ui/Toast";
@@ -23,10 +23,18 @@ const Files = lazy(() => import("./pages/admin/Files"));
 const Ldap = lazy(() => import("./pages/admin/Ldap"));
 const PlaybookEditor = lazy(() => import("./pages/PlaybookEditor"));
 const Wallpapers = lazy(() => import("./pages/Wallpapers"));
+const Monitoring = lazy(() => import("./pages/Monitoring"));
 
 const EDITORS: UserRole[] = ["admin", "operator"];
 
 const guard = (roles: UserRole[], element: JSX.Element) => <ProtectedRoute roles={roles}>{element}</ProtectedRoute>;
+
+// Домашняя страница зависит от роли: инженер мониторинга сразу попадает на дашборд мониторинга
+function Home() {
+  const { user } = useAuth();
+  if (user?.role === "monitoring") return <Navigate to="/monitoring" replace />;
+  return <Dashboard />;
+}
 
 export default function App() {
   return (
@@ -44,7 +52,8 @@ export default function App() {
                     </ProtectedRoute>
                   }
                 >
-                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/" element={<Home />} />
+                  <Route path="/monitoring" element={<Monitoring />} />
                   <Route path="/hosts" element={<HostsPage />} />
                   <Route path="/software" element={<Software />} />
                   <Route path="/automation" element={guard(EDITORS, <Automation />)} />

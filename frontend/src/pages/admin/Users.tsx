@@ -14,6 +14,7 @@ const ROLE_OPTIONS: { value: UserRole; label: string; hint: string }[] = [
   { value: "admin", label: "Администратор", hint: "всё, включая пользователей и учётные данные" },
   { value: "operator", label: "Оператор", hint: "запуск плейбуков, управление хостами" },
   { value: "viewer", label: "Наблюдатель", hint: "только просмотр" },
+  { value: "monitoring", label: "Мониторинг", hint: "дашборд мониторинга с алертами и звуком" },
 ];
 
 const roleLabel = (role: UserRole) => ROLE_OPTIONS.find((r) => r.value === role)?.label ?? role;
