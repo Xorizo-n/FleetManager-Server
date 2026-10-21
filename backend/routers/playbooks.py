@@ -58,7 +58,10 @@ def _read_play_name(path: Path) -> str | None:
 
 
 router = APIRouter(prefix="/playbooks", tags=["playbooks"])
+# Управление репозиториями, запуск и расписания — админ и оператор.
 EDITOR_ROLES = (UserRole.admin, UserRole.operator)
+# Создание/правка/удаление и просмотр содержимого плейбуков — только админ.
+PLAYBOOK_EDIT_ROLES = (UserRole.admin,)
 
 
 @router.get("/repos", response_model=list[PlaybookRepoOut])
@@ -181,7 +184,7 @@ def _repo(db: Session, repo_id) -> PlaybookRepo:
 
 
 @router.get("/repos/{repo_id}/content", response_model=PlaybookContentOut)
-def get_playbook_content(repo_id: uuid.UUID, path: str, db: Session = Depends(get_db), _: User = Depends(require_roles(*EDITOR_ROLES))):
+def get_playbook_content(repo_id: uuid.UUID, path: str, db: Session = Depends(get_db), _: User = Depends(require_roles(*PLAYBOOK_EDIT_ROLES))):
     """Текст плейбука для редактора: локальный — для правки, из git — для просмотра и копии."""
     repo = _repo(db, repo_id)
     try:
@@ -202,12 +205,12 @@ def get_playbook_content(repo_id: uuid.UUID, path: str, db: Session = Depends(ge
 
 
 @router.get("/local/template")
-def local_playbook_template(_: User = Depends(require_roles(*EDITOR_ROLES))):
+def local_playbook_template(_: User = Depends(require_roles(*PLAYBOOK_EDIT_ROLES))):
     return {"content": local_playbooks.TEMPLATE}
 
 
 @router.post("/local/check")
-def check_local_playbook(payload: PlaybookCheckRequest, _: User = Depends(require_roles(*EDITOR_ROLES))):
+def check_local_playbook(payload: PlaybookCheckRequest, _: User = Depends(require_roles(*PLAYBOOK_EDIT_ROLES))):
     error = local_playbooks.check(payload.content)
     return {"ok": error is None, "error": error}
 
@@ -217,7 +220,7 @@ def save_local_playbook(
     payload: PlaybookSaveRequest,
     request: Request,
     db: Session = Depends(get_db),
-    user: User = Depends(require_roles(*EDITOR_ROLES)),
+    user: User = Depends(require_roles(*PLAYBOOK_EDIT_ROLES)),
 ):
     repo = local_playbooks.ensure_local_repo(db)
     try:
@@ -250,7 +253,7 @@ def save_local_playbook(
 
 
 @router.delete("/local/file", status_code=status.HTTP_204_NO_CONTENT)
-def delete_local_playbook(path: str, request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles(*EDITOR_ROLES))):
+def delete_local_playbook(path: str, request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles(*PLAYBOOK_EDIT_ROLES))):
     repo = local_playbooks.ensure_local_repo(db)
     try:
         target = local_playbooks.resolve(repo, local_playbooks.check_path(path))

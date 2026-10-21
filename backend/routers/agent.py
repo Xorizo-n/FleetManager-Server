@@ -16,7 +16,7 @@ from models.agent import AgentAlert, AgentEnrollmentToken, HardwareEvent
 from services.disk_alerts import DISK_FULL, check_disks
 from models.credential import Credential, CredentialType
 from models.host import Host, HostStatus
-from models.software import InstallMethod, SoftwareItem, SoftwareStatus
+from models.software import InstallMethod
 from models.task import TaskType
 from models.user import User, UserRole
 from schemas.agent import (
@@ -39,6 +39,7 @@ from schemas.agent import (
 )
 from schemas.task import TaskRunOut
 from services.agent_auth import hash_agent_token, is_machine_id_clone, issue_agent_token
+from services.software_sync import sync_host_software
 from services.agent_ssh import generate_agent_keypair
 from services.agent_version import (
     INSTALLER_FILENAME,
@@ -430,18 +431,16 @@ def heartbeat(
 
     stored = 0
     try:
-        db.execute(delete(SoftwareItem).where(SoftwareItem.host_id == host.id))
-        for item in payload.software:
-            db.add(SoftwareItem(
-                host_id=host.id,
-                name=item.name,
-                version=item.version,
-                install_method=_install_method(item.source),
-                status=SoftwareStatus.installed,
-                detected_at=now,
-            ))
-        db.commit()
-        stored = len(payload.software)
+        # Дифф вместо перезаписи всего инвентаря: раньше каждый heartbeat делал
+        # DELETE всех строк ПО хоста + INSERT заново (сотни строк на хост, 2.7k
+        # хостов) — колоссальная запись и постоянный autovacuum по software_items.
+        # sync_host_software пишет только реальные изменения и ведёт историю.
+        discovered = {
+            item.name: (item.version, _install_method(item.source))
+            for item in payload.software
+        }
+        sync_host_software(db, host, discovered)
+        stored = len(discovered)
     except Exception:  # noqa: BLE001
         db.rollback()
 

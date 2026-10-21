@@ -8,15 +8,18 @@ import { TaskPanelProvider } from "./TaskPanel";
 import { Loading } from "./ui/States";
 
 const EDITORS: UserRole[] = ["admin", "operator"];
+// Инженер мониторинга видит только раздел «Мониторинг» — остальным пунктам
+// задаём роли, в которые monitoring не входит
+const STAFF: UserRole[] = ["admin", "operator", "viewer"];
 
 export const NAV_ITEMS: { to: string; label: string; end?: boolean; roles?: UserRole[] }[] = [
-  { to: "/", label: "Обзор", end: true },
+  { to: "/", label: "Обзор", end: true, roles: STAFF },
   { to: "/monitoring", label: "Мониторинг", roles: ["monitoring", "admin"] },
-  { to: "/hosts", label: "Хосты" },
-  { to: "/software", label: "ПО" },
+  { to: "/hosts", label: "Хосты", roles: STAFF },
+  { to: "/software", label: "ПО", roles: STAFF },
   { to: "/automation", label: "Автоматизация", roles: EDITORS },
-  { to: "/wallpapers", label: "Обои" },
-  { to: "/tasks", label: "Задачи" },
+  { to: "/wallpapers", label: "Обои", roles: STAFF },
+  { to: "/tasks", label: "Задачи", roles: STAFF },
 ];
 
 export const ADMIN_ITEMS: { to: string; label: string; roles: UserRole[] }[] = [

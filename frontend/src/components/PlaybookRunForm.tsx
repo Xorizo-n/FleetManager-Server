@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { AlertTriangle, CalendarClock, FileCode2, Play, Plus } from "lucide-react";
 import { apiClient } from "../api/client";
+import { useAuth } from "../context/AuthContext";
 import { keys, useFleet, usePlaybookCatalog } from "../api/queries";
 import HostPicker from "./HostPicker";
 import PlaybookSelect, { catalogKey, rememberPlaybook } from "./PlaybookSelect";
@@ -33,6 +34,8 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
   const queryClient = useQueryClient();
   const toast = useToast();
   const openTask = useOpenTask();
+  const { user } = useAuth();
+  const canEdit = user?.role === "admin"; // редактор плейбуков — только админ
   const { tree, hostById } = useFleet();
   const catalog = usePlaybookCatalog();
   const repos = catalog.repos;
@@ -129,7 +132,7 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
           <div className="min-w-0 flex-1">
             <PlaybookSelect files={catalog.files} value={selectedKey} onChange={setSelectedKey} loading={catalog.isLoading} />
           </div>
-          {selectedFile && (
+          {canEdit && selectedFile && (
             <Link
               to={`/automation/editor?repo=${selectedFile.repo_id}&path=${encodeURIComponent(selectedFile.path)}`}
               className="btn-secondary px-2.5"
@@ -139,9 +142,11 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
               <FileCode2 className="h-4 w-4" />
             </Link>
           )}
-          <Link to="/automation/editor" className="btn-secondary px-2.5" title="Новый плейбук" aria-label="Новый плейбук">
-            <Plus className="h-4 w-4" />
-          </Link>
+          {canEdit && (
+            <Link to="/automation/editor" className="btn-secondary px-2.5" title="Новый плейбук" aria-label="Новый плейбук">
+              <Plus className="h-4 w-4" />
+            </Link>
+          )}
         </div>
       </section>
 

@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { GitBranch, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { apiClient } from "../api/client";
+import { useAuth } from "../context/AuthContext";
 import { keys, useCredentials, useFleet, usePlaybookFiles, useRepos, useSchedules } from "../api/queries";
 import type { Schedule } from "../api/types";
 import PageHeader from "../components/ui/PageHeader";
@@ -236,6 +237,8 @@ function ScheduleEditor({ schedule, tree, onClose }: { schedule: Schedule; tree:
 function ReposTab() {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const { user } = useAuth();
+  const canEdit = user?.role === "admin"; // создание плейбуков — только админ
   const repos = useRepos();
   const credentials = useCredentials();
   const [showForm, setShowForm] = useState(false);
@@ -337,10 +340,12 @@ function ReposTab() {
                   <td className="text-subtle">—</td>
                   <td className="text-muted-foreground">Локально</td>
                   <td className="text-right">
-                    <Link to="/automation/editor" className="btn-secondary btn-sm">
-                      <Plus className="h-3.5 w-3.5" />
-                      Новый плейбук
-                    </Link>
+                    {canEdit && (
+                      <Link to="/automation/editor" className="btn-secondary btn-sm">
+                        <Plus className="h-3.5 w-3.5" />
+                        Новый плейбук
+                      </Link>
+                    )}
                   </td>
                 </tr>
               ) : (

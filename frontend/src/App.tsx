@@ -26,6 +26,8 @@ const Wallpapers = lazy(() => import("./pages/Wallpapers"));
 const Monitoring = lazy(() => import("./pages/Monitoring"));
 
 const EDITORS: UserRole[] = ["admin", "operator"];
+// Все роли, кроме мониторинга: инженер мониторинга видит только свой раздел
+const STAFF: UserRole[] = ["admin", "operator", "viewer"];
 
 const guard = (roles: UserRole[], element: JSX.Element) => <ProtectedRoute roles={roles}>{element}</ProtectedRoute>;
 
@@ -53,13 +55,13 @@ export default function App() {
                   }
                 >
                   <Route path="/" element={<Home />} />
-                  <Route path="/monitoring" element={<Monitoring />} />
-                  <Route path="/hosts" element={<HostsPage />} />
-                  <Route path="/software" element={<Software />} />
+                  <Route path="/monitoring" element={guard(["monitoring", "admin"], <Monitoring />)} />
+                  <Route path="/hosts" element={guard(STAFF, <HostsPage />)} />
+                  <Route path="/software" element={guard(STAFF, <Software />)} />
                   <Route path="/automation" element={guard(EDITORS, <Automation />)} />
-                  <Route path="/automation/editor" element={guard(EDITORS, <PlaybookEditor />)} />
-                  <Route path="/tasks" element={<Tasks />} />
-                  <Route path="/wallpapers" element={<Wallpapers />} />
+                  <Route path="/automation/editor" element={guard(["admin"], <PlaybookEditor />)} />
+                  <Route path="/tasks" element={guard(STAFF, <Tasks />)} />
+                  <Route path="/wallpapers" element={guard(STAFF, <Wallpapers />)} />
                   <Route path="/admin/users" element={guard(["admin"], <Users />)} />
                   <Route path="/admin/ldap" element={guard(["admin"], <Ldap />)} />
                   <Route path="/admin/credentials" element={guard(EDITORS, <Credentials />)} />
