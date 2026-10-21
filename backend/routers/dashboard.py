@@ -172,21 +172,36 @@ class ServerMetrics(BaseModel):
     process_count: int
 
 
+# Предыдущий замер сети — для расчёта скорости по дельте между соседними опросами
+_net_prev: dict = {"counters": None, "t": None}
+
+
 @router.get("/server-metrics", response_model=ServerMetrics)
 def server_metrics(_: User = Depends(get_current_user)):
     """Метрики сервера Fleet Manager: CPU, память, сеть, диски, load average, uptime.
 
     Из контейнера psutil читает /proc, поэтому CPU/память/сеть/uptime — это показатели
     хоста. Диск «/» — это контейнер, /mnt/soft-share — рабочий диск с данными.
+
+    ВАЖНО: эндпоинт НЕ блокируется (никаких sleep), иначе соединение с БД удерживается
+    на всё время замера и при частом опросе исчерпывается пул соединений. CPU считаем
+    неблокирующим cpu_percent(interval=None), скорость сети — по дельте между опросами.
     """
-    # Сеть: считаем скорость по дельте счётчиков за окно измерения CPU
-    net1 = psutil.net_io_counters()
-    t1 = time.monotonic()
-    cpu = psutil.cpu_percent(interval=0.6)
-    net2 = psutil.net_io_counters()
-    dt = max(time.monotonic() - t1, 0.1)
-    sent_mbps = (net2.bytes_sent - net1.bytes_sent) * 8 / 1_000_000 / dt
-    recv_mbps = (net2.bytes_recv - net1.bytes_recv) * 8 / 1_000_000 / dt
+    # CPU: процент с момента прошлого вызова (psutil хранит состояние между вызовами)
+    cpu = psutil.cpu_percent(interval=None)
+
+    # Сеть: скорость по дельте счётчиков между соседними опросами, без sleep
+    now_net = psutil.net_io_counters()
+    now_t = time.monotonic()
+    prev, prev_t = _net_prev["counters"], _net_prev["t"]
+    if prev is not None and prev_t is not None:
+        dt = max(now_t - prev_t, 0.1)
+        sent_mbps = (now_net.bytes_sent - prev.bytes_sent) * 8 / 1_000_000 / dt
+        recv_mbps = (now_net.bytes_recv - prev.bytes_recv) * 8 / 1_000_000 / dt
+    else:
+        sent_mbps = recv_mbps = 0.0
+    _net_prev["counters"] = now_net
+    _net_prev["t"] = now_t
 
     vm = psutil.virtual_memory()
     sw = psutil.swap_memory()
