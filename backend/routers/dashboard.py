@@ -1,3 +1,5 @@
+import glob
+import json
 import os
 import re
 import time
@@ -11,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import String, cast, func, select
 from sqlalchemy.orm import Session
 
+from config import settings
 from database import get_db
 from dependencies import get_current_user
 from models.agent import AgentAlert
@@ -282,6 +285,49 @@ class MonitoringAlert(BaseModel):
     created_at: datetime
 
 
+class MonitoringBackup(BaseModel):
+    """Ежедневный бэкап БД (backup-db.sh): последний удачный дамп и итог последнего запуска."""
+    configured: bool
+    last_ok_at: datetime | None = None
+    last_ok_file: str | None = None
+    last_ok_size_bytes: int | None = None
+    copies: int = 0
+    total_bytes: int = 0
+    keep_days: int | None = None
+    last_run_at: datetime | None = None
+    last_run_ok: bool | None = None
+    last_run_message: str | None = None
+    max_age_hours: int
+
+
+def _backup_status() -> MonitoringBackup:
+    """Читает каталог бэкапов (смонтирован только на чтение). Время последнего удачного
+    бэкапа берём по самим файлам, а не из .last-run.json: если cron вообще не запустился,
+    файл статуса не обновится, а устаревший дамп всё равно будет виден."""
+    directory = settings.db_backup_dir
+    out = MonitoringBackup(configured=os.path.isdir(directory), max_age_hours=settings.db_backup_max_age_hours)
+    if not out.configured:
+        return out
+    files = sorted(glob.glob(os.path.join(directory, "fleet_manager-*.sql.gz")), key=os.path.getmtime)
+    out.copies = len(files)
+    out.total_bytes = sum(os.path.getsize(f) for f in files)
+    if files:
+        last = files[-1]
+        out.last_ok_file = os.path.basename(last)
+        out.last_ok_size_bytes = os.path.getsize(last)
+        out.last_ok_at = datetime.fromtimestamp(os.path.getmtime(last), tz=timezone.utc)
+    try:
+        with open(os.path.join(directory, ".last-run.json"), encoding="utf-8") as f:
+            status = json.load(f)
+        out.last_run_at = datetime.fromisoformat(status["finished_at"])
+        out.last_run_ok = bool(status.get("ok"))
+        out.last_run_message = status.get("message") or None
+        out.keep_days = status.get("keep_days")
+    except (OSError, ValueError, KeyError):
+        pass  # первого запуска ещё не было или файл повреждён — остаётся оценка по самим дампам
+    return out
+
+
 class MonitoringOut(BaseModel):
     generated_at: datetime
     total: int
@@ -301,6 +347,7 @@ class MonitoringOut(BaseModel):
     alerts_24h: int
     alerts: list[MonitoringAlert]
     buildings: list[MonitoringBuilding]
+    backup: MonitoringBackup
 
 
 _FLOOR_NUMBER = re.compile(r"-?\d+")
@@ -430,4 +477,5 @@ def monitoring(db: Session = Depends(get_db), _: User = Depends(get_current_user
         kms_unreachable=totals["kms"], disks_critical=totals["disk"],
         tasks_running=tasks_running, tasks_failed_24h=tasks_failed,
         alerts_24h=len(alert_rows), alerts=alerts, buildings=building_out,
+        backup=_backup_status(),
     )

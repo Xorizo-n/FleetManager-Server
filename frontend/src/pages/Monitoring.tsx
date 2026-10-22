@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Activity, AlertCircle, AlertTriangle, ArrowUpCircle, Bell, BellOff, Building2, CheckCircle2, Cpu, HardDrive, Info,
+  Activity, AlertCircle, AlertTriangle, ArrowUpCircle, Bell, BellOff, Building2, CheckCircle2, Cpu, Database, HardDrive, Info,
   KeyRound, MemoryStick, MonitorDot, Network, OctagonAlert, Server, ServerOff, ShieldAlert, Wifi, WifiOff,
 } from "lucide-react";
 import { apiClient } from "../api/client";
@@ -60,6 +60,22 @@ interface Summary {
   alerts_24h: number;
   alerts: MonAlert[];
   buildings: Building[];
+  backup: BackupStatus;
+}
+
+/** Ежедневный бэкап БД (backup-db.sh, cron 23:00): последний удачный дамп и итог последнего запуска */
+interface BackupStatus {
+  configured: boolean;
+  last_ok_at: string | null;
+  last_ok_file: string | null;
+  last_ok_size_bytes: number | null;
+  copies: number;
+  total_bytes: number;
+  keep_days: number | null;
+  last_run_at: string | null;
+  last_run_ok: boolean | null;
+  last_run_message: string | null;
+  max_age_hours: number;
 }
 
 interface ServerMetrics {
@@ -389,6 +405,58 @@ function BuildingCard({ b, deviating }: { b: Building; deviating: number }) {
   );
 }
 
+const formatBytes = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} ГБ` : `${Math.round(n / 1e6)} МБ`);
+
+/**
+ * Проблема с бэкапом БД или null, если всё в порядке. Последний запуск упал — сразу
+ * проблема; иначе смотрим возраст последнего удачного дампа: cron мог вообще не запуститься
+ * (тогда и файл статуса не обновится), а старый дамп всё равно будет виден.
+ */
+function backupProblem(b: BackupStatus | undefined, now: number): { title: string; detail: string } | null {
+  if (!b || !b.configured) return null;
+  const lastOk = b.last_ok_at ? new Date(b.last_ok_at).getTime() : null;
+  const lastRun = b.last_run_at ? new Date(b.last_run_at).getTime() : null;
+  const okText = lastOk ? `последний удачный ${ago(lastOk, now)} назад` : "удачных бэкапов нет";
+  if (b.last_run_ok === false && lastRun !== null && (lastOk === null || lastRun >= lastOk)) {
+    return { title: "Бэкап БД не удался", detail: `${b.last_run_message ?? "см. _logs/backup-db.log"} · ${okText}` };
+  }
+  if (lastOk === null) return { title: "Бэкапов БД нет", detail: "ежедневный бэкап в 23:00 ещё не отработал" };
+  if (now - lastOk > b.max_age_hours * 3_600_000) {
+    return { title: "Бэкап БД устарел", detail: `${okText} — ночной запуск в 23:00 не прошёл` };
+  }
+  return null;
+}
+
+function BackupCell({ backup, now }: { backup: BackupStatus | undefined; now: number }) {
+  const problem = backupProblem(backup, now);
+  const configured = !!backup?.configured;
+  const when = backup?.last_ok_at
+    ? new Date(backup.last_ok_at).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: APP_TIME_ZONE })
+    : "—";
+  const tone = !configured ? "text-muted-foreground" : problem ? SEV.serious.text : "text-emerald-600 dark:text-emerald-400";
+  const StatusIcon = !configured ? Info : problem ? AlertTriangle : CheckCircle2;
+  const detail = !configured
+    ? "каталог бэкапов не подключён"
+    : problem
+      ? problem.title
+      : `${backup?.last_ok_size_bytes ? formatBytes(backup.last_ok_size_bytes) : "—"} · копий ${backup?.copies ?? 0}${backup?.keep_days ? ` · хранится ${backup.keep_days} дн.` : ""}`;
+  return (
+    <div className="surface-card flex min-w-0 flex-col justify-center gap-1 p-2.5" title={problem ? `${problem.title}: ${problem.detail}` : backup?.last_ok_file ?? undefined}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-foreground">
+          <span className="shrink-0 text-blue-600 dark:text-blue-400"><Database className="h-3.5 w-3.5" /></span>
+          <span className="truncate">Бэкап БД</span>
+        </span>
+        <span className={`flex shrink-0 items-center gap-1 text-sm font-semibold tabular-nums ${tone}`}>
+          <StatusIcon className="h-3.5 w-3.5" />
+          {when}
+        </span>
+      </div>
+      <div className={`truncate text-[11px] ${problem ? SEV.serious.text : "text-muted-foreground"}`}>{detail}</div>
+    </div>
+  );
+}
+
 function MetricCell({ icon, label, value, pctValue, detail, spark, sparkClass }: {
   icon: ReactNode; label: string; value: string; pctValue?: number; detail: string; spark?: number[]; sparkClass?: string;
 }) {
@@ -541,6 +609,9 @@ export default function Monitoring() {
       });
     }
     if (s) {
+      // Бэкап БД: без него восстановиться после сбоя нечем — «серьёзно», а не «внимание»
+      const backup = backupProblem(s.backup, now);
+      if (backup) list.push({ key: "backup", sev: "serious", title: backup.title, detail: backup.detail });
       if (s.disks_critical) list.push({ key: "disk", sev: "serious", weight: s.disks_critical, title: `Диск заполнен на ${pcCount(s.disks_critical)}`, detail: "свободного места почти не осталось" });
       if (s.kms_unreachable) list.push({ key: "kms", sev: "serious", weight: s.kms_unreachable, title: `KMS недоступен с ${pcCount(s.kms_unreachable)}`, detail: "активация Windows и Office не продлится" });
       if (s.tasks_failed_24h) list.push({ key: "tasks", sev: "warning", weight: s.tasks_failed_24h, title: `Задач с ошибкой за сутки: ${s.tasks_failed_24h}`, detail: "подробности — в разделе «Задачи»" });
@@ -557,7 +628,7 @@ export default function Monitoring() {
         (y.weight ?? 0) - (x.weight ?? 0) ||
         (y.at ?? "").localeCompare(x.at ?? ""),
     );
-  }, [s, m, activeAlerts, acked, stale]);
+  }, [s, m, activeAlerts, acked, stale, now]);
 
   const sevCounts = useMemo(() => {
     const c: Record<Sev, number> = { critical: 0, serious: 0, warning: 0, info: 0 };
@@ -828,7 +899,7 @@ export default function Monitoring() {
           {m && <span className="truncate tabular-nums">· аптайм {formatUptime(m.uptime_seconds)} · нагрузка {m.load_avg.map((x) => x.toFixed(1)).join(" / ")}</span>}
           {!m && <span>{metrics.isError ? "метрики недоступны" : "загрузка…"}</span>}
         </div>
-        <div className="grid grid-cols-3 gap-2.5 xl:grid-cols-6">
+        <div className="grid grid-cols-4 gap-2.5 xl:grid-cols-7">
           {m && (
             <>
               <MetricCell icon={<Cpu className="h-3.5 w-3.5" />} label="CPU" value={`${Math.round(m.cpu_percent)}%`} pctValue={m.cpu_percent}
@@ -842,6 +913,7 @@ export default function Monitoring() {
                   value={`${Math.round(d.percent)}%`} pctValue={d.percent}
                   detail={`занято ${d.used_gb} из ${d.total_gb} ГБ · свободно ${(d.total_gb - d.used_gb).toFixed(0)} ГБ`} />
               ))}
+              <BackupCell backup={s?.backup} now={now} />
               <MetricCell icon={<Wifi className="h-3.5 w-3.5" />} label="ПК в сети за 24 ч" value={timelineData.length ? `${timelineData[timelineData.length - 1]}` : "—"}
                 spark={timelineData} sparkClass="text-blue-500"
                 detail={timelineData.length ? `максимум ${Math.max(...timelineData)} · минимум ${Math.min(...timelineData)}` : "нет данных"} />

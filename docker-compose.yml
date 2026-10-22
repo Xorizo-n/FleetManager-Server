@@ -72,6 +72,9 @@ services:
       - ansible_data:/app/ansible_data
       - ./ansible:/app/ansible:ro
       - ${SOFT_SHARE_DIR:-/mnt/soft-share}:/mnt/soft-share
+      # Ежедневные бэкапы БД (backup-db.sh): только чтение — дашборд мониторинга
+      # показывает время и размер последнего бэкапа и итог последнего запуска
+      - ./_backup/daily:/mnt/db-backups:ro
     ports:
       - "127.0.0.1:8000:8000"
     command: >

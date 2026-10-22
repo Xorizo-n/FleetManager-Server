@@ -24,9 +24,18 @@ mkdir -p "$DIR"
 chmod 700 "$DIR"
 
 OUT="$DIR/fleet_manager-$(date +%Y%m%d-%H%M).sql.gz"
+# Итог последнего запуска для дашборда мониторинга (backend видит каталог только на чтение)
+STATUS="$DIR/.last-run.json"
+write_status() {  # $1 — ok|fail, $2 — сообщение, $3 — файл, $4 — размер в байтах
+    local ok=false
+    [ "$1" = ok ] && ok=true
+    printf '{"finished_at":"%s","ok":%s,"message":"%s","file":"%s","size_bytes":%s,"keep_days":%s}\n' \
+        "$(date --iso-8601=seconds)" "$ok" "$2" "${3:-}" "${4:-0}" "$KEEP_DAYS" > "$STATUS.tmp"
+    mv "$STATUS.tmp" "$STATUS"
+}
 TMP="$OUT.part"
 trap 'rm -f "$TMP"' EXIT
-trap 'echo "$(date "+%F %T") FAIL: ошибка в строке $LINENO, бэкап не сделан"' ERR
+trap 'echo "$(date "+%F %T") FAIL: ошибка в строке $LINENO, бэкап не сделан"; write_status fail "ошибка в строке $LINENO, бэкап не сделан"' ERR
 
 # Учётка и имя БД — из окружения контейнера postgres (.env); секретов в скрипте нет.
 # </dev/null: иначе docker compose exec съедает stdin вызывающего скрипта.
@@ -37,10 +46,12 @@ gzip -t "$TMP"
 tail_lines=$(zcat "$TMP" | tail -n 10)
 if [[ "$tail_lines" != *"PostgreSQL database dump complete"* ]]; then
     echo "$(date "+%F %T") FAIL: дамп оборван (нет финальной строки pg_dump), бэкап не сделан"
+    write_status fail "дамп оборван (нет финальной строки pg_dump), бэкап не сделан"
     exit 1
 fi
 mv "$TMP" "$OUT"
 trap - EXIT
 
 find "$DIR" -maxdepth 1 -name 'fleet_manager-*.sql.gz' -mtime +"$KEEP_DAYS" -delete
+write_status ok "" "$(basename "$OUT")" "$(stat -c %s "$OUT")"
 echo "$(date "+%F %T") OK $(basename "$OUT") $(du -h "$OUT" | cut -f1), копий: $(ls "$DIR"/fleet_manager-*.sql.gz | wc -l)"

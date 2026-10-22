@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     # Каталог обоев (services/wallpapers.py): файлы <sha256>.<расширение>
     wallpaper_dir: str = "/mnt/soft-share/wallpapers"
 
+    # Ежедневные бэкапы БД (backup-db.sh на хосте), смонтированы только на чтение.
+    # Мониторинг считает бэкап устаревшим, если последний удачный старше этого срока
+    # (сутки между запусками в 23:00 плюс запас на сам дамп).
+    db_backup_dir: str = "/mnt/db-backups"
+    db_backup_max_age_hours: int = 26
+
     # Public URL baked into downloaded agent installers (e.g. https://fleet.example.com)
     # Falls back to the request base_url when empty.
     agent_public_url: str = ""
