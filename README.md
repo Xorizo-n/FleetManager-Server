@@ -75,6 +75,26 @@ docker builder prune -f
   `ntp.urfu.ru` — в сети УрФУ (задержка < 1 мс). ВНИИФТРИ — государственный эталон времени, stratum 1. Проверка: `timedatectl timesync-status`.
 - Cron в расписаниях плейбуков — местное время: `SCHEDULE_TIMEZONE`, по умолчанию `Asia/Yekaterinburg`. «0 9 * * *» — 9:00 по Екатеринбургу.
 
+### Резервное копирование БД
+
+- Каждый день в 23:00 по времени сервера `backup-db.sh` снимает `pg_dump` в `/opt/fleet-manager/_backup/daily/fleet_manager-ГГГГММДД-ЧЧММ.sql.gz`. Хранится 30 дней (`KEEP_DAYS`), старые удаляются. Каталог доступен только root: в дампе хэши паролей и зашифрованные учётные данные.
+- Дамп публикуется, только если архив целый и `pg_dump` дописал финальную строку; иначе в журнал пишется `FAIL`. Журнал — `_logs/backup-db.log`.
+- Установка (из корня клона на сервере):
+
+  ```bash
+  chmod 750 backup-db.sh
+  install -m 644 backup-db.cron /etc/cron.d/fleet-manager-backup
+  ```
+
+- Восстановление — в отдельную БД, рабочая не трогается:
+
+  ```bash
+  docker compose exec -T postgres createdb -U fleet fleet_restore
+  zcat _backup/daily/fleet_manager-<дата>.sql.gz | docker compose exec -T postgres psql -U fleet -d fleet_restore
+  ```
+
+- Бэкапы лежат на том же системном диске, что и сама БД: от потери диска целиком они не спасают.
+
 ## HTTPS и порты
 
 | Порт | Что |

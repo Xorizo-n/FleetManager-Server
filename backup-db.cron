@@ -1,0 +1,5 @@
+# Ежедневный бэкап БД Fleet Manager в 23:00 по времени сервера (Asia/Yekaterinburg).
+# Ставится как /etc/cron.d/fleet-manager-backup (без расширения — иначе cron его не читает).
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+0 23 * * * root /opt/fleet-manager/backup-db.sh >> /opt/fleet-manager/_logs/backup-db.log 2>&1
