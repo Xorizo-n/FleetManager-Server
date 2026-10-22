@@ -125,6 +125,7 @@ function SchedulesTab() {
               <th>Цели</th>
               <th>Когда</th>
               <th>Следующий запуск</th>
+              <th>От имени</th>
               <th className="w-24" />
             </tr>
           </thead>
@@ -149,6 +150,9 @@ function SchedulesTab() {
                   <div className="font-mono text-xs text-subtle">{s.cron_expression}</div>
                 </td>
                 <td className="text-muted-foreground">{s.next_run_at ? formatDateTime(s.next_run_at) : "выключено"}</td>
+                <td className="text-muted-foreground" title={s.owner_domain ? "Где он не администратор ПК — от учётки установки агента" : "Не доменный пользователь — от учётки установки агента"}>
+                  {s.owner_name ? (s.owner_domain ? s.owner_name : `учётка установки (${s.owner_name})`) : "учётка установки"}
+                </td>
                 <td className="text-right">
                   <div className="inline-flex gap-1">
                     <button className="action-icon" onClick={() => setEditing(s)} aria-label="Изменить расписание" title="Изменить">

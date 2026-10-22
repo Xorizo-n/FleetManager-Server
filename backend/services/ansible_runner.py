@@ -15,6 +15,7 @@ from models.task import TaskRun, TaskStatus, TaskType
 from services.crypto import decrypt_secret
 from services.inventory_generator import build_inventory_dict, host_group_credential, resolve_target_host_ids
 from services.schedule_targets import schedule_group_ids
+from services import run_as
 
 
 def run_ansible(**kwargs):
@@ -96,8 +97,10 @@ def credential_vars(credential) -> dict:
     return {"ansible_user": credential.login, "ansible_password": secret}
 
 
-def build_full_inventory(db, host_ids: list[uuid.UUID] | None) -> dict:
-    """Inventory для реального запуска ansible-runner, с подставленными (расшифрованными) credentials."""
+def build_full_inventory(db, host_ids: list[uuid.UUID] | None, login_overrides: dict[str, str] | None = None) -> dict:
+    """Inventory для реального запуска ansible-runner, с подставленными (расшифрованными) credentials.
+
+    login_overrides — {host_id: логин}: вход тем же SSH-ключом, но под другой учёткой (services/run_as.py)."""
     inventory = build_inventory_dict(db, host_ids)
     query = db.query(Host)
     if host_ids:
@@ -111,6 +114,8 @@ def build_full_inventory(db, host_ids: list[uuid.UUID] | None) -> dict:
         host_vars.pop("_fleet_host_id", None)
         host_vars.pop("_fleet_credential_id", None)
         host_vars.update(_resolve_credential_vars(host))
+        if login_overrides and str(host.id) in login_overrides and host_vars.get("ansible_ssh_private_key_file"):
+            host_vars["ansible_user"] = login_overrides[str(host.id)]
 
     return inventory
 
@@ -140,9 +145,15 @@ def run_playbook_task(self, task_run_id: str):
         if repo is None:
             raise RuntimeError("Не указан репозиторий плейбуков")
 
-        inventory = build_full_inventory(db, [uuid.UUID(h) for h in task_run.host_ids])
+        # От чьего имени: инициатор (у расписания — владелец), где он администратор ПК
+        plan = run_as.plan(db, [str(h) for h in task_run.host_ids], task_run.run_as_user_id or task_run.created_by)
+        task_run.run_as = plan.summary()
+        names = {str(h.id): h.hostname or str(h.id) for h in db.query(Host).filter(Host.id.in_(task_run.host_ids))}
+        inventory = build_full_inventory(db, [uuid.UUID(h) for h in task_run.host_ids], plan.overrides())
 
-        log_lines: list[str] = []
+        log_lines: list[str] = run_as.log_lines(plan, names) + [""]
+        task_run.log_output = "\n".join(log_lines)
+        db.commit()
         observed_hosts: set[str] = set()
 
         def event_handler(event):
@@ -246,6 +257,7 @@ def dispatch_scheduled_playbooks():
                 host_ids=host_ids,
                 extra_vars=schedule.extra_vars,
                 status=TaskStatus.queued,
+                run_as_user_id=schedule.owner_id,
             )
             db.add(task_run)
             db.commit()
