@@ -196,6 +196,31 @@ function fit<T>(items: T[], capacity: number): { shown: T[]; hidden: number } {
   return { shown, hidden: items.length - shown.length };
 }
 
+/**
+ * ТВ мониторинга никто не перезагружает руками, а одностраничное приложение само
+ * не обновляется: после деплоя экран продолжал крутить старый код (так он показывал
+ * московское время уже после исправления). Раз в пару минут сверяем, какой бандл
+ * сейчас отдаёт сервер, и при смене перезагружаем страницу.
+ */
+function useReloadOnNewVersion(intervalMs = 120_000) {
+  useEffect(() => {
+    const bundle = /\/assets\/index-[^"'/]+\.js/;
+    const loaded = Array.from(document.scripts).map((s) => s.src).find((src) => bundle.test(src));
+    if (!loaded) return; // dev-сервер: собранного бандла нет
+    const mine = new URL(loaded).pathname;
+    const id = window.setInterval(async () => {
+      try {
+        const html = await fetch("/index.html", { cache: "no-store" }).then((r) => r.text());
+        const current = html.match(bundle)?.[0];
+        if (current && current !== mine) window.location.reload();
+      } catch {
+        /* сервер недоступен — проверим в следующий раз */
+      }
+    }, intervalMs);
+    return () => window.clearInterval(id);
+  }, [intervalMs]);
+}
+
 function useBeeper(active: boolean, enabled: boolean) {
   const ctxRef = useRef<AudioContext | null>(null);
 
@@ -462,6 +487,7 @@ export default function Monitoring() {
   }, [acked]);
   const unacked = useMemo(() => activeAlerts.filter((a) => !acked.has(a.id)), [activeAlerts, acked]);
   const kick = useBeeper(unacked.length > 0, soundOn);
+  useReloadOnNewVersion();
 
   const stale = summary.isError || (summary.dataUpdatedAt > 0 && Date.now() - summary.dataUpdatedAt > STALE_MS);
 
