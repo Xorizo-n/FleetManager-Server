@@ -1,2 +1,4 @@
 # Shell scripts run inside Linux containers / on the Linux host — never CRLF.
 *.sh text eol=lf
+# Файлы для /etc/cron.d — тоже только LF: строку с CRLF cron молча игнорирует.
+*.cron text eol=lf
