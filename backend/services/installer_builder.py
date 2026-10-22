@@ -1,126 +1,204 @@
-"""Generate a Windows self-extracting .exe installer with baked-in credentials.
+"""Установщик агента с вшитыми адресом сервера и токеном регистрации.
 
-Requires:
-  - nsis (makensis) installed in the container
-  - /mnt/soft-share/agent-dist/ containing:
-      FleetManager.Agent.Service.exe
-      install.ps1
-  - Optionally: OpenSSH-Win64.msi (bundled for offline OpenSSH installation)
+Это тонкая NSIS-обёртка вокруг актуального Inno-установщика
+`FleetManagerAgent-Setup.exe`, который сервер сам синхронизирует с GitHub
+Releases (services/agent_installer_sync.py). Обёртка ничего не устанавливает
+сама: она распаковывает Inno-установщик во временную папку NSIS ($PLUGINSDIR) и
+запускает его молча с параметрами /ServerUrl и /EnrollmentToken (см.
+installer/FleetManagerAgent.iss в FleetManager-Agent). Поэтому ПК получает ту же
+установку, что и при ручном запуске или удалённом обновлении: службу, трей,
+панель управления, OpenSSH, RDP, Wake-on-LAN, запись в «Программах».
+
+Токен на диске остаётся только в agent.json агента: обёртка не пишет его в
+файлы, а $PLUGINSDIR NSIS удаляет при выходе. Inno Setup записывает в свой
+журнал командную строку вместе с токеном, поэтому журнал создаётся во временной
+папке, а в C:\\ProgramData\\FleetManagerAgent\\logs\\setup.log попадает копия
+с замаскированным токеном.
+
+Требуется makensis (пакет nsis в образе backend).
 """
 
 import os
 import re
 import subprocess
 import tempfile
-import uuid
 from pathlib import Path
 
-from config import settings
+from services.agent_version import available_agent_version, installer_path
 
-_AGENT_DIST = Path(settings.soft_share_dir) / "agent-dist"
+# Журналы на ПК: setup.log — копия журнала Inno без токена, install.log пишет
+# PowerShell-часть установщика агента.
+LOG_DIR = r"$APPDATA\FleetManagerAgent\logs"  # $APPDATA = C:\ProgramData при SetShellVarContext all
+SETUP_LOG = LOG_DIR + r"\setup.log"
+INSTALL_LOG = LOG_DIR + r"\install.log"
+
+# Значения попадают в командную строку и в строки NSIS без экранирования, поэтому
+# допускаем только безопасные символы. Токены выдаёт secrets.token_urlsafe.
+_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_SERVER_URL_RE = re.compile(r"^https?://[A-Za-z0-9.\-_~:/\[\]%]+$")
+
+# Маскирует токен в копии журнала Inno. Файл читается и пишется побайтово
+# (Latin-1), чтобы не испортить кодировку остальных строк журнала.
+MASK_LOG_PS1 = """\
+param([string]$Source, [string]$Destination)
+if (-not (Test-Path -LiteralPath $Source)) { exit 0 }
+$latin1 = [Text.Encoding]::GetEncoding(28591)
+$text = $latin1.GetString([IO.File]::ReadAllBytes($Source))
+$text = [regex]::Replace($text, '(?i)(/EnrollmentToken=)("[^"]*"|\\S+)', '$1***')
+[IO.File]::WriteAllBytes($Destination, $latin1.GetBytes($text))
+"""
+
+# Коды выхода Inno Setup (https://jrsoftware.org/ishelp/topic_setupexitcodes.htm).
+INNO_EXIT_CODES = {
+    1: "установка не запустилась (например, не передан адрес сервера или токен)",
+    2: "установка отменена до начала",
+    3: "критическая ошибка при подготовке к установке",
+    4: "критическая ошибка во время установки",
+    5: "установка отменена во время копирования файлов",
+    6: "процесс установщика был принудительно завершён",
+    7: "подготовка к установке не может продолжиться (например, файлы агента заняты)",
+    8: "нужна перезагрузка: перезагрузите ПК и запустите установщик снова",
+}
 
 _NSIS_TEMPLATE = """\
 Unicode True
-SetCompressor /SOLID lzma
+ManifestDPIAware true
+; Inno-установщик уже сжат: повторное сжатие только тратит время сервера.
+SetCompress off
+RequestExecutionLevel admin
 !include "LogicLib.nsh"
 
-Name "FleetManager Agent"
+Name "FleetManager Agent{version_suffix}"
+Caption "Установка FleetManager Agent{version_suffix}"
+BrandingText "Fleet Manager"
 OutFile "{output}"
-InstallDir "$TEMP\\fm-agent-{uid}"
-RequestExecutionLevel admin
 ShowInstDetails show
+Page instfiles
+
+Function ExitCodeText
+  Exch $0
+{exit_code_cases}
+  ${{Else}}
+    StrCpy $0 "неизвестная ошибка"
+  ${{EndIf}}
+  Exch $0
+FunctionEnd
 
 Section "Install"
-  SetOutPath "$INSTDIR"
-  File "{agent_exe}"
-  File "{install_ps1}"
-  File "{bootstrap_ps1}"{openssh_msi_line}
+  SetShellVarContext all
+  InitPluginsDir
+  File "/oname=$PLUGINSDIR\\FleetManagerAgent-Setup.exe" "{setup_exe}"
+  File "/oname=$PLUGINSDIR\\mask-log.ps1" "{mask_ps1}"
 
-  ; Use SysNative so a 32-bit NSIS process launches 64-bit PowerShell (avoids WOW64 System32 redirection)
-  nsExec::ExecToLog '$WINDIR\\SysNative\\WindowsPowerShell\\v1.0\\powershell.exe -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\\bootstrap.ps1"'
-  Pop $0
-
-  ; Always clean up temp directory
-  RMDir /r "$INSTDIR"
-
-  ; Show error dialog AFTER cleanup so user sees what went wrong
-  ${{If}} $0 != 0
-    MessageBox MB_ICONSTOP|MB_OK "Установка завершилась с ошибкой (код $0).$\\n$\\nПодробности: C:\\ProgramData\\FleetManagerAgent-install.log$\\n$\\nОткройте файл лога для диагностики."
-    Abort "Installation failed (exit code $0)"
+  DetailPrint "Устанавливается FleetManager Agent{version_suffix}, это займёт несколько минут..."
+  ClearErrors
+  ExecWait '"$PLUGINSDIR\\FleetManagerAgent-Setup.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /LOG="$PLUGINSDIR\\setup.log" /ServerUrl={server_url} /EnrollmentToken={token}' $0
+  ${{If}} ${{Errors}}
+    StrCpy $0 -1
   ${{EndIf}}
+
+  ; Журнал Inno содержит командную строку с токеном: сохраняем только копию с маской.
+  CreateDirectory "{log_dir}"
+  nsExec::Exec '"$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\\mask-log.ps1" "$PLUGINSDIR\\setup.log" "{setup_log}"'
+  Pop $1
+  Delete "$PLUGINSDIR\\setup.log"
+  Delete "$PLUGINSDIR\\FleetManagerAgent-Setup.exe"
+
+  ${{If}} $0 == -1
+    StrCpy $2 "не удалось запустить установщик агента"
+  ${{Else}}
+    Push $0
+    Call ExitCodeText
+    Pop $2
+  ${{EndIf}}
+
+  ${{If}} $0 != 0
+    DetailPrint "Ошибка установки (код $0): $2"
+    DetailPrint "Журнал установщика: {setup_log}"
+    DetailPrint "Журнал шагов установки: {install_log}"
+    MessageBox MB_ICONSTOP|MB_OK "Установка FleetManager Agent завершилась с ошибкой (код $0):$\\n$2.$\\n$\\nЖурнал установщика:$\\n{setup_log}$\\n$\\nЖурнал шагов установки:$\\n{install_log}" /SD IDOK
+    SetErrorLevel $0
+    Abort "Установка завершилась с ошибкой (код $0)"
+  ${{EndIf}}
+
+  DetailPrint "FleetManager Agent установлен. ПК появится в реестре Fleet Manager после первой связи с сервером, обычно в течение минуты."
 SectionEnd
 """
 
 
-def agent_dist_ready() -> bool:
-    return (
-        (_AGENT_DIST / "FleetManager.Agent.Service.exe").is_file()
-        and (_AGENT_DIST / "install.ps1").is_file()
+def _exit_code_cases() -> str:
+    lines = []
+    for index, (code, text) in enumerate(sorted(INNO_EXIT_CODES.items())):
+        keyword = "${If}" if index == 0 else "${ElseIf}"
+        lines.append(f"  {keyword} $0 == {code}\n    StrCpy $0 \"{text}\"")
+    return "\n".join(lines)
+
+
+def render_nsi(
+    *,
+    server_url: str,
+    enrollment_token: str,
+    setup_exe: str,
+    mask_ps1: str,
+    output: str,
+    version: str | None = None,
+) -> str:
+    """Текст .nsi обёртки. Значения проверяются: в NSIS и командную строку они идут как есть."""
+    if not _SERVER_URL_RE.match(server_url):
+        raise ValueError(f"Недопустимый адрес сервера для установщика: {server_url!r}")
+    if not _TOKEN_RE.match(enrollment_token):
+        raise ValueError("Недопустимые символы в токене регистрации")
+    version_suffix = f" {version}" if version and re.fullmatch(r"[0-9A-Za-z.\-]+", version) else ""
+    return _NSIS_TEMPLATE.format(
+        output=output,
+        setup_exe=setup_exe,
+        mask_ps1=mask_ps1,
+        server_url=server_url,
+        token=enrollment_token,
+        version_suffix=version_suffix,
+        exit_code_cases=_exit_code_cases(),
+        log_dir=LOG_DIR,
+        setup_log=SETUP_LOG,
+        install_log=INSTALL_LOG,
     )
 
 
 def build_installer_exe(server_url: str, enrollment_token: str) -> bytes:
-    if not agent_dist_ready():
+    setup_exe = installer_path()
+    if not os.path.isfile(setup_exe):
         raise RuntimeError(
-            f"Agent distribution files missing in {_AGENT_DIST}. "
-            "Copy FleetManager.Agent.Service.exe and install.ps1 there."
+            "Установщик агента ещё не синхронизирован на сервере: "
+            "нажмите «Проверить обновление агента» в «Администрирование → Агент и токены»."
         )
-
-    openssh_msi = _AGENT_DIST / "OpenSSH-Win64.msi"
-    openssh_msi_line = f'\n  File "{openssh_msi}"' if openssh_msi.is_file() else ""
 
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)
-
-        bootstrap = tmpdir / "bootstrap.ps1"
-        bootstrap.write_text(
-            "$ErrorActionPreference = 'Stop'\n"
-            "$log = [System.IO.Path]::Combine($env:ALLUSERSPROFILE, 'FleetManagerAgent-install.log')\n"
-            "function Write-Log([string]$msg) {\n"
-            "    $line = \"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $msg\"\n"
-            "    Write-Host $line\n"
-            "    [System.IO.File]::AppendAllText($log, $line + \"`r`n\", [System.Text.Encoding]::UTF8)\n"
-            "}\n"
-            "try {\n"
-            f"    & \"$PSScriptRoot\\install.ps1\""
-            f" -ServerUrl '{server_url}'"
-            f" -EnrollmentToken '{enrollment_token}'"
-            f" -PackageRoot \"$PSScriptRoot\""
-            f" *>&1 | Tee-Object -FilePath $log -Append\n"
-            "    Write-Log 'INSTALLATION COMPLETED SUCCESSFULLY'\n"
-            "} catch {\n"
-            "    Write-Log \"ERROR: $($_.Exception.Message)\"\n"
-            "    Write-Log $_.ScriptStackTrace\n"
-            "    exit 1\n"
-            "}\n",
-            encoding="utf-8",
-        )
-
+        mask_ps1 = tmpdir / "mask-log.ps1"
+        mask_ps1.write_text(MASK_LOG_PS1, encoding="ascii")
         output_exe = tmpdir / "installer.exe"
         nsi_path = tmpdir / "installer.nsi"
         nsi_path.write_text(
-            _NSIS_TEMPLATE.format(
+            render_nsi(
+                server_url=server_url,
+                enrollment_token=enrollment_token,
+                setup_exe=setup_exe,
+                mask_ps1=str(mask_ps1),
                 output=str(output_exe),
-                uid=uuid.uuid4().hex[:12],
-                agent_exe=str(_AGENT_DIST / "FleetManager.Agent.Service.exe"),
-                install_ps1=str(_AGENT_DIST / "install.ps1"),
-                bootstrap_ps1=str(bootstrap),
-                openssh_msi_line=openssh_msi_line,
+                version=available_agent_version(),
             ),
-            encoding="utf-8",
+            encoding="utf-8-sig",
         )
 
         result = subprocess.run(
-            ["makensis", "-V2", str(nsi_path)],
+            ["makensis", "-V2", "-INPUTCHARSET", "UTF8", str(nsi_path)],
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=300,
         )
         if result.returncode != 0:
-            raise RuntimeError(
-                f"makensis failed (exit {result.returncode}):\n"
-                f"{result.stdout}\n{result.stderr}"
-            )
+            # В выводе makensis может оказаться строка скрипта с токеном.
+            output = f"{result.stdout}\n{result.stderr}".replace(enrollment_token, "***")
+            raise RuntimeError(f"makensis failed (exit {result.returncode}):\n{output}")
 
         return output_exe.read_bytes()
 

@@ -25,6 +25,7 @@ The available version is the GitHub release tag of the installer in `soft_share_
 | `POST /agent/version-scan` | admin, operator | queue an SSH probe of the installed version; empty `host_ids` means every host with an agent |
 | `POST /agent/update` | admin, operator | queue a remote update of the selected hosts |
 | `GET /agent/installer` | agent bearer token | download the installer; used by hosts during the update |
+| `GET /agent/enrollment-tokens/{id}/installer` | admin | NSIS wrapper around the same installer with `/ServerUrl` and `/EnrollmentToken` baked in, for first-time installs (`services/installer_builder.py`) |
 
 `POST /agent/update` and `POST /agent/version-scan` create a `TaskRun` (`agent_update` / `agent_version_scan`) and return it, so progress is streamed through the usual `/tasks/{id}/stream`.
 
