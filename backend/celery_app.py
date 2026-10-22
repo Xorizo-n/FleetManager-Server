@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 
 from config import settings
 
@@ -18,6 +19,7 @@ celery_app = Celery(
         "services.waiting_tasks",
         "services.wake_on_lan",
         "services.wallpapers",
+        "services.offsite_backup",
     ],
 )
 
@@ -55,6 +57,23 @@ celery_app.conf.update(
         "regroup-hosts": {
             "task": "services.host_grouping.regroup_hosts",
             "schedule": 3600.0,
+        },
+        # Копии вне ВМ (services/offsite_backup.py), часы в UTC: БД каждые 4 часа (06:15, 10:15…
+        # по Екатеринбургу), soft-share в 02:30, проверка восстановления по воскресеньям в 05:00
+        "offsite-backup-db": {
+            "task": "services.offsite_backup.run_backup",
+            "schedule": crontab(minute=15, hour="*/4"),
+            "args": ("db",),
+        },
+        "offsite-backup-share": {
+            "task": "services.offsite_backup.run_backup",
+            "schedule": crontab(minute=30, hour=21),
+            "args": ("share",),
+        },
+        "offsite-backup-check": {
+            "task": "services.offsite_backup.run_backup",
+            "schedule": crontab(minute=0, hour=0, day_of_week="sunday"),
+            "args": ("check",),
         },
     },
 )

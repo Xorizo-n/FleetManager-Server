@@ -524,6 +524,38 @@ const ldapGroups = [
   { dn: "CN=IRITRTF OOD Valid Access,OU=OOD,OU=IRITRTF,OU=Auto,DC=at,DC=urfu,DC=ru", name: "IRITRTF OOD Valid Access", description: null },
 ];
 route("GET", "/settings/ldap", (ctx) => { admin(ctx); return ldapSettings; });
+// Копии вне ВМ (backend/services/offsite_backup.py)
+const backupRuns: any[] = [
+  { id: uuid(), kind: "db", started_at: minutesAgo(70), finished_at: minutesAgo(69), ok: true, message: null, bytes_added: 9_784_680, details: { db_bytes: 293_971_321 } },
+  { id: uuid(), kind: "share", started_at: minutesAgo(60 * 9), finished_at: minutesAgo(60 * 9 - 4), ok: true, message: null, bytes_added: 152_000_000, details: { files: 412 } },
+  { id: uuid(), kind: "check", started_at: minutesAgo(60 * 30), finished_at: minutesAgo(60 * 30 - 1), ok: true, message: null, bytes_added: null, details: { restored: { hosts: 1065, credentials: 1083, users: 11 }, credentials_decrypted: true, repository_bytes: 63_680_644 } },
+  { id: uuid(), kind: "db", started_at: minutesAgo(60 * 5), finished_at: minutesAgo(60 * 5 - 1), ok: false, message: "Хранилище недоступно по сети", bytes_added: null, details: null },
+];
+const backupSettings: any = { enabled: true, sftp_host: "10.152.240.10", sftp_port: 22, sftp_user: "backupuser", sftp_path: "/srv/backup/fleet-manager",
+  has_sftp_password: true, has_repo_password: true, host_key_fingerprint: "SHA256:Uzrm3jBuyenqXwsORh8j3hup1ogc33UHyAYJFooosAo", initialized: true, updated_at: minutesAgo(600) };
+const backupOut = () => ({ ...backupSettings, runs: backupRuns,
+  last_ok: Object.fromEntries(["db", "share", "check"].map((k) => [k, backupRuns.find((r) => r.kind === k && r.ok)?.finished_at ?? null])) });
+route("GET", "/settings/backup", (ctx) => { admin(ctx); return backupOut(); });
+route("PUT", "/settings/backup", (ctx) => {
+  admin(ctx);
+  const { sftp_password, repo_password, ...rest } = ctx.body;
+  Object.assign(backupSettings, rest);
+  if (sftp_password != null) backupSettings.has_sftp_password = sftp_password !== "";
+  if (repo_password != null) backupSettings.has_repo_password = repo_password !== "";
+  return backupOut();
+});
+route("POST", "/settings/backup/check", (ctx) => { admin(ctx); return { ok: true, repository: "exists", host_key_fingerprint: backupSettings.host_key_fingerprint, host_key_pinned: true }; });
+route("POST", "/settings/backup/run", (ctx) => {
+  admin(ctx);
+  const run = { id: uuid(), kind: ctx.body.kind, started_at: now().toISOString(), finished_at: null, ok: null, message: null, bytes_added: null, details: null };
+  backupRuns.unshift(run);
+  setTimeout(() => Object.assign(run, { finished_at: now().toISOString(), ok: true, bytes_added: 4_200_000 }), 6000);
+  return run;
+});
+route("GET", "/settings/backup/snapshots", (ctx) => {
+  admin(ctx);
+  return ["db", "config", "share", "db", "config"].map((tag, i) => ({ id: uuid().slice(0, 8), time: minutesAgo(70 + i * 240), tags: [tag], paths: [], bytes: tag === "share" ? 80e9 : tag === "db" ? 294e6 : 9000 }));
+});
 route("PUT", "/settings/ldap", (ctx) => {
   admin(ctx);
   const { bind_password, ...rest } = ctx.body;

@@ -7,8 +7,11 @@ from models.task import TaskRun, TaskType, TaskStatus
 from models.agent import AgentEnrollmentToken, AgentAlert
 from models.wallpaper import Wallpaper, WallpaperAssignment, WallpaperSchedule, ObservedWallpaper
 from models.ldap_settings import LdapSettings
+from models.backup import BackupRun, BackupSettings
 
 __all__ = [
+    "BackupRun",
+    "BackupSettings",
     "LdapSettings",
     "User",
     "AuditLog",
