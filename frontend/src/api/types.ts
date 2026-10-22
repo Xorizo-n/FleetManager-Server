@@ -262,8 +262,19 @@ export interface TaskRun {
   finished_at: string | null;
   created_by?: string | null;
   created_by_name?: string | null;
+  /** От чьего имени выполнялся плейбук (backend/services/run_as.py) */
+  run_as?: RunAs | null;
   /** Ответ на запуск: задачи, созданные для выключенных ПК */
   waiting_task_ids?: string[];
+}
+
+export interface RunAs {
+  /** Под кем пробовали войти; null — инициатора нет, причина в reason */
+  login: string | null;
+  reason: string | null;
+  as_user: string[];
+  /** host_id → почему на этом ПК осталась учётка установки агента */
+  fallback: Record<string, string>;
 }
 
 export interface TaskRunDetail extends TaskRun {
@@ -299,6 +310,10 @@ export interface Schedule {
   enabled: boolean;
   created_at: string;
   next_run_at: string | null;
+  /** Владелец — создал или последним изменил: плейбук идёт от его имени */
+  owner_id?: string | null;
+  owner_name?: string | null;
+  owner_domain?: boolean;
 }
 
 export interface SoftwareItem {

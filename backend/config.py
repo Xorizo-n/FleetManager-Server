@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     ldap_operator_groups: str = ""
     ldap_viewer_groups: str = ""
     ldap_timeout_seconds: int = 5
+    # Короткое имя домена для входа на ПК от имени инициатора: AT\Sergey.Mirzagitov
+    ldap_netbios_domain: str = "AT"
+
+    # Плейбуки — от имени доменного инициатора, где он администратор ПК, иначе от учётки
+    # установки агента (services/run_as.py). Сколько ПК пробовать входом одновременно.
+    playbook_run_as_initiator: bool = True
+    run_as_probe_parallelism: int = 50
 
     # Ansible
     ansible_playbooks_repo_dir: str = "/app/ansible_data/playbooks_repo"

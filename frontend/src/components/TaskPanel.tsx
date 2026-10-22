@@ -10,7 +10,8 @@ import { apiClient } from "../api/client";
 import TaskLog from "./TaskLog";
 import { Loading } from "./ui/States";
 import { keys, useCanEdit, useFleet, useTask } from "../api/queries";
-import { apiError, formatDateTime, formatDuration, hostLabel, STATUS_LABELS, TASK_TYPE_LABELS, taskTitle } from "../lib/format";
+import { apiError, formatDateTime, formatDuration, hostLabel, pcCount, STATUS_LABELS, TASK_TYPE_LABELS, taskTitle } from "../lib/format";
+import type { RunAs } from "../api/types";
 
 const TaskPanelContext = createContext<(taskId: string) => void>(() => {});
 
@@ -114,6 +115,7 @@ function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }
             <Meta label="Длительность">{formatDuration(task.started_at, task.finished_at)}</Meta>
             <Meta label="Хостов">{task.host_ids.length}</Meta>
           </dl>
+          {task.run_as && <RunAsSummary runAs={task.run_as} />}
           {hostNames.length > 0 && (
             <details className="rounded-lg border border-border px-3 py-2 text-sm" open={hostNames.length <= 12}>
               <summary className="cursor-pointer text-muted-foreground">Цели ({hostNames.length})</summary>
@@ -150,6 +152,40 @@ function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }
         </div>
       )}
     </Drawer>
+  );
+}
+
+/** От чьего имени шёл плейбук: инициатор там, где он администратор ПК, иначе учётка установки */
+function RunAsSummary({ runAs }: { runAs: RunAs }) {
+  const { hostById } = useFleet();
+  const fallback = Object.entries(runAs.fallback ?? {});
+  if (!runAs.login) {
+    return <p className="text-sm text-muted-foreground">От учётки установки агента: {runAs.reason}</p>;
+  }
+  return (
+    <div className="space-y-1 text-sm">
+      <p className="text-muted-foreground">
+        {runAs.as_user.length > 0 && (
+          <>
+            От имени <span className="font-mono text-foreground">{runAs.login}</span> на {pcCount(runAs.as_user.length)}
+          </>
+        )}
+        {runAs.as_user.length > 0 && fallback.length > 0 && "; "}
+        {fallback.length > 0 && <>от учётки установки агента на {pcCount(fallback.length)}</>}
+      </p>
+      {fallback.length > 0 && (
+        <details className="rounded-lg border border-border px-3 py-2">
+          <summary className="cursor-pointer text-muted-foreground">Где вход под {runAs.login} не прошёл</summary>
+          <ul className="mt-2 space-y-0.5 text-xs">
+            {fallback.map(([id, why]) => (
+              <li key={id}>
+                <span className="font-mono text-foreground">{hostById.get(id)?.hostname ?? id}</span> — {why}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
   );
 }
 

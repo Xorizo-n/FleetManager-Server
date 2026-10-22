@@ -55,6 +55,11 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
 
   const offline = useMemo(() => [...selection].filter((id) => hostById.get(id)?.status !== "online").length, [selection, hostById]);
   const gitRepos = (repos.data ?? []).filter((r) => r.kind !== "local");
+  // От чьего имени пойдёт плейбук (backend/services/run_as.py)
+  const runAsHint =
+    user?.auth_source === "ldap"
+      ? `От вашего имени (${user.username}) там, где вы администратор ПК, на остальных — от учётки установки агента${mode === "schedule" ? "; расписание — от имени того, кто его последним изменил" : ""}`
+      : "От учётки установки агента: вы вошли локальной учётной записью";
 
   async function syncRepo() {
     if (gitRepos.length === 0) return;
@@ -211,6 +216,7 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
             {mode === "now" ? <Play className="h-4 w-4" /> : <CalendarClock className="h-4 w-4" />}
             {mode === "now" ? `Запустить на ${pcCount(selection.size)}` : "Создать расписание"}
           </Button>
+          {runAsHint && <span className="text-xs text-subtle">{runAsHint}</span>}
           {!playbook && <span className="text-xs text-subtle">Выберите плейбук</span>}
           {playbook && selection.size === 0 && <span className="text-xs text-subtle">Выберите хосты</span>}
         </div>

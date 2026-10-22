@@ -335,6 +335,7 @@ def create_schedule(
         extra_vars=payload.extra_vars,
         cron_expression=payload.cron_expression,
         enabled=payload.enabled,
+        owner_id=user.id,
     )
     db.add(schedule)
     db.commit()
@@ -367,6 +368,8 @@ def update_schedule(
     for field in ("playbook_name", "extra_vars", "cron_expression", "enabled"):
         if changes.get(field) is not None:
             setattr(schedule, field, changes[field])
+    # Изменивший расписание становится его владельцем: плейбук пойдёт от его имени
+    schedule.owner_id = user.id
 
     db.commit()
     db.refresh(schedule)

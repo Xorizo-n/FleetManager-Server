@@ -95,6 +95,9 @@ class PlaybookScheduleOut(BaseModel):
     enabled: bool
     created_at: datetime
     next_run_at: datetime | None = None
+    owner_id: uuid.UUID | None = None
+    owner_name: str | None = None
+    owner_domain: bool = False
 
     @field_validator("host_group_ids", "host_ids", mode="before")
     @classmethod

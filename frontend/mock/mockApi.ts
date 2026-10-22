@@ -375,7 +375,7 @@ const tokens = [
   ...Array.from({ length: 12 }, (_, i) => ({ id: uuid(), name: `Testing${i + 1}`, expires_at: null, is_active: false, created_at: minutesAgo(60 * 24 * (50 + i)), installer_available: false })),
 ];
 
-schedules.push({ id: uuid(), repo_id: repo.id, playbook_name: "playbooks/check_disk_space.yml", host_group_id: null, host_group_ids: [groups[0].id], host_ids: [], extra_vars: {}, cron_expression: "0 3 * * 1", enabled: true, created_at: minutesAgo(60 * 24 * 7) });
+schedules.push({ id: uuid(), repo_id: repo.id, playbook_name: "playbooks/check_disk_space.yml", host_group_id: null, host_group_ids: [groups[0].id], host_ids: [], extra_vars: {}, cron_expression: "0 3 * * 1", enabled: true, created_at: minutesAgo(60 * 24 * 7), owner_id: null, owner_name: "Иванов Иван Иванович", owner_domain: true } as Schedule);
 schedules.push({ id: uuid(), repo_id: repo.id, playbook_name: "playbooks/shutdown_hosts.yml", host_group_id: null, host_group_ids: [groups.find((g) => g.name === "SU5")!.id], host_ids: [], extra_vars: { delay: "60" }, cron_expression: "30 21 * * *", enabled: false, created_at: minutesAgo(60 * 24 * 3) });
 
 // История задач
@@ -388,6 +388,10 @@ for (let i = 0; i < 260; i++) {
   tasks.push({
     id: uuid(), task_type: type, playbook_name: type === "playbook" ? pick(playbookFiles).path : null, host_ids: targets, status: failed ? "failed" : "success",
     created_at: created, started_at: created, finished_at: new Date(new Date(created).getTime() + 1000 * (20 + rnd() * 600)).toISOString(),
+    // От чьего имени (backend/services/run_as.py): у плейбуков — инициатор, где он администратор ПК
+    run_as: type !== "playbook" ? null : targets.length > 1
+      ? { login: "AT\\i.i.ivanov", reason: null, as_user: targets.slice(1), fallback: { [targets[0]]: "вход не принят: учётка не в локальных администраторах ПК или отключена в домене" } }
+      : { login: null, reason: "admin — локальная учётная запись Fleet Manager, не доменная", as_user: [], fallback: {} },
     created_by: chance(0.15) ? null : pick(users.slice(0, 2)).id, log_output: `PLAY [all] ****\n\nTASK [Gathering Facts] ****\nok: [${targets.length} host(s)]\n\nPLAY RECAP ****\n${failed ? "failed=1" : "ok=3 changed=1"}\n`, extra_vars: {},
   });
 }

@@ -31,4 +31,8 @@ def schedule_out(schedule: PlaybookSchedule, now: datetime | None = None) -> Pla
     out = PlaybookScheduleOut.model_validate(schedule)
     out.host_group_ids = schedule_group_ids(schedule)
     out.next_run_at = next_run_at(schedule.cron_expression, now) if schedule.enabled else None
+    owner = schedule.owner
+    if owner is not None:
+        out.owner_name = owner.display_name or owner.username
+        out.owner_domain = owner.auth_source == "ldap"
     return out
