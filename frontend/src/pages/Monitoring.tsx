@@ -61,6 +61,55 @@ interface Summary {
   alerts: MonAlert[];
   buildings: Building[];
   backup: BackupStatus;
+  offsite?: OffsiteStatus;
+}
+
+/** Копии вне ВМ (backend/services/offsite_backup.py): БД каждые 4 часа, проверка восстановления по воскресеньям */
+interface OffsiteStatus {
+  enabled: boolean;
+  last_db_at: string | null;
+  max_age_hours: number;
+  last_check_at: string | null;
+  last_check_ok: boolean | null;
+  last_error: string | null;
+}
+
+/** Без копии вне ВМ потеря сервера — потеря доступа ко всем ПК: «серьёзно» */
+function offsiteProblem(o: OffsiteStatus | undefined, now: number): { title: string; detail: string } | null {
+  if (!o) return null;
+  if (!o.enabled) return { title: "Копии вне ВМ не настроены", detail: "Администрирование → Резервные копии" };
+  const last = o.last_db_at ? new Date(o.last_db_at).getTime() : null;
+  if (last === null) return { title: "Копии БД вне ВМ ещё нет", detail: o.last_error ?? "первое копирование не прошло" };
+  if (now - last > o.max_age_hours * 3_600_000) return { title: "Копия БД вне ВМ устарела", detail: `последняя ${ago(last, now)} назад${o.last_error ? ` · ${o.last_error}` : ""}` };
+  if (o.last_check_ok === false) return { title: "Проверка восстановления не прошла", detail: o.last_error ?? "см. Резервные копии" };
+  return null;
+}
+
+function OffsiteCell({ offsite, now }: { offsite: OffsiteStatus | undefined; now: number }) {
+  const problem = offsiteProblem(offsite, now);
+  const when = offsite?.last_db_at
+    ? new Date(offsite.last_db_at).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: APP_TIME_ZONE })
+    : "—";
+  const tone = problem ? SEV.serious.text : "text-emerald-600 dark:text-emerald-400";
+  const StatusIcon = problem ? AlertTriangle : CheckCircle2;
+  const checked = offsite?.last_check_at
+    ? `проверено ${new Date(offsite.last_check_at).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", timeZone: APP_TIME_ZONE })}`
+    : "восстановление ещё не проверялось";
+  return (
+    <div className="surface-card flex min-w-0 flex-col justify-center gap-1 p-2.5" title={problem ? `${problem.title}: ${problem.detail}` : undefined}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-foreground">
+          <span className="shrink-0 text-blue-600 dark:text-blue-400"><Database className="h-3.5 w-3.5" /></span>
+          <span className="truncate">Копия вне ВМ</span>
+        </span>
+        <span className={`flex shrink-0 items-center gap-1 text-sm font-semibold tabular-nums ${tone}`}>
+          <StatusIcon className="h-3.5 w-3.5" />
+          {when}
+        </span>
+      </div>
+      <div className={`truncate text-[11px] ${problem ? SEV.serious.text : "text-muted-foreground"}`}>{problem ? problem.title : checked}</div>
+    </div>
+  );
 }
 
 /** Ежедневный бэкап БД (backup-db.sh, cron 23:00): последний удачный дамп и итог последнего запуска */
@@ -612,6 +661,8 @@ export default function Monitoring() {
       // Бэкап БД: без него восстановиться после сбоя нечем — «серьёзно», а не «внимание»
       const backup = backupProblem(s.backup, now);
       if (backup) list.push({ key: "backup", sev: "serious", title: backup.title, detail: backup.detail });
+      const offsite = offsiteProblem(s.offsite, now);
+      if (offsite) list.push({ key: "offsite", sev: "serious", title: offsite.title, detail: offsite.detail });
       if (s.disks_critical) list.push({ key: "disk", sev: "serious", weight: s.disks_critical, title: `Диск заполнен на ${pcCount(s.disks_critical)}`, detail: "свободного места почти не осталось" });
       if (s.kms_unreachable) list.push({ key: "kms", sev: "serious", weight: s.kms_unreachable, title: `KMS недоступен с ${pcCount(s.kms_unreachable)}`, detail: "активация Windows и Office не продлится" });
       if (s.tasks_failed_24h) list.push({ key: "tasks", sev: "warning", weight: s.tasks_failed_24h, title: `Задач с ошибкой за сутки: ${s.tasks_failed_24h}`, detail: "подробности — в разделе «Задачи»" });
@@ -914,6 +965,7 @@ export default function Monitoring() {
                   detail={`занято ${d.used_gb} из ${d.total_gb} ГБ · свободно ${(d.total_gb - d.used_gb).toFixed(0)} ГБ`} />
               ))}
               <BackupCell backup={s?.backup} now={now} />
+              <OffsiteCell offsite={s?.offsite} now={now} />
               <MetricCell icon={<Wifi className="h-3.5 w-3.5" />} label="ПК в сети за 24 ч" value={timelineData.length ? `${timelineData[timelineData.length - 1]}` : "—"}
                 spark={timelineData} sparkClass="text-blue-500"
                 detail={timelineData.length ? `максимум ${Math.max(...timelineData)} · минимум ${Math.min(...timelineData)}` : "нет данных"} />

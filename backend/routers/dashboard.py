@@ -21,6 +21,7 @@ from models.host import Host, HostGroup, HostStatus, HostStatusHistory
 from models.software import SoftwareItem, SoftwareHistory, SoftwareStatus
 from models.task import TaskRun, TaskStatus
 from models.user import User
+from services.offsite_backup import offsite_status
 from services.activation import GRACE, UNLICENSED, activation_state
 from services.agent_version import STATUS_OUTDATED, available_agent_version, version_status
 from routers.software import _GUID_REGEX, _SYSTEM_PREFIXES
@@ -328,6 +329,16 @@ def _backup_status() -> MonitoringBackup:
     return out
 
 
+class MonitoringOffsite(BaseModel):
+    """Копии вне ВМ (services/offsite_backup.py): свежесть копии БД и последняя проверка восстановления."""
+    enabled: bool
+    last_db_at: datetime | None = None
+    max_age_hours: int
+    last_check_at: datetime | None = None
+    last_check_ok: bool | None = None
+    last_error: str | None = None
+
+
 class MonitoringOut(BaseModel):
     generated_at: datetime
     total: int
@@ -348,6 +359,7 @@ class MonitoringOut(BaseModel):
     alerts: list[MonitoringAlert]
     buildings: list[MonitoringBuilding]
     backup: MonitoringBackup
+    offsite: MonitoringOffsite
 
 
 _FLOOR_NUMBER = re.compile(r"-?\d+")
@@ -478,4 +490,5 @@ def monitoring(db: Session = Depends(get_db), _: User = Depends(get_current_user
         tasks_running=tasks_running, tasks_failed_24h=tasks_failed,
         alerts_24h=len(alert_rows), alerts=alerts, buildings=building_out,
         backup=_backup_status(),
+        offsite=MonitoringOffsite(**offsite_status(db)),
     )

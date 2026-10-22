@@ -110,6 +110,10 @@ services:
       # Без :ro — почасовая задача sync-agent-installer выполняется именно в этом
       # воркере и пишет сюда FleetManagerAgent-Setup.exe и его .version.
       - ${SOFT_SHARE_DIR:-/mnt/soft-share}:/mnt/soft-share
+      # Копии вне ВМ (services/offsite_backup.py): .env с ключом шифрования учётных данных
+      # и сертификаты HTTPS. Без .env SSH-ключи ПК из копии БД не расшифровать.
+      - ./.env:/mnt/fleet-config/.env:ro
+      - ./certs:/mnt/fleet-config/certs:ro
     command: celery -A celery_app.celery_app worker --loglevel=info --concurrency=4
 
   celery-beat:

@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     # (сутки между запусками в 23:00 плюс запас на сам дамп).
     db_backup_dir: str = "/mnt/db-backups"
     db_backup_max_age_hours: int = 26
+    # Копии вне ВМ (services/offsite_backup.py): помимо БД копируются .env и certs/ — они
+    # смонтированы в воркер Celery только на чтение (docker-compose.yml), — локальные
+    # плейбуки и /mnt/soft-share.
+    offsite_config_dir: str = "/mnt/fleet-config"
+    offsite_share_dir: str = "/mnt/soft-share"
+    # Копия БД вне ВМ старше этого — тревога на мониторинге (копии каждые 4 часа)
+    offsite_db_max_age_hours: int = 6
 
     # Public URL baked into downloaded agent installers (e.g. https://fleet.example.com)
     # Falls back to the request base_url when empty.
