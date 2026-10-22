@@ -269,6 +269,8 @@ def register_agent(payload: AgentRegisterRequest, request: Request, db: Session 
         # uninstall can remove that automatically created host completely.
         if matched_existing_agent:
             host.is_agent_managed = True
+        # A host found by name or address has no agent yet: bind it to this one.
+        host.agent_id = payload.machine_id
         host.agent_token_hash = hash_agent_token(raw_agent_token)
         host.hostname = payload.hostname or host.hostname
         host.ip_address = payload.ip_address or _client_ip(request) or host.ip_address
