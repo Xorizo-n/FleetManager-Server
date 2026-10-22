@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Download, HardDrive, Search, Trash2, Upload } from "lucide-react";
 import { apiClient, getAccessToken } from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import { APP_TIME_ZONE } from "../lib/format";
 import Button from "./ui/Button";
 
 interface InstallerFile {
@@ -157,7 +158,7 @@ export default function InstallerManager() {
                 <td className="font-mono text-foreground/80">{f.name}</td>
                 <td className="whitespace-nowrap tabular-nums">{formatSize(f.size)}</td>
                 <td className="whitespace-nowrap text-muted-foreground">
-                  {new Date(f.mtime).toLocaleString()}
+                  {new Date(f.mtime).toLocaleString("ru-RU", { timeZone: APP_TIME_ZONE })}
                 </td>
                 <td>
                   <div className="flex justify-end gap-1">

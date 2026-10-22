@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { apiClient } from "../api/client";
 import type { TaskRun } from "../api/types";
-import { pcCount, taskTitle } from "../lib/format";
+import { APP_TIME_ZONE, pcCount, taskTitle } from "../lib/format";
 
 // ---------------------------------------------------------------------------
 // Данные
@@ -272,8 +272,9 @@ function Clock() {
     const id = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(id);
   }, []);
-  const time = now.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  const date = now.toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long" });
+  // Пояс задан явно: ТВ может стоять с другим поясом в ОС (было московское время вместо Екб)
+  const time = now.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: APP_TIME_ZONE });
+  const date = now.toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long", timeZone: APP_TIME_ZONE });
   return (
     <div className="text-right leading-tight">
       <div className="text-2xl font-semibold tabular-nums text-foreground">{time}</div>

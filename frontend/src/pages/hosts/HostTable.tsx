@@ -4,7 +4,7 @@ import { ArrowDown, ArrowUp, BellRing, DoorOpen } from "lucide-react";
 import type { Host, VersionStatus } from "../../api/types";
 import type { GroupTree } from "../../lib/groupTree";
 import Checkbox from "../../components/ui/Checkbox";
-import { formatRam, hostLabel, osLabel, pcCount, relativeTime, VERSION_LABELS } from "../../lib/format";
+import { APP_TIME_ZONE, formatRam, hostLabel, osLabel, pcCount, relativeTime, VERSION_LABELS } from "../../lib/format";
 import { diskUsedPercent, formatLinkSpeed, fullestDisk, isSlowWiredLink, primaryAdapter } from "../../lib/hardware";
 import { DiskCell } from "../../components/DiskUsage";
 import { ActivationCell } from "../../components/Activation";
@@ -268,7 +268,7 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
                   <div className="min-w-0"><AgentCell host={h} status={versionOf(h)} /></div>
                   {!compact && <div className="truncate text-muted-foreground">{osLabel(h.os)}</div>}
                   {!compact && <div className="min-w-0"><ActivationCell host={h} /></div>}
-                  <div className="truncate text-muted-foreground" title={h.last_checked_at ? new Date(h.last_checked_at).toLocaleString("ru-RU") : undefined}>
+                  <div className="truncate text-muted-foreground" title={h.last_checked_at ? new Date(h.last_checked_at).toLocaleString("ru-RU", { timeZone: APP_TIME_ZONE }) : undefined}>
                     {relativeTime(h.last_checked_at)}
                   </div>
                 </>

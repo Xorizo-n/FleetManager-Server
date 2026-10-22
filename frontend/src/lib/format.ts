@@ -74,11 +74,18 @@ export function relativeTime(iso: string | null | undefined): string {
   if (hr < 24) return `${hr} ч назад`;
   const day = Math.floor(hr / 24);
   if (day < 30) return `${day} дн назад`;
-  return new Date(iso).toLocaleDateString("ru-RU");
+  return new Date(iso).toLocaleDateString("ru-RU", { timeZone: APP_TIME_ZONE });
 }
 
+/**
+ * Часовой пояс всего интерфейса — Екатеринбург, как у сервера (TZ контейнеров).
+ * Без явного пояса браузер берёт его из ОС экрана: на ТВ/ПК с московским поясом
+ * мониторинг показывал московское время.
+ */
+export const APP_TIME_ZONE = "Asia/Yekaterinburg";
+
 export function formatDateTime(iso: string | null | undefined) {
-  return iso ? new Date(iso).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }) : "—";
+  return iso ? new Date(iso).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short", timeZone: APP_TIME_ZONE }) : "—";
 }
 
 export function formatDuration(startIso: string | null, endIso: string | null) {
