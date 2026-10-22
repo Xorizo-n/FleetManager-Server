@@ -60,7 +60,7 @@ from services.host_grouping import apply_auto_group, cleanup_auto_groups
 from services.waiting_tasks import create_task_runs, enqueue, release_waiting_tasks
 from services.wake_on_lan import agent_lan_address, normalize_mac, primary_adapter
 from services.crypto import decrypt_secret, encrypt_secret
-from services.installer_builder import agent_dist_ready, build_installer_exe, safe_filename
+from services.installer_builder import build_installer_exe, safe_filename
 
 HARDWARE_CHANGED = "hardware_changed"
 DEVICE_MISSING = "device_missing"
@@ -166,7 +166,9 @@ def download_enrollment_installer(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.admin)),
 ):
-    """Генерирует .exe-установщик агента с вшитыми токеном и адресом сервера."""
+    """.exe-обёртка над актуальным установщиком агента с вшитыми токеном и адресом сервера.
+
+    Устройство обёртки и почему токен не остаётся на диске — services/installer_builder.py."""
     token = db.get(AgentEnrollmentToken, token_id)
     if token is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Enrollment token not found")
@@ -177,18 +179,13 @@ def download_enrollment_installer(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Installer not available for this token (created before installer feature)",
         )
-    if not agent_dist_ready():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Agent distribution files not found. Copy FleetManager.Agent.Service.exe and install.ps1 to /mnt/soft-share/agent-dist/ on the server.",
-        )
 
     raw_token = decrypt_secret(token.token_encrypted)
     server_url = settings.agent_public_url.rstrip("/") or str(request.base_url).rstrip("/")
 
     try:
         exe_bytes = build_installer_exe(server_url, raw_token)
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
     filename = safe_filename(token.name)
