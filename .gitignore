@@ -3,6 +3,8 @@
 *.env.local
 # TLS certificate and private key of the site (frontend/nginx)
 certs/
+# Room passwords of the local administrator (AutoDomain room-passwords.csv + .key)
+secrets/
 
 # Python
 __pycache__/
