@@ -114,6 +114,10 @@ services:
       # и сертификаты HTTPS. Без .env SSH-ключи ПК из копии БД не расшифровать.
       - ./.env:/mnt/fleet-config/.env:ro
       - ./certs:/mnt/fleet-config/certs:ro
+      # Пароли локального администратора по аудиториям (room-passwords.csv + .key из
+      # AutoDomain) для плейбука set_local_admin_password.yml: расшифровываются здесь,
+      # на ПК уходит только пароль его аудитории. В git не попадает.
+      - ./secrets/room-passwords:/mnt/room-passwords:ro
     command: celery -A celery_app.celery_app worker --loglevel=info --concurrency=4
 
   celery-beat:
