@@ -32,7 +32,7 @@ from services.crypto import encrypt_secret, decrypt_secret
 from services.git_ssh import build_git_ssh_command
 from services.inventory_generator import resolve_target_host_ids
 from services.schedule_targets import schedule_group_ids, schedule_out
-from services.waiting_tasks import create_task_sequence
+from services.waiting_tasks import create_task_sequence, waiting_count
 
 
 def _resolve_ssh_credential(db: Session, credential_id) -> Credential | None:
@@ -299,7 +299,7 @@ def run_playbook(
     if len(playbooks) > MAX_PLAYBOOKS_PER_RUN:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Не больше {MAX_PLAYBOOKS_PER_RUN} плейбуков за раз")
 
-    now_tasks, waiting = create_task_sequence(
+    groups, execution = create_task_sequence(
         db,
         task_type=TaskType.playbook,
         host_ids=host_ids,
@@ -307,15 +307,15 @@ def run_playbook(
         defer_offline=payload.defer_offline,
         steps=[{"repo_id": repo.id, "playbook_name": name, "extra_vars": payload.extra_vars} for name in playbooks],
     )
-    if now_tasks:
-        run_playbook_task.delay(str(now_tasks[0].id))
-    offline = len(waiting[0].host_ids) if waiting else 0
+    if execution is not None:
+        run_playbook_task.delay(str(execution.id))
+    offline = waiting_count(groups[0])
     record_audit(db, user.id, "playbook.run", f"{', '.join(playbooks)} hosts={len(host_ids)} waiting={offline}", request)
     return {
-        "task_run_id": (now_tasks or waiting)[0].id,
-        "task_run_ids": [task.id for task in now_tasks],
-        "waiting_task_ids": [task.id for task in waiting],
+        "task_run_id": groups[0].id,
+        "task_run_ids": [group.id for group in groups],
         "waiting_hosts": offline,
+        "host_count": len(host_ids),
     }
 
 

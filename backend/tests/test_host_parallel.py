@@ -26,6 +26,20 @@ class _Session:
 
 
 class RunForHostsTests(unittest.TestCase):
+    def test_outcome_of_every_host_is_stored(self):
+        def worker(_db, host):
+            return HostOutcome.unreachable if host.id == self.ids[0] else HostOutcome.ok
+
+        self.assertTrue(self.run_hosts(worker))
+        self.assertEqual(self.stored["outcomes"][self.ids[0]], HostOutcome.unreachable)
+        self.assertEqual(len(self.stored["outcomes"]), len(self.ids))
+        self.assertEqual(self.stored["untouched"], [])
+
+    def test_hosts_left_by_a_failed_canary_are_stored_as_untouched(self):
+        self.assertTrue(self.run_hosts(lambda _db, _host: HostOutcome.failed, canary=True))
+        self.assertEqual(list(self.stored["outcomes"]), [self.ids[0]])
+        self.assertEqual(self.stored["untouched"], self.ids[1:])
+
     def setUp(self):
         self.hosts = {}
         for i in range(12):
@@ -36,6 +50,11 @@ class RunForHostsTests(unittest.TestCase):
         patcher = mock.patch.object(host_parallel, "append_task_log", side_effect=lambda _db, _task, line: self.logs.append(line))
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.stored = {}
+        store = mock.patch.object(host_parallel, "_store_outcomes",
+                                  side_effect=lambda _db, _task, outcomes, untouched: self.stored.update(outcomes=dict(outcomes), untouched=list(untouched)))
+        store.start()
+        self.addCleanup(store.stop)
 
     def run_hosts(self, worker, **kwargs):
         return run_for_hosts("task", self.ids, worker, session_factory=lambda: _Session(self.hosts), **kwargs)

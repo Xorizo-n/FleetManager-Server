@@ -172,7 +172,7 @@ const TASK_STATUS: Record<string, { label: string; dot: string; text: string; pu
   failed: { label: "ошибка", dot: "bg-rose-500", text: "text-rose-600 dark:text-rose-400" },
   cancelled: { label: "отменена", dot: "bg-slate-400", text: "text-muted-foreground" },
   pending: { label: "ждёт предыдущий", dot: "bg-slate-400", text: "text-muted-foreground" },
-  released: { label: "ПК появились", dot: "bg-emerald-500", text: "text-emerald-600 dark:text-emerald-400" },
+  released: { label: "запущена", dot: "bg-emerald-500", text: "text-emerald-600 dark:text-emerald-400" },
 };
 
 interface Problem {

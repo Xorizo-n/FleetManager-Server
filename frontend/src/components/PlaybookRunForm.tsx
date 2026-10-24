@@ -99,7 +99,7 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
     setBusy(true);
     try {
       if (mode === "now") {
-        const { data } = await apiClient.post<{ task_run_id: string; waiting_task_ids: string[]; waiting_hosts: number }>("/playbooks/run", {
+        const { data } = await apiClient.post<{ task_run_id: string; waiting_hosts: number; host_count: number }>("/playbooks/run", {
           repo_id: repoId,
           playbook_names: chosen.map((f) => f.path),
           host_ids: hostIds,
@@ -110,7 +110,7 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
         chosen.forEach((f) => rememberPlaybook(f.key));
         queryClient.invalidateQueries({ queryKey: ["tasks"] });
         onDone?.();
-        if (data.waiting_hosts > 0) toast({ tone: "info", message: waitingNotice(data.waiting_hosts, !data.waiting_task_ids.includes(data.task_run_id)) });
+        if (data.waiting_hosts > 0) toast({ tone: "info", message: waitingNotice(data.waiting_hosts, data.host_count) });
         openTask(data.task_run_id);
       } else {
         await apiClient.post("/playbooks/schedules", {
@@ -169,6 +169,7 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
                     </button>
                   </>
                 )}
+                {canEdit && !file && <span className="w-[38px] shrink-0" aria-hidden />}
                 {canEdit && file && (
                   <Link
                     to={`/automation/editor?repo=${file.repo_id}&path=${encodeURIComponent(file.path)}`}
@@ -184,6 +185,8 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
                     <Plus className="h-4 w-4" />
                   </Link>
                 )}
+                {/* Поля всех строк одной ширины: у следующих строк на месте «+» — пустое место */}
+                {canEdit && index > 0 && <span className="w-[38px] shrink-0" aria-hidden />}
               </li>
             );
           })}
@@ -195,7 +198,7 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
             onClick={() => setSelectedKeys((prev) => [...prev, ""])}
           >
             <ListPlus className="h-3.5 w-3.5" />
-            Добавить плейбук — выполнятся по очереди, каждый отдельной задачей
+            Добавить плейбук — выполнятся по очереди
           </button>
         )}
         {mixedSources && (
@@ -222,7 +225,7 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
               {!deferOffline && <AlertTriangle className="h-3.5 w-3.5 shrink-0" />}
               {offline} из {pcCount(selection.size)} сейчас не в сети.{" "}
               {deferOffline
-                ? "Для них — одна общая задача: запустится на каждом, когда он появится в сети (ждём до 7 дней)."
+                ? "На каждом из них задача запустится сама, когда он появится в сети (ждём до 7 дней)."
                 : "На них запуск, скорее всего, завершится ошибкой."}
             </p>
           </div>

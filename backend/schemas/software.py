@@ -54,10 +54,10 @@ class ScanTriggerRequest(BaseModel):
 
 
 class ScanTriggerResponse(BaseModel):
-    # Задача для ПК в сети, а если все выключены — первая из ожидающих
+    # Запуск: состояние каждого ПК, выключенные ждут появления в сети
     task_run_id: uuid.UUID
-    waiting_task_ids: list[uuid.UUID] = []
     waiting_hosts: int = 0
+    host_count: int = 0
 
 
 class SoftwareIngestRequest(BaseModel):

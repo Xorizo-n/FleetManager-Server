@@ -17,6 +17,7 @@ import { useAccessChange } from "../../components/useAccessChange";
 import { AgentCell, StatusDot } from "./HostTable";
 import { apiError, formatDateTime, formatRam, hostLabel, osLabel, relativeTime, STATUS_LABELS, taskTitle } from "../../lib/format";
 import { isSystemSoftware } from "../../lib/software";
+import { HOST_STATE_INFO, hostStateOf } from "../../lib/hostStates";
 import { downloadRdpFile, rdpAddress } from "../../lib/rdp";
 import { formatLinkSpeed, isSlowWiredLink, primaryAdapter } from "../../lib/hardware";
 import { DiskList } from "../../components/DiskUsage";
@@ -464,11 +465,23 @@ function HostTasks({ hostId }: { hostId: string }) {
             <span className="min-w-0 flex-1 truncate font-medium text-foreground">{taskTitle(t)}</span>
             <span className="shrink-0 text-xs text-muted-foreground">{t.created_by_name ?? ""}</span>
             <span className="shrink-0 text-xs text-muted-foreground">{formatDateTime(t.created_at)}</span>
-            <Badge status={t.status}>{STATUS_LABELS[t.status]}</Badge>
+            {/* У запуска на много ПК — состояние именно этого ПК */}
+            <HostStateLabel task={t} hostId={hostId} />
           </button>
         </li>
       ))}
     </ul>
+  );
+}
+
+function HostStateLabel({ task, hostId }: { task: TaskRun; hostId: string }) {
+  const state = hostStateOf(task, hostId);
+  const info = HOST_STATE_INFO[state];
+  return (
+    <span className={`inline-flex shrink-0 items-center gap-1.5 text-xs ${info.text}`} title={`Задача целиком: ${STATUS_LABELS[task.status] ?? task.status}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${info.dot}`} />
+      {info.short}
+    </span>
   );
 }
 

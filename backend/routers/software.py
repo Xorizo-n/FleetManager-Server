@@ -25,7 +25,7 @@ from schemas.software import (
 from services.audit import record_audit
 from services.software_parse import parse_get_package, parse_choco_list
 from services.software_sync import sync_host_software
-from services.waiting_tasks import create_task_runs
+from services.waiting_tasks import create_task_runs, waiting_count
 from models.software import InstallMethod
 
 router = APIRouter(prefix="/software", tags=["software"])
@@ -194,19 +194,18 @@ def trigger_scan(
 
     if not payload.host_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Не выбраны хосты")
-    now_task, waiting = create_task_runs(
+    group, execution = create_task_runs(
         db,
         task_type=TaskType.software_scan,
         host_ids=[str(h) for h in payload.host_ids],
         created_by=user.id,
         defer_offline=payload.defer_offline,
     )
-    if now_task is not None:
-        scan_software_task.delay(str(now_task.id))
-    waiting_ids = [waiting.id] if waiting else []
-    record_audit(db, user.id, "software.scan", f"hosts={len(payload.host_ids)} waiting={len(waiting.host_ids) if waiting else 0}")
-    return ScanTriggerResponse(task_run_id=(now_task or waiting).id, waiting_task_ids=waiting_ids,
-                               waiting_hosts=len(waiting.host_ids) if waiting else 0)
+    if execution is not None:
+        scan_software_task.delay(str(execution.id))
+    waiting = waiting_count(group)
+    record_audit(db, user.id, "software.scan", f"hosts={len(payload.host_ids)} waiting={waiting}")
+    return ScanTriggerResponse(task_run_id=group.id, waiting_hosts=waiting, host_count=len(group.host_ids))
 
 
 @router.post("/ingest", status_code=status.HTTP_204_NO_CONTENT)

@@ -57,7 +57,7 @@ from services.workplace_devices import DeviceChange, apply_components
 from services.wallpapers import heartbeat_wallpaper, store_report, wallpaper_path
 from models.wallpaper import Wallpaper
 from services.host_grouping import apply_auto_group, cleanup_auto_groups
-from services.waiting_tasks import create_task_runs, enqueue, release_waiting_tasks
+from services.waiting_tasks import create_task_runs, enqueue, release_waiting_tasks, waiting_count
 from services.wake_on_lan import agent_lan_address, normalize_mac, primary_adapter
 from services.crypto import decrypt_secret, encrypt_secret
 from services.installer_builder import build_installer_exe, safe_filename
@@ -672,21 +672,19 @@ def _queue_agent_task(
     audit_action: str,
     defer_offline: bool,
 ) -> TaskRunOut:
-    """Запускает задачу для ПК в сети; выключенным — ожидающие задачи. Возвращает
-    задачу для ПК в сети, а если все выключены — ожидающую."""
-    now_task, waiting = create_task_runs(
+    """Запуск: для ПК в сети задача уходит в очередь сразу, выключенные ждут появления в сети."""
+    group, execution = create_task_runs(
         db,
         task_type=task_type,
         host_ids=[str(host.id) for host in hosts],
         created_by=user.id,
         defer_offline=defer_offline,
     )
-    if now_task is not None:
-        enqueue(now_task)
-    record_audit(db, user.id, audit_action, f"hosts={len(hosts)} waiting={len(waiting.host_ids) if waiting else 0}", request)
-    out = TaskRunOut.model_validate(now_task or waiting)
-    out.waiting_task_ids = [waiting.id] if waiting else []
-    out.waiting_hosts = len(waiting.host_ids) if waiting else 0
+    if execution is not None:
+        enqueue(execution)
+    out = TaskRunOut.model_validate(group)
+    out.waiting_hosts = waiting_count(group)
+    record_audit(db, user.id, audit_action, f"hosts={len(hosts)} waiting={out.waiting_hosts}", request)
     return out
 
 

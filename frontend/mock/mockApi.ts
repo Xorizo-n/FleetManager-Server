@@ -48,6 +48,9 @@ interface Task {
   id: string; task_type: string; playbook_name: string | null; host_ids: string[]; status: string; created_at: string;
   started_at: string | null; finished_at: string | null; created_by: string | null; log_output: string | null;
   extra_vars: Record<string, unknown> | null; _plan?: string[]; _fail?: boolean;
+  // Запуск на много ПК (как backend/services/waiting_tasks.py): состояние каждого ПК, выполняют дочерние задачи
+  grouped?: boolean; host_states?: Record<string, string> | null; parent_id?: string | null; after_task_id?: string | null;
+  repo_id?: string | null; run_as?: unknown;
 }
 interface Schedule {
   id: string; repo_id: string; playbook_name: string; host_group_id: string | null; host_group_ids: string[];
@@ -68,6 +71,12 @@ const hosts: Host[] = [];
 const credentials: Credential[] = [];
 const software: Software[] = [];
 const tasks: Task[] = [];
+function groupStatus(states: Record<string, string>) {
+  const v = new Set(Object.values(states));
+  const order: [string, string[]][] = [["running", ["running"]], ["queued", ["queued", "ready"]], ["pending", ["pending"]], ["waiting", ["waiting"]], ["failed", ["failed"]], ["success", ["success"]]];
+  for (const [status, keys] of order) if (keys.some((k) => v.has(k))) return status;
+  return "cancelled";
+}
 const schedules: Schedule[] = [];
 const alerts: any[] = [];
 const history: any[] = [];
@@ -396,7 +405,20 @@ for (let i = 0; i < 260; i++) {
   });
 }
 
-// Задачи, ждущие включения ПК (и одна, так и не дождавшаяся)
+// Запуски на много ПК: часть прошла, часть с ошибкой, часть ждёт включения
+for (const [i, task] of [...tasks].entries()) {
+  if (task.host_ids.length < 2 || task.task_type === "host_diagnostic") continue;
+  const states: Record<string, string> = {};
+  for (const id of task.host_ids) {
+    const offline = hosts.find((h) => h.id === id)?.status !== "online";
+    states[id] = i < 40 && offline ? "waiting" : chance(task.status === "failed" ? 0.25 : 0.02) ? "failed" : chance(0.03) ? "cancelled" : "success";
+  }
+  const executed = task.host_ids.filter((id) => states[id] !== "waiting" && states[id] !== "cancelled");
+  tasks.push({ ...task, id: uuid(), host_ids: executed, parent_id: task.id, host_states: Object.fromEntries(executed.map((id) => [id, states[id]])) });
+  Object.assign(task, { grouped: true, host_states: states, status: groupStatus(states), log_output: null, finished_at: Object.values(states).includes("waiting") ? null : task.finished_at });
+}
+
+// Одиночные задачи, ждущие включения ПК (и одна, так и не дождавшаяся)
 for (const [i, host] of hosts.filter((h) => h.status === "offline").slice(0, 6).entries()) {
   const created = minutesAgo(15 + i * 90);
   tasks.unshift({
@@ -885,8 +907,45 @@ route("POST", "/playbooks/run", (ctx) => {
   editor(ctx);
   const ids = resolveTargets(ctx.body.host_ids, [...(ctx.body.host_group_ids ?? []), ...(ctx.body.host_group_id ? [ctx.body.host_group_id] : [])]);
   if (!ids.length) throw new HttpError(400, "Не выбраны хосты");
-  const t = startTask("playbook", ids, ctx.user!.id, { playbook_name: ctx.body.playbook_name, extra_vars: ctx.body.extra_vars });
-  return { task_run_id: t.id };
+  const names: string[] = ctx.body.playbook_names?.length ? ctx.body.playbook_names : [ctx.body.playbook_name];
+  const online = ids.filter((id) => hostById(id)?.status === "online");
+  const offline = ids.filter((id) => hostById(id)?.status !== "online");
+  // Как create_task_sequence: запуск на каждый плейбук, ПК в сети идут по очереди, выключенные ждут
+  const made: Task[] = [];
+  for (const [index, name] of names.entries()) {
+    const states: Record<string, string> = Object.fromEntries([
+      ...online.map((id) => [id, index === 0 ? "queued" : "pending"]),
+      ...offline.map((id) => [id, "waiting"]),
+    ]);
+    const group: Task = {
+      id: uuid(), task_type: "playbook", playbook_name: name, host_ids: ids, status: groupStatus(states), created_at: now().toISOString(), started_at: null, finished_at: null,
+      created_by: ctx.user!.id, log_output: offline.length ? `Не в сети: ${offline.length} ПК. Для каждого задача запустится, когда он появится.` : null,
+      extra_vars: ctx.body.extra_vars ?? {}, grouped: true, host_states: states, after_task_id: made[made.length - 1]?.id ?? null, repo_id: ctx.body.repo_id,
+    };
+    tasks.unshift(group);
+    made.push(group);
+  }
+  const runStep = (index: number) => {
+    const group = made[index];
+    if (!group || !online.length) return;
+    const run = startTask("playbook", online, ctx.user!.id, { playbook_name: group.playbook_name, extra_vars: group.extra_vars, parent_id: group.id });
+    online.forEach((id) => (group.host_states![id] = "running"));
+    group.status = groupStatus(group.host_states!);
+    group.started_at = now().toISOString();
+    const watch = setInterval(() => {
+      if (run.status !== "success" && run.status !== "failed") return;
+      clearInterval(watch);
+      online.forEach((id) => (group.host_states![id] = run.status === "success" || chance(0.7) ? "success" : "failed"));
+      run.host_states = Object.fromEntries(online.map((id) => [id, group.host_states![id]]));
+      group.status = groupStatus(group.host_states!);
+      if (!offline.length) group.finished_at = now().toISOString();
+      const next = made[index + 1];
+      if (next) online.forEach((id) => (next.host_states![id] = "queued"));
+      runStep(index + 1);
+    }, 300);
+  };
+  runStep(0);
+  return { task_run_id: made[0].id, task_run_ids: made.map((g) => g.id), waiting_hosts: offline.length, host_count: ids.length };
 });
 route("GET", "/playbooks/schedules", (ctx) => { editor(ctx); return schedules.map(scheduleOut); });
 route("POST", "/playbooks/schedules", (ctx) => {
@@ -938,16 +997,36 @@ route("GET", "/tasks", ({ query, user }) => {
   const limit = Number(query.get("limit") ?? 200);
   const offset = Number(query.get("offset") ?? 0);
   return tasks.filter((t) =>
+    !t.parent_id &&
     (user?.role !== "viewer" || t.task_type !== "host_diagnostic") &&
     (!query.get("task_type") || t.task_type === query.get("task_type")) &&
     (!query.get("status_filter") || t.status === query.get("status_filter")) &&
     (!query.get("host_id") || t.host_ids.includes(query.get("host_id")!)))
     .slice(offset, offset + limit).map(taskOut);
 });
-route("GET", "/tasks/{id}", (_, p) => { const t = find(tasks, p.id, "Задача"); return { ...taskOut(t), log_output: t.log_output, extra_vars: t.extra_vars }; });
+route("GET", "/tasks/{id}", (_, p) => {
+  const t = find(tasks, p.id, "Задача");
+  const runs = t.grouped ? tasks.filter((r) => r.parent_id === t.id).sort((a, b) => a.created_at.localeCompare(b.created_at)).map(taskOut) : [];
+  let first = t;
+  while (first.after_task_id) first = tasks.find((x) => x.id === first.after_task_id) ?? first;
+  const chain = [first];
+  for (let next = tasks.find((x) => x.after_task_id === first.id); next; next = tasks.find((x) => x.after_task_id === chain[chain.length - 1].id)) chain.push(next);
+  return {
+    ...taskOut(t), log_output: t.log_output, extra_vars: t.extra_vars, runs,
+    chain: chain.length > 1 ? chain.map((c) => ({ id: c.id, playbook_name: c.playbook_name, status: c.status })) : [],
+  };
+});
 route("POST", "/tasks/{id}/cancel", (ctx, p) => {
   editor(ctx);
   const t = find(tasks, p.id, "Задача");
+  if (t.grouped) {
+    const open = Object.entries(t.host_states ?? {}).filter(([, state]) => state === "waiting" || state === "pending");
+    if (!open.length) throw new HttpError(409, "Отменять нечего: ни один ПК не ждёт появления в сети или предыдущий плейбук");
+    open.forEach(([id]) => (t.host_states![id] = "cancelled"));
+    t.status = groupStatus(t.host_states!);
+    t.log_output = `${t.log_output ?? ""}\nОтменено пользователем ${ctx.user?.username}. Отменено ПК: ${open.length}.`;
+    return taskOut(t);
+  }
   if (t.status !== "waiting") throw new HttpError(409, "Отменить можно только задачу, которая ждёт включения ПК");
   Object.assign(t, { status: "cancelled", finished_at: now().toISOString(), log_output: `${t.log_output}\nОтменена пользователем ${ctx.user?.username}.` });
   return taskOut(t);

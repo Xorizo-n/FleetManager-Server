@@ -109,13 +109,16 @@ export default function HostsPage() {
     });
   }
 
-  async function startTask(request: Promise<{ data: { id?: string; task_run_id?: string; waiting_task_ids?: string[]; waiting_hosts?: number } }>, fallback: string) {
+  async function startTask(
+    request: Promise<{ data: { id?: string; task_run_id?: string; waiting_hosts?: number; host_count?: number; host_ids?: string[] } }>,
+    fallback: string,
+  ) {
     try {
       const { data } = await request;
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
       const opened = (data.id ?? data.task_run_id)!;
-      const waiting = data.waiting_task_ids ?? [];
-      if (waiting.length > 0) toast({ tone: "info", message: waitingNotice(data.waiting_hosts || waiting.length, !waiting.includes(opened)) });
+      const waiting = data.waiting_hosts ?? 0;
+      if (waiting > 0) toast({ tone: "info", message: waitingNotice(waiting, data.host_count ?? data.host_ids?.length ?? waiting) });
       openTask(opened);
     } catch (err) {
       toast({ tone: "error", message: apiError(err, fallback) });
