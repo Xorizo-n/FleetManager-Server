@@ -310,7 +310,7 @@ class AgentWallpaperReport(BaseModel):
 
 
 class AgentSshReport(BaseModel):
-    """С агента 2026.10.24: состояние sshd; с 2026.10.25 — ещё брандмауэр, sshd_config, PATH,
+    """С агента 2026.10.24: состояние sshd; с 2026.10.24.24 — ещё брандмауэр, sshd_config, PATH,
     права входа и ключи хоста (services/ssh_health.py). Всё необязательно: старые агенты присылают часть."""
 
     installed: bool | None = None

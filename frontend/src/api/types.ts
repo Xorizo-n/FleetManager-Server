@@ -51,7 +51,7 @@ export interface Host {
   hw_changed_at?: string | null;
   /** Обои на ПК по отчёту агента (с 2026.10.18) */
   wallpaper_state?: WallpaperState | null;
-  /** SSH по отчёту агента: sshd, брандмауэр, PATH, права входа (с 2026.10.25 — полностью) */
+  /** SSH по отчёту агента: sshd, брандмауэр, PATH, права входа (с 2026.10.24.24 — полностью) */
   ssh_state?: SshState | null;
   /** Причины, по которым сервер не попадёт на ПК по SSH, найденные в отчёте агента */
   ssh_problems?: string[];
