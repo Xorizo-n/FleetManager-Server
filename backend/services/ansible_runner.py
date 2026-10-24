@@ -1,4 +1,3 @@
-import logging
 import os
 import tempfile
 import uuid
@@ -17,8 +16,6 @@ from services.crypto import decrypt_secret
 from services.inventory_generator import build_inventory_dict, host_group_credential, resolve_target_host_ids
 from services.schedule_targets import schedule_group_ids
 from services import run_as
-
-logger = logging.getLogger(__name__)
 
 
 def run_ansible(**kwargs):
@@ -131,6 +128,22 @@ def playbook_matched_hosts(result, expected_hosts: set[str], observed_hosts: set
     return not expected_hosts or bool(observed.intersection(expected_hosts))
 
 
+def host_outcomes(result, expected_hosts: set[str], *, trusted: bool, fallback: TaskStatus) -> dict[str, str]:
+    """Итог по каждому ПК из PLAY RECAP: failed — ошибка или недоступен, success — прошёл.
+
+    Хост, которого нет в recap, плейбук не тронул (не подошёл ни одному play) — это
+    ошибка. Если recap не напечатан (прогон оборвался), верить статистике нельзя:
+    всем ПК — итог задачи целиком.
+    """
+    stats = getattr(result, "stats", None) or {}
+    processed = set(stats.get("processed") or {})
+    if not trusted or not processed:
+        state = "success" if fallback == TaskStatus.success else "failed"
+        return {host: state for host in expected_hosts}
+    failed = set(stats.get("failures") or {}) | set(stats.get("dark") or {})
+    return {host: "failed" if host in failed or host not in processed else "success" for host in expected_hosts}
+
+
 @celery_app.task(name="services.ansible_runner.run_playbook_task", bind=True)
 def run_playbook_task(self, task_run_id: str):
     db = SessionLocal()
@@ -214,23 +227,18 @@ def run_playbook_task(self, task_run_id: str):
             task_run.log_output = (task_run.log_output or "") + "\n[ERROR] Playbook matched no hosts."
         else:
             task_run.status = TaskStatus.success
+        task_run.host_states = host_outcomes(result, expected_hosts, trusted=has_final_recap, fallback=task_run.status)
         task_run.finished_at = datetime.now(timezone.utc)
         db.commit()
     except Exception as exc:  # noqa: BLE001
         task_run = db.get(TaskRun, uuid.UUID(task_run_id))
         if task_run:
             task_run.status = TaskStatus.failed
+            task_run.host_states = {str(h): "failed" for h in task_run.host_ids}
             task_run.log_output = (task_run.log_output or "") + f"\n[ERROR] {exc}"
             task_run.finished_at = datetime.now(timezone.utc)
             db.commit()
     finally:
-        # Следующий плейбук цепочки — после этого, чем бы он ни закончился
-        try:
-            from services.waiting_tasks import start_followers
-            start_followers(db, uuid.UUID(task_run_id))
-        except Exception:  # noqa: BLE001
-            db.rollback()
-            logger.exception("Failed to start the next playbook after %s", task_run_id)
         db.close()
 
 

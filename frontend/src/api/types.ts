@@ -248,9 +248,12 @@ export interface Credential {
 }
 
 export type TaskType = "playbook" | "software_scan" | "host_diagnostic" | "agent_version_scan" | "agent_update" | "access_change" | "host_wake";
-// waiting — ПК не в сети, задача запустится для каждого, когда он появится; released — все появились,
-// задачи для них запущены (parent_id); pending — следующий плейбук цепочки ждёт предыдущий (after_task_id)
+// Статус запуска — сводка по его ПК: waiting — кто-то ждёт включения, pending — следующий плейбук
+// цепочки ждёт предыдущий (after_task_id). released — у старых ожидающих задач (до запусков)
 export type TaskStatus = "queued" | "running" | "success" | "failed" | "waiting" | "cancelled" | "pending" | "released";
+
+/** Состояние ПК в запуске (backend/services/waiting_tasks.py); ready — появился, ждёт пачку */
+export type HostState = "waiting" | "ready" | "pending" | "queued" | "running" | "success" | "failed" | "cancelled";
 
 export interface TaskRun {
   id: string;
@@ -265,12 +268,16 @@ export interface TaskRun {
   created_by_name?: string | null;
   /** От чьего имени выполнялся плейбук (backend/services/run_as.py) */
   run_as?: RunAs | null;
-  /** Запущена ожидавшей задачей для появившихся в сети ПК */
+  repo_id?: string | null;
+  /** Запуск на много ПК: сам не выполняется, выполняют дочерние задачи (runs) */
+  grouped?: boolean | null;
+  /** Состояние каждого ПК; у выполняющей задачи — её итог по ПК */
+  host_states?: Record<string, HostState> | null;
+  /** Выполняющая задача запуска */
   parent_id?: string | null;
   /** Следующий плейбук цепочки: стартует после этой задачи */
   after_task_id?: string | null;
-  /** Ответ на запуск: ожидающая задача для выключенных ПК и сколько их */
-  waiting_task_ids?: string[];
+  /** Ответ на запуск: сколько ПК ждут появления в сети */
   waiting_hosts?: number;
 }
 
@@ -286,6 +293,10 @@ export interface RunAs {
 export interface TaskRunDetail extends TaskRun {
   log_output: string | null;
   extra_vars: Record<string, unknown> | null;
+  /** Выполняющие задачи запуска: сразу для ПК в сети и по одной на пачку появившихся */
+  runs: TaskRun[];
+  /** Плейбуки одной цепочки по порядку; у одиночного запуска пусто */
+  chain: { id: string; playbook_name: string | null; status: TaskStatus }[];
 }
 
 export interface Repo {

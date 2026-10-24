@@ -71,7 +71,7 @@ def hosts_summary(db: Session = Depends(get_db), _: User = Depends(get_current_u
 
 @router.get("/recent-tasks", response_model=list[TaskRunOut])
 def recent_tasks(limit: int = 10, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    return db.execute(select(TaskRun).order_by(TaskRun.created_at.desc()).limit(limit)).scalars().all()
+    return db.execute(select(TaskRun).where(TaskRun.parent_id.is_(None)).order_by(TaskRun.created_at.desc()).limit(limit)).scalars().all()
 
 
 @router.get("/top-software", response_model=list[SoftwareSummaryItem])
@@ -147,7 +147,7 @@ def weekly_run_stats(db: Session = Depends(get_db), _: User = Depends(get_curren
     today = datetime.now().astimezone().date()
     days = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
     since = datetime.combine(days[0], datetime.min.time()).astimezone()
-    rows = db.execute(select(TaskRun.created_at, TaskRun.status).where(TaskRun.created_at >= since)).all()
+    rows = db.execute(select(TaskRun.created_at, TaskRun.status).where(TaskRun.created_at >= since, TaskRun.parent_id.is_(None))).all()
 
     buckets: dict = {day: {"success": 0, "failed": 0} for day in days}
     for created_at, status_value in rows:
@@ -391,10 +391,10 @@ def monitoring(db: Session = Depends(get_db), _: User = Depends(get_current_user
         .order_by(AgentAlert.created_at.desc())
     ).all()
     tasks_running = db.execute(
-        select(func.count()).select_from(TaskRun).where(TaskRun.status.in_([TaskStatus.queued, TaskStatus.running]))
+        select(func.count()).select_from(TaskRun).where(TaskRun.status.in_([TaskStatus.queued, TaskStatus.running]), TaskRun.parent_id.is_(None))
     ).scalar_one()
     tasks_failed = db.execute(
-        select(func.count()).select_from(TaskRun).where(TaskRun.status == TaskStatus.failed, TaskRun.created_at >= day_ago)
+        select(func.count()).select_from(TaskRun).where(TaskRun.status == TaskStatus.failed, TaskRun.created_at >= day_ago, TaskRun.parent_id.is_(None))
     ).scalar_one()
 
     def path(gid) -> list:

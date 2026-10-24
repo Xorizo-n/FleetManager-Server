@@ -23,7 +23,9 @@ export const STATUS_LABELS: Record<string, string> = {
   waiting: "ждёт ПК",
   cancelled: "отменена",
   pending: "ждёт предыдущий",
-  released: "ПК появились",
+  // Запуск на много ПК: часть прошла, часть с ошибкой (lib/hostStates.displayStatus)
+  partial: "частично",
+  released: "запущена",
 };
 
 export const TASK_TYPE_LABELS: Record<string, string> = {
@@ -124,9 +126,9 @@ export function plural(n: number, one: string, few: string, many: string) {
 export const pcCount = (n: number) => plural(n, "ПК", "ПК", "ПК");
 
 /** Уведомление после запуска: сколько ПК не в сети и что с ними будет. */
-export function waitingNotice(waiting: number, startedNow: boolean): string {
-  const when = "одна общая задача запустится для каждого, когда он появится в сети";
-  return startedNow ? `${pcCount(waiting)} не в сети — ${when}` : `Все ${pcCount(waiting)} не в сети — ${when}`;
+export function waitingNotice(waiting: number, total: number): string {
+  const when = "на каждом задача запустится сама, когда он появится в сети";
+  return waiting < total ? `${pcCount(waiting)} из ${total} не в сети — ${when}` : `Все ${pcCount(waiting)} не в сети — ${when}`;
 }
 
 export function apiError(err: unknown, fallback: string): string {

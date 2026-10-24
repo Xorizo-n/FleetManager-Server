@@ -60,6 +60,9 @@ def run_for_hosts(
 ) -> bool:
     """Вызывает worker(db, host) для каждого хоста; True — хотя бы один не ок.
 
+    Итог по каждому ПК пишется в host_states задачи: success, failed (в том числе
+    недоступен) или cancelled — не тронут, потому что остановился canary.
+
     canary: хосты сначала идут по одному, пока какой-то не ответит по существу.
     Если первая настоящая попытка провалилась, остальные не трогаются — неудачный
     релиз агента ломает один ПК, а не пачку. Недоступные ПК проверкой не считаются.
@@ -81,24 +84,37 @@ def run_for_hosts(
             db.close()
 
     remaining = list(host_ids)
-    outcomes: list[HostOutcome] = []
+    outcomes: dict[uuid.UUID, HostOutcome] = {}
     if canary:
         while remaining:
-            outcome = one(remaining.pop(0))
-            outcomes.append(outcome)
+            host_id = remaining.pop(0)
+            outcome = outcomes[host_id] = one(host_id)
             if outcome == HostOutcome.ok:
                 break
             if outcome == HostOutcome.failed:
-                if remaining:
-                    db = session_factory()
-                    try:
+                db = session_factory()
+                try:
+                    if remaining:
                         append_task_log(db, task_id, f"Первый ПК не прошёл — остальные ({len(remaining)}) не тронуты, чтобы не повторить ошибку на всех")
-                    finally:
-                        db.close()
+                    _store_outcomes(db, task_id, outcomes, untouched=remaining)
+                finally:
+                    db.close()
                 return True
 
     if remaining:
         workers = max(1, min(parallelism or settings.host_task_parallelism, len(remaining)))
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="host") as pool:
-            outcomes.extend(pool.map(one, remaining))
-    return any(outcome != HostOutcome.ok for outcome in outcomes)
+            outcomes.update(zip(remaining, pool.map(one, remaining)))
+    db = session_factory()
+    try:
+        _store_outcomes(db, task_id, outcomes, untouched=[])
+    finally:
+        db.close()
+    return any(outcome != HostOutcome.ok for outcome in outcomes.values())
+
+
+def _store_outcomes(db, task_id: uuid.UUID, outcomes: dict, untouched: Sequence[uuid.UUID]) -> None:
+    states = {str(h): "success" if o == HostOutcome.ok else "failed" for h, o in outcomes.items()}
+    states.update({str(h): "cancelled" for h in untouched})
+    db.execute(update(TaskRun).where(TaskRun.id == task_id).values(host_states=states).execution_options(synchronize_session=False))
+    db.commit()

@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, DateTime, func, Enum, ForeignKey, JSON, Text
+from sqlalchemy import Boolean, String, DateTime, func, Enum, ForeignKey, JSON, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -26,11 +26,11 @@ class TaskStatus(str, enum.Enum):
     failed = "failed"
     # ПК был не в сети: задача запустится, когда он появится (services/waiting_tasks.py)
     waiting = "waiting"
-    # Ожидающая задача отменена вручную или ПК не появился за waiting_task_ttl_days
+    # Ожидание отменено вручную, переназначено или ПК не появился за waiting_task_ttl_days
     cancelled = "cancelled"
     # Следующий плейбук цепочки: запустится, когда закончится after_task_id
     pending = "pending"
-    # Все ПК ожидающей задачи появились в сети, для них запущены дочерние задачи (parent_id)
+    # Не используется: было у ожидающих задач до запусков с состоянием по ПК (миграция 0032)
     released = "released"
 
 
@@ -58,8 +58,11 @@ class TaskRun(Base):
     parent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("task_runs.id", ondelete="SET NULL"), nullable=True, index=True)
     # Цепочка плейбуков: задача стартует, когда закончится эта (services/waiting_tasks.start_followers)
     after_task_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("task_runs.id", ondelete="SET NULL"), nullable=True, index=True)
-    # Ожидающая задача: ПК уже в сети, их заберёт ближайший запуск (flush_released)
-    ready_host_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Запуск на много ПК (services/waiting_tasks.py): сам не выполняется, выполняют дочерние задачи
+    grouped: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    # Состояние каждого ПК {host_id: waiting|ready|pending|queued|running|success|failed|cancelled}:
+    # у запуска — сводка, у выполняющей задачи — её итог по ПК
+    host_states: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

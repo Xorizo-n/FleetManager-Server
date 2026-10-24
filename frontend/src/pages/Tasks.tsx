@@ -8,6 +8,8 @@ import Button from "../components/ui/Button";
 import SearchInput from "../components/ui/SearchInput";
 import { Empty, Loading } from "../components/ui/States";
 import { useOpenTask } from "../components/TaskPanel";
+import HostStateBar from "../components/HostStateBar";
+import { countHostStates, displayStatus } from "../lib/hostStates";
 import { formatDateTime, formatDuration, hostLabel, pcCount, STATUS_LABELS, TASK_TYPE_LABELS, taskTitle } from "../lib/format";
 
 const PAGE = 100;
@@ -35,10 +37,10 @@ export default function Tasks() {
 
   const running = (data ?? []).filter((t) => t.status === "running" || t.status === "queued").length;
   const pending = (data ?? []).filter((t) => t.status === "pending").length;
-  const waitingHosts = (data ?? []).filter((t) => t.status === "waiting").reduce((n, t) => n + t.host_ids.length, 0);
+  const waitingHosts = (data ?? []).reduce((n, t) => n + (t.finished_at ? 0 : countHostStates(t).waiting ?? 0), 0);
   const summary = [
     running > 0 && `Выполняется сейчас: ${running}`,
-    pending > 0 && `в очереди цепочек: ${pending}`,
+    pending > 0 && `ждут предыдущий плейбук: ${pending}`,
     waitingHosts > 0 && `ждут включения: ${pcCount(waitingHosts)}`,
   ].filter(Boolean).join(" · ");
 
@@ -56,7 +58,7 @@ export default function Tasks() {
         </select>
         <select value={status} onChange={(e) => { setStatus(e.target.value); setLimit(PAGE); }} className="input-base w-auto py-2" aria-label="Статус">
           <option value="">Любой статус</option>
-          {["waiting", "pending", "queued", "running", "success", "failed", "cancelled", "released"].map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
+          {["waiting", "pending", "queued", "running", "success", "failed", "cancelled"].map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
         </select>
       </div>
 
@@ -96,7 +98,12 @@ export default function Tasks() {
                   <td className="text-muted-foreground">{t.created_by_name ?? (t.created_by ? "—" : "расписание")}</td>
                   <td className="whitespace-nowrap text-muted-foreground">{formatDateTime(t.created_at)}</td>
                   <td className="whitespace-nowrap text-muted-foreground">{formatDuration(t.started_at, t.finished_at)}</td>
-                  <td><Badge status={t.status}>{STATUS_LABELS[t.status] ?? t.status}</Badge></td>
+                  <td>
+                    <div className="flex flex-col items-start gap-1.5">
+                      <Badge status={displayStatus(t)}>{STATUS_LABELS[displayStatus(t)] ?? t.status}</Badge>
+                      {t.host_ids.length > 1 && t.host_states && <HostStateBar counts={countHostStates(t)} compact />}
+                    </div>
+                  </td>
                 </tr>
               );
             })}

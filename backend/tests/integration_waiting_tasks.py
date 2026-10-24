@@ -1,4 +1,4 @@
-"""Ожидающие задачи и цепочки плейбуков на настоящей БД (блокировки, JSONB).
+"""Запуски с состоянием по ПК, ожидание и цепочки плейбуков на настоящей БД (блокировки, JSONB).
 
 Запуск на копии схемы: DATABASE_URL=.../fm_migtest python tests/integration_waiting_tasks.py
 """
@@ -14,8 +14,16 @@ mock.patch.object(wt, "enqueue", side_effect=lambda task, countdown=None: enqueu
 mock.patch.object(wt.flush_released, "apply_async", side_effect=lambda args, countdown: flushes.append(args[0])).start()
 
 db = SessionLocal()
-db.query(TaskRun).filter(TaskRun.playbook_name.like("it-%")).delete(synchronize_session=False)
-db.query(Host).filter(Host.hostname.like("IT-WAIT-%")).delete(synchronize_session=False)
+
+
+def cleanup():
+    db.query(TaskRun).filter(TaskRun.playbook_name.like("it-%"), TaskRun.parent_id.isnot(None)).delete(synchronize_session=False)
+    db.query(TaskRun).filter(TaskRun.playbook_name.like("it-%")).delete(synchronize_session=False)
+    db.query(Host).filter(Host.hostname.like("IT-WAIT-%")).delete(synchronize_session=False)
+    db.commit()
+
+
+cleanup()
 hosts = [Host(hostname=f"IT-WAIT-{i}", os=HostOS.windows_11, status=HostStatus.offline) for i in range(4)]
 online = Host(hostname="IT-WAIT-ON", os=HostOS.windows_11, status=HostStatus.online)
 db.add_all(hosts + [online])
@@ -33,70 +41,91 @@ def step(name):
     return {"playbook_name": name, "extra_vars": {"x": 1}}
 
 
-# 1. Один запуск на 4 выключенных + 1 включённый: две задачи, а не пять
-now, waiting = wt.create_task_sequence(db, task_type=TaskType.playbook, host_ids=h + [on], created_by=None, steps=[step("it-a.yml")])
-assert [t.host_ids for t in now] == [[on]], now
-assert len(waiting) == 1 and sorted(waiting[0].host_ids) == sorted(h)
-w_old = waiting[0].id
+def run(host_ids, *names):
+    return wt.create_task_sequence(db, task_type=TaskType.playbook, host_ids=host_ids, created_by=None, steps=[step(n) for n in names])
 
-# 2. Повторное назначение на h0,h1: они уходят из старой задачи
-_, waiting = wt.create_task_sequence(db, task_type=TaskType.playbook, host_ids=h[:2], created_by=None, steps=[step("it-a.yml")])
-w_new = waiting[0].id
-assert sorted(get(w_old).host_ids) == sorted(h[2:]), get(w_old).host_ids
-assert "назначена снова" in get(w_old).log_output
+
+def finish(execution_id, status, states=None):
+    """Как исполнитель: итог задачи и по ПК, затем сигнал task_postrun."""
+    execution = get(execution_id)
+    wt.execution_started(db, execution.id)
+    execution = get(execution_id)
+    execution.status = status
+    execution.host_states = states
+    db.commit()
+    wt.execution_finished(db, execution.id)
+
+
+# 1. Один запуск на 4 выключенных + 1 включённый: одна запись, выполняет дочерняя задача
+groups, execution = run(h + [on], "it-a.yml")
+old = groups[0]
+assert execution.parent_id == old.id and execution.host_ids == [on]
+assert get(old.id).host_states == {**{x: "waiting" for x in h}, on: "queued"}
+wt.execution_started(db, execution.id)
+assert get(old.id).status == TaskStatus.running and get(old.id).host_states[on] == "running"
+finish(execution.id, TaskStatus.failed, {on: "failed"})
+assert get(old.id).host_states[on] == "failed" and get(old.id).status == TaskStatus.waiting
+
+# 2. Повторное назначение на h0,h1: в старом запуске они отменены
+groups, _ = run(h[:2], "it-a.yml")
+new = groups[0]
+states = get(old.id).host_states
+assert (states[h[0]], states[h[1]], states[h[2]]) == ("cancelled", "cancelled", "waiting"), states
+assert "назначена снова" in get(old.id).log_output
 # Другой плейбук на те же ПК не трогает
-_, other = wt.create_task_sequence(db, task_type=TaskType.playbook, host_ids=h[2:3], created_by=None, steps=[step("it-other.yml")])
-assert sorted(get(w_old).host_ids) == sorted(h[2:])
-# Назначение h2,h3 заново опустошает старую задачу — она отменена
-wt.create_task_sequence(db, task_type=TaskType.playbook, host_ids=h[2:], created_by=None, steps=[step("it-a.yml")])
-assert get(w_old).status == TaskStatus.cancelled and get(w_old).host_ids == []
+run(h[2:3], "it-other.yml")
+assert get(old.id).host_states[h[2]] == "waiting"
+# Назначение h2,h3 заново: в старом ждать некого — запуск закончен с итогом failed (у ПК в сети)
+run(h[2:], "it-a.yml")
+assert get(old.id).status == TaskStatus.failed and get(old.id).finished_at is not None
 
-# 3. h0 и h1 появились: один запуск, одна дочерняя задача на двоих
+# 3. h0 и h1 появились: одна пачка на двоих
 assert wt.release_waiting_tasks(db, hosts[0].id) == 1
-assert wt.release_waiting_tasks(db, hosts[1].id) == 0  # запуск уже назначен — просто добавился
+assert wt.release_waiting_tasks(db, hosts[1].id) == 0  # пачка уже назначена — просто добавился
 assert wt.release_waiting_tasks(db, hosts[1].id) == 0  # повторный heartbeat не задваивает
-assert flushes == [str(w_new)], flushes
-assert sorted(get(w_new).ready_host_ids) == sorted(h[:2])
-child_id = wt.flush_released(str(w_new))
-child = get(child_id)
-assert sorted(child.host_ids) == sorted(h[:2]) and child.parent_id == w_new and child.status == TaskStatus.queued
-assert child.extra_vars == {"x": 1}
-assert get(w_new).status == TaskStatus.released, get(w_new).status
-assert enqueued[-1] == child.id
+assert flushes == [str(new.id)], flushes
+assert get(new.id).status == TaskStatus.queued
+batch = get(wt.flush_released(str(new.id)))
+assert sorted(batch.host_ids) == sorted(h[:2]) and batch.parent_id == new.id and batch.extra_vars == {"x": 1}
+assert enqueued[-1] == batch.id
+finish(batch.id, TaskStatus.failed, {h[0]: "success", h[1]: "failed"})
+assert get(new.id).host_states == {h[0]: "success", h[1]: "failed"} and get(new.id).status == TaskStatus.failed
 
-# 4. Цепочка из трёх плейбуков на выключенных h2,h3 и включённый; прежние задачи с ними убираем
-for leftover in db.query(TaskRun).filter(TaskRun.playbook_name.like("it-%"), TaskRun.status == TaskStatus.waiting):
+# 4. Цепочка из трёх плейбуков на выключенных h2,h3 и включённый; прежние запуски с ними отменяем
+for leftover in db.query(TaskRun).filter(TaskRun.playbook_name.like("it-%"), TaskRun.grouped.is_(True), TaskRun.finished_at.is_(None)):
     wt.cancel_waiting_task(db, leftover, "test")
 enqueued.clear(); flushes.clear()
-now, waiting = wt.create_task_sequence(db, task_type=TaskType.playbook, host_ids=h[2:] + [on], created_by=None,
-                                       steps=[step("it-1.yml"), step("it-2.yml"), step("it-3.yml")])
-assert [t.status for t in now] == [TaskStatus.queued, TaskStatus.pending, TaskStatus.pending]
+groups, execution = run(h[2:] + [on], "it-1.yml", "it-2.yml", "it-3.yml")
+execs = [db.query(TaskRun).filter(TaskRun.parent_id == g.id).one() for g in groups]
+assert [e.status for e in execs] == [TaskStatus.queued, TaskStatus.pending, TaskStatus.pending]
+assert get(groups[1].id).status == TaskStatus.pending  # ПК в сети ждут первый плейбук, h2,h3 — включения
 # Отменённый второй плейбук пропускается: после первого идёт третий
-assert wt.cancel_waiting_task(db, now[1], "test")
-assert wt.start_followers(db, now[0].id) == 1 and enqueued == [now[2].id]
-assert get(now[2].id).status == TaskStatus.queued
+assert wt.cancel_waiting_task(db, get(groups[1].id), "test")
+assert get(groups[1].id).host_states[on] == "cancelled" and get(execs[1].id).status == TaskStatus.cancelled
+finish(execs[0].id, TaskStatus.success)
+assert enqueued == [execs[2].id], enqueued
+assert get(execs[2].id).status == TaskStatus.queued and get(groups[2].id).host_states[on] == "queued"
 
-# h2 появился: освобождает только первую задачу цепочки
+# h2 появился: освобождает только первый запуск цепочки (во втором он отменён)
 assert wt.release_waiting_tasks(db, hosts[2].id) == 1
-assert flushes == [str(waiting[0].id)], flushes
-assert h[2] in get(waiting[1].id).host_ids
-first = get(wt.flush_released(str(waiting[0].id)))
+assert flushes == [str(groups[0].id)], flushes
+assert get(groups[2].id).host_states[h[2]] == "waiting"
+first = get(wt.flush_released(str(groups[0].id)))
 assert first.playbook_name == "it-1.yml" and first.host_ids == [h[2]]
-second = db.query(TaskRun).filter(TaskRun.parent_id == waiting[1].id).one()
-third = db.query(TaskRun).filter(TaskRun.parent_id == waiting[2].id).one()
-assert (second.status, second.after_task_id, second.host_ids) == (TaskStatus.pending, first.id, [h[2]])
-assert (third.status, third.after_task_id) == (TaskStatus.pending, second.id)
-for w in waiting:
-    assert get(w.id).host_ids == [h[3]] and get(w.id).status == TaskStatus.waiting
+third = db.query(TaskRun).filter(TaskRun.parent_id == groups[2].id, TaskRun.id != execs[2].id).one()
+assert (third.status, third.after_task_id, third.host_ids) == (TaskStatus.pending, first.id, [h[2]])
+assert get(groups[2].id).host_states[h[2]] == "pending"
+enqueued.clear()
+finish(first.id, TaskStatus.failed)
+assert enqueued == [third.id] and get(groups[0].id).host_states[h[2]] == "failed"
 
-# 5. Отмена ожидающей задачи, пока ПК собираются: запуска нет
+# 5. Отмена запуска, пока ПК собираются в пачку: пачки нет
 assert wt.release_waiting_tasks(db, hosts[3].id) == 1
-assert wt.cancel_waiting_task(db, get(waiting[0].id), "test")
-assert wt.flush_released(str(waiting[0].id)) is None
-# h3 ещё держат второй и третий — теперь второй стал первым в цепочке
+assert wt.cancel_waiting_task(db, get(groups[0].id), "test")
+assert get(groups[0].id).host_states[h[3]] == "cancelled"
+assert wt.flush_released(str(groups[0].id)) is None
+# h3 ещё ждёт третий плейбук — теперь он первый в цепочке
 assert wt.release_waiting_tasks(db, hosts[3].id) == 1
 
-db.query(TaskRun).filter(TaskRun.playbook_name.like("it-%")).delete(synchronize_session=False)
-db.query(Host).filter(Host.hostname.like("IT-WAIT-%")).delete(synchronize_session=False)
-db.commit()
+cleanup()
 print("integration_waiting_tasks: ok")
