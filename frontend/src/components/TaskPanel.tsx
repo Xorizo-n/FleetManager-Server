@@ -51,6 +51,7 @@ export function TaskPanelProvider({ children }: { children: ReactNode }) {
 
 function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const openTask = useOpenTask();
   const { data: task, isLoading, error } = useTask(taskId);
   const { hostById } = useFleet();
   const running = task && ["queued", "running"].includes(task.status);
@@ -59,7 +60,11 @@ function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }
   const [cancelling, setCancelling] = useState(false);
 
   async function cancel() {
-    if (!window.confirm("Отменить задачу? Она не запустится, даже когда ПК появится в сети.")) return;
+    const question =
+      task?.status === "pending"
+        ? "Отменить этот плейбук? Следующие в цепочке запустятся после предыдущего, как обычно."
+        : "Отменить задачу? Она не запустится на оставшихся ПК, даже когда они появятся в сети.";
+    if (!window.confirm(question)) return;
     setCancelling(true);
     try {
       await apiClient.post(`/tasks/${taskId}/cancel`);
@@ -131,11 +136,35 @@ function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }
               ))}
             </div>
           )}
-          {task.status === "waiting" && (
+          {(task.parent_id || task.after_task_id) && (
+            <p className="text-sm text-muted-foreground">
+              {task.parent_id && (
+                <>
+                  Запущена{" "}
+                  <button type="button" className="text-blue-600 hover:underline dark:text-blue-400" onClick={() => openTask(task.parent_id!)}>
+                    ожидавшей задачей
+                  </button>
+                  , когда ПК появились в сети.{" "}
+                </>
+              )}
+              {task.after_task_id && (
+                <>
+                  Выполняется после{" "}
+                  <button type="button" className="text-blue-600 hover:underline dark:text-blue-400" onClick={() => openTask(task.after_task_id!)}>
+                    предыдущего плейбука
+                  </button>
+                  .
+                </>
+              )}
+            </p>
+          )}
+          {(task.status === "waiting" || task.status === "pending") && (
             <div className="flex flex-wrap items-center gap-3 rounded-lg border border-violet-500/30 bg-violet-500/5 px-3 py-2.5 text-sm">
               <Clock className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" />
               <span className="min-w-0 flex-1 text-foreground/90">
-                ПК не в сети. Задача запустится сама, как только он пришлёт heartbeat или ответит по SSH.
+                {task.status === "pending"
+                  ? "Ждёт, пока закончится предыдущий плейбук, — запустится после него, чем бы тот ни закончился."
+                  : `Не в сети: ${pcCount(task.host_ids.length)}. Для каждого задача запустится сама, когда он пришлёт heartbeat или ответит по SSH; появившиеся почти одновременно идут одной задачей.`}
               </span>
               {canEdit && (
                 <Button size="sm" variant="secondary" onClick={cancel} loading={cancelling}>

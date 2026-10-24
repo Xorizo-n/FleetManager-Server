@@ -22,6 +22,8 @@ export const STATUS_LABELS: Record<string, string> = {
   failed: "ошибка",
   waiting: "ждёт ПК",
   cancelled: "отменена",
+  pending: "ждёт предыдущий",
+  released: "ПК появились",
 };
 
 export const TASK_TYPE_LABELS: Record<string, string> = {
@@ -123,7 +125,7 @@ export const pcCount = (n: number) => plural(n, "ПК", "ПК", "ПК");
 
 /** Уведомление после запуска: сколько ПК не в сети и что с ними будет. */
 export function waitingNotice(waiting: number, startedNow: boolean): string {
-  const when = "задача запустится на них, когда они появятся в сети";
+  const when = "одна общая задача запустится для каждого, когда он появится в сети";
   return startedNow ? `${pcCount(waiting)} не в сети — ${when}` : `Все ${pcCount(waiting)} не в сети — ${when}`;
 }
 

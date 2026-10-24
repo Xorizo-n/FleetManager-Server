@@ -29,51 +29,70 @@ OFFLINE_2 = str(uuid.uuid4())
 
 
 class CreateTaskRunsTests(unittest.TestCase):
-    def _create(self, task_type=TaskType.playbook, defer=True, hosts=(ONLINE, OFFLINE_1, OFFLINE_2), existing=None, **fields):
+    def _create(self, task_type=TaskType.playbook, defer=True, hosts=(ONLINE, OFFLINE_1, OFFLINE_2), steps=None, **fields):
         db = _FakeDb()
         online = [h for h in hosts if h == ONLINE]
         offline = [h for h in hosts if h != ONLINE]
-        with mock.patch.object(waiting_tasks, "split_offline", return_value=(online, offline)) as split, \
-                mock.patch.object(waiting_tasks, "_existing_waiting", side_effect=lambda _db, _t, host, _f: (existing or {}).get(host)):
-            now_task, waiting = waiting_tasks.create_task_runs(
-                db, task_type=task_type, host_ids=list(hosts), created_by=None, defer_offline=defer, **fields
+        with mock.patch.object(waiting_tasks, "split_offline", return_value=(online, offline)) as split,                 mock.patch.object(waiting_tasks, "_supersede") as supersede:
+            now_tasks, waiting = waiting_tasks.create_task_sequence(
+                db, task_type=task_type, host_ids=list(hosts), created_by=None, defer_offline=defer, steps=steps or [fields]
             )
-        return db, split, now_task, waiting
+        return db, split, supersede, now_tasks, waiting
 
-    def test_offline_hosts_get_their_own_waiting_tasks(self):
-        db, _, now_task, waiting = self._create(playbook_name="install_7zip.yaml", extra_vars={"a": 1})
-        self.assertEqual(now_task.host_ids, [ONLINE])
-        self.assertEqual(now_task.status, TaskStatus.queued)
-        self.assertEqual([task.host_ids for task in waiting], [[OFFLINE_1], [OFFLINE_2]])
-        for task in waiting:
-            self.assertEqual(task.status, TaskStatus.waiting)
-            self.assertEqual(task.playbook_name, "install_7zip.yaml")
-            self.assertEqual(task.extra_vars, {"a": 1})
-            self.assertIn("ПК не в сети", task.log_output)
-        self.assertEqual(len(db.added), 3)
+    def test_offline_hosts_share_one_waiting_task(self):
+        db, _, _, now_tasks, waiting = self._create(playbook_name="install_7zip.yaml", extra_vars={"a": 1})
+        self.assertEqual([t.host_ids for t in now_tasks], [[ONLINE]])
+        self.assertEqual(now_tasks[0].status, TaskStatus.queued)
+        self.assertEqual(len(waiting), 1)
+        task = waiting[0]
+        self.assertEqual(task.host_ids, [OFFLINE_1, OFFLINE_2])
+        self.assertEqual(task.ready_host_ids, [])
+        self.assertEqual(task.status, TaskStatus.waiting)
+        self.assertEqual(task.playbook_name, "install_7zip.yaml")
+        self.assertEqual(task.extra_vars, {"a": 1})
+        self.assertIn("ПК не в сети: 2", task.log_output)
+        self.assertEqual(len(db.added), 2)
 
     def test_all_hosts_offline_means_no_immediate_task(self):
-        _, _, now_task, waiting = self._create(hosts=(OFFLINE_1,))
-        self.assertIsNone(now_task)
+        _, _, _, now_tasks, waiting = self._create(hosts=(OFFLINE_1,))
+        self.assertEqual(now_tasks, [])
         self.assertEqual(len(waiting), 1)
 
     def test_defer_off_keeps_the_old_behaviour(self):
-        _, split, now_task, waiting = self._create(defer=False)
+        _, split, supersede, now_tasks, waiting = self._create(defer=False)
         split.assert_not_called()
-        self.assertEqual(now_task.host_ids, [ONLINE, OFFLINE_1, OFFLINE_2])
+        supersede.assert_not_called()
+        self.assertEqual(now_tasks[0].host_ids, [ONLINE, OFFLINE_1, OFFLINE_2])
         self.assertEqual(waiting, [])
 
     def test_diagnostics_are_never_deferred(self):
-        _, split, now_task, waiting = self._create(task_type=TaskType.host_diagnostic)
+        _, split, _, now_tasks, waiting = self._create(task_type=TaskType.host_diagnostic)
         split.assert_not_called()
-        self.assertEqual(len(now_task.host_ids), 3)
+        self.assertEqual(len(now_tasks[0].host_ids), 3)
         self.assertEqual(waiting, [])
 
-    def test_the_same_waiting_task_is_not_duplicated(self):
-        already = mock.Mock(host_ids=[OFFLINE_1], status=TaskStatus.waiting)
-        db, _, _, waiting = self._create(existing={OFFLINE_1: already})
-        self.assertIs(waiting[0], already)
-        self.assertEqual(len(db.added), 2)  # задача для ПК в сети + новая ожидающая для OFFLINE_2
+    def test_reassignment_takes_hosts_from_older_waiting_tasks(self):
+        _, _, supersede, _, _ = self._create(repo_id="r", playbook_name="a.yml")
+        supersede.assert_called_once()
+        _db, task_type, hosts, fields = supersede.call_args.args
+        self.assertEqual((task_type, hosts, fields), (TaskType.playbook, [ONLINE, OFFLINE_1, OFFLINE_2], {"repo_id": "r", "playbook_name": "a.yml"}))
+
+    def test_several_playbooks_run_one_after_another(self):
+        steps = [{"playbook_name": "a.yml"}, {"playbook_name": "b.yml"}, {"playbook_name": "c.yml"}]
+        _, _, supersede, now_tasks, waiting = self._create(steps=steps)
+        self.assertEqual(supersede.call_count, 3)
+        self.assertEqual([t.playbook_name for t in now_tasks], ["a.yml", "b.yml", "c.yml"])
+        self.assertEqual([t.status for t in now_tasks], [TaskStatus.queued, TaskStatus.pending, TaskStatus.pending])
+        self.assertEqual([t.after_task_id for t in now_tasks], [None, now_tasks[0].id, now_tasks[1].id])
+        self.assertEqual([t.status for t in waiting], [TaskStatus.waiting] * 3)
+        self.assertEqual([t.after_task_id for t in waiting], [None, waiting[0].id, waiting[1].id])
+
+    def test_single_task_wrapper(self):
+        db = _FakeDb()
+        with mock.patch.object(waiting_tasks, "split_offline", return_value=([], [OFFLINE_1])),                 mock.patch.object(waiting_tasks, "_supersede"):
+            now_task, waiting = waiting_tasks.create_task_runs(db, task_type=TaskType.software_scan, host_ids=[OFFLINE_1], created_by=None)
+        self.assertIsNone(now_task)
+        self.assertEqual(waiting.host_ids, [OFFLINE_1])
 
 
 class DispatchTests(unittest.TestCase):

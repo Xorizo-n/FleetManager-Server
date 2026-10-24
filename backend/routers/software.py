@@ -203,8 +203,10 @@ def trigger_scan(
     )
     if now_task is not None:
         scan_software_task.delay(str(now_task.id))
-    record_audit(db, user.id, "software.scan", f"hosts={len(payload.host_ids)} waiting={len(waiting)}")
-    return ScanTriggerResponse(task_run_id=(now_task or waiting[0]).id, waiting_task_ids=[task.id for task in waiting])
+    waiting_ids = [waiting.id] if waiting else []
+    record_audit(db, user.id, "software.scan", f"hosts={len(payload.host_ids)} waiting={len(waiting.host_ids) if waiting else 0}")
+    return ScanTriggerResponse(task_run_id=(now_task or waiting).id, waiting_task_ids=waiting_ids,
+                               waiting_hosts=len(waiting.host_ids) if waiting else 0)
 
 
 @router.post("/ingest", status_code=status.HTTP_204_NO_CONTENT)

@@ -1,3 +1,4 @@
+import logging
 import os
 import tempfile
 import uuid
@@ -16,6 +17,8 @@ from services.crypto import decrypt_secret
 from services.inventory_generator import build_inventory_dict, host_group_credential, resolve_target_host_ids
 from services.schedule_targets import schedule_group_ids
 from services import run_as
+
+logger = logging.getLogger(__name__)
 
 
 def run_ansible(**kwargs):
@@ -221,6 +224,13 @@ def run_playbook_task(self, task_run_id: str):
             task_run.finished_at = datetime.now(timezone.utc)
             db.commit()
     finally:
+        # Следующий плейбук цепочки — после этого, чем бы он ни закончился
+        try:
+            from services.waiting_tasks import start_followers
+            start_followers(db, uuid.UUID(task_run_id))
+        except Exception:  # noqa: BLE001
+            db.rollback()
+            logger.exception("Failed to start the next playbook after %s", task_run_id)
         db.close()
 
 

@@ -32,7 +32,7 @@ from services.crypto import encrypt_secret, decrypt_secret
 from services.git_ssh import build_git_ssh_command
 from services.inventory_generator import resolve_target_host_ids
 from services.schedule_targets import schedule_group_ids, schedule_out
-from services.waiting_tasks import create_task_runs
+from services.waiting_tasks import create_task_sequence
 
 
 def _resolve_ssh_credential(db: Session, credential_id) -> Credential | None:
@@ -62,6 +62,8 @@ router = APIRouter(prefix="/playbooks", tags=["playbooks"])
 EDITOR_ROLES = (UserRole.admin, UserRole.operator)
 # Создание/правка/удаление и просмотр содержимого плейбуков — только админ.
 PLAYBOOK_EDIT_ROLES = (UserRole.admin,)
+# Плейбуков в одном запуске (каждый — отдельная задача, по очереди)
+MAX_PLAYBOOKS_PER_RUN = 20
 
 
 @router.get("/repos", response_model=list[PlaybookRepoOut])
@@ -291,20 +293,30 @@ def run_playbook(
     if not host_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Не выбраны хосты")
 
-    now_task, waiting = create_task_runs(
+    playbooks = payload.playbooks()
+    if not playbooks:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Не выбран плейбук")
+    if len(playbooks) > MAX_PLAYBOOKS_PER_RUN:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Не больше {MAX_PLAYBOOKS_PER_RUN} плейбуков за раз")
+
+    now_tasks, waiting = create_task_sequence(
         db,
         task_type=TaskType.playbook,
         host_ids=host_ids,
         created_by=user.id,
         defer_offline=payload.defer_offline,
-        repo_id=repo.id,
-        playbook_name=payload.playbook_name,
-        extra_vars=payload.extra_vars,
+        steps=[{"repo_id": repo.id, "playbook_name": name, "extra_vars": payload.extra_vars} for name in playbooks],
     )
-    if now_task is not None:
-        run_playbook_task.delay(str(now_task.id))
-    record_audit(db, user.id, "playbook.run", f"{payload.playbook_name} hosts={len(host_ids)} waiting={len(waiting)}", request)
-    return {"task_run_id": (now_task or waiting[0]).id, "waiting_task_ids": [task.id for task in waiting]}
+    if now_tasks:
+        run_playbook_task.delay(str(now_tasks[0].id))
+    offline = len(waiting[0].host_ids) if waiting else 0
+    record_audit(db, user.id, "playbook.run", f"{', '.join(playbooks)} hosts={len(host_ids)} waiting={offline}", request)
+    return {
+        "task_run_id": (now_tasks or waiting)[0].id,
+        "task_run_ids": [task.id for task in now_tasks],
+        "waiting_task_ids": [task.id for task in waiting],
+        "waiting_hosts": offline,
+    }
 
 
 @router.get("/schedules", response_model=list[PlaybookScheduleOut])

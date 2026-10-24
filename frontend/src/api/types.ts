@@ -248,8 +248,9 @@ export interface Credential {
 }
 
 export type TaskType = "playbook" | "software_scan" | "host_diagnostic" | "agent_version_scan" | "agent_update" | "access_change" | "host_wake";
-// waiting — ПК был не в сети, задача запустится при его появлении; cancelled — так и не дождалась
-export type TaskStatus = "queued" | "running" | "success" | "failed" | "waiting" | "cancelled";
+// waiting — ПК не в сети, задача запустится для каждого, когда он появится; released — все появились,
+// задачи для них запущены (parent_id); pending — следующий плейбук цепочки ждёт предыдущий (after_task_id)
+export type TaskStatus = "queued" | "running" | "success" | "failed" | "waiting" | "cancelled" | "pending" | "released";
 
 export interface TaskRun {
   id: string;
@@ -264,8 +265,13 @@ export interface TaskRun {
   created_by_name?: string | null;
   /** От чьего имени выполнялся плейбук (backend/services/run_as.py) */
   run_as?: RunAs | null;
-  /** Ответ на запуск: задачи, созданные для выключенных ПК */
+  /** Запущена ожидавшей задачей для появившихся в сети ПК */
+  parent_id?: string | null;
+  /** Следующий плейбук цепочки: стартует после этой задачи */
+  after_task_id?: string | null;
+  /** Ответ на запуск: ожидающая задача для выключенных ПК и сколько их */
   waiting_task_ids?: string[];
+  waiting_hosts?: number;
 }
 
 export interface RunAs {

@@ -673,7 +673,7 @@ def _queue_agent_task(
     defer_offline: bool,
 ) -> TaskRunOut:
     """Запускает задачу для ПК в сети; выключенным — ожидающие задачи. Возвращает
-    задачу для ПК в сети, а если все выключены — первую из ожидающих."""
+    задачу для ПК в сети, а если все выключены — ожидающую."""
     now_task, waiting = create_task_runs(
         db,
         task_type=task_type,
@@ -683,9 +683,10 @@ def _queue_agent_task(
     )
     if now_task is not None:
         enqueue(now_task)
-    record_audit(db, user.id, audit_action, f"hosts={len(hosts)} waiting={len(waiting)}", request)
-    out = TaskRunOut.model_validate(now_task or waiting[0])
-    out.waiting_task_ids = [task.id for task in waiting]
+    record_audit(db, user.id, audit_action, f"hosts={len(hosts)} waiting={len(waiting.host_ids) if waiting else 0}", request)
+    out = TaskRunOut.model_validate(now_task or waiting)
+    out.waiting_task_ids = [waiting.id] if waiting else []
+    out.waiting_hosts = len(waiting.host_ids) if waiting else 0
     return out
 
 

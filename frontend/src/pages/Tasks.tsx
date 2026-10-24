@@ -8,7 +8,7 @@ import Button from "../components/ui/Button";
 import SearchInput from "../components/ui/SearchInput";
 import { Empty, Loading } from "../components/ui/States";
 import { useOpenTask } from "../components/TaskPanel";
-import { formatDateTime, formatDuration, hostLabel, STATUS_LABELS, TASK_TYPE_LABELS, taskTitle } from "../lib/format";
+import { formatDateTime, formatDuration, hostLabel, pcCount, STATUS_LABELS, TASK_TYPE_LABELS, taskTitle } from "../lib/format";
 
 const PAGE = 100;
 
@@ -34,8 +34,13 @@ export default function Tasks() {
   }, [data, search, hostById]);
 
   const running = (data ?? []).filter((t) => t.status === "running" || t.status === "queued").length;
-  const waiting = (data ?? []).filter((t) => t.status === "waiting").length;
-  const summary = [running > 0 && `Выполняется сейчас: ${running}`, waiting > 0 && `ждут включения ПК: ${waiting}`].filter(Boolean).join(" · ");
+  const pending = (data ?? []).filter((t) => t.status === "pending").length;
+  const waitingHosts = (data ?? []).filter((t) => t.status === "waiting").reduce((n, t) => n + t.host_ids.length, 0);
+  const summary = [
+    running > 0 && `Выполняется сейчас: ${running}`,
+    pending > 0 && `в очереди цепочек: ${pending}`,
+    waitingHosts > 0 && `ждут включения: ${pcCount(waitingHosts)}`,
+  ].filter(Boolean).join(" · ");
 
   return (
     <div className="animate-fade-in space-y-4">
@@ -51,7 +56,7 @@ export default function Tasks() {
         </select>
         <select value={status} onChange={(e) => { setStatus(e.target.value); setLimit(PAGE); }} className="input-base w-auto py-2" aria-label="Статус">
           <option value="">Любой статус</option>
-          {["waiting", "queued", "running", "success", "failed", "cancelled"].map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
+          {["waiting", "pending", "queued", "running", "success", "failed", "cancelled", "released"].map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
         </select>
       </div>
 

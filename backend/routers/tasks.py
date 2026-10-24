@@ -18,7 +18,7 @@ from services.waiting_tasks import cancel_waiting_task
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
-TERMINAL_STATUSES = (TaskStatus.success, TaskStatus.failed, TaskStatus.cancelled)
+TERMINAL_STATUSES = (TaskStatus.success, TaskStatus.failed, TaskStatus.cancelled, TaskStatus.released)
 
 
 @router.get("", response_model=list[TaskRunOut])
@@ -74,12 +74,12 @@ def cancel_task(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(UserRole.admin, UserRole.operator)),
 ):
-    """Отменяет задачу, которая ждёт включения ПК. Запущенные задачи не прерываются."""
+    """Отменяет задачу, которая ждёт включения ПК или предыдущий плейбук. Запущенные задачи не прерываются."""
     task_run = db.get(TaskRun, task_id)
     if task_run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задача не найдена")
     if not cancel_waiting_task(db, task_run, f"Отменена пользователем {user.username}."):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Отменить можно только задачу, которая ждёт включения ПК")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Отменить можно только задачу, которая ждёт включения ПК или предыдущий плейбук")
     return with_author_names(db, [task_run])[0]
 
 
