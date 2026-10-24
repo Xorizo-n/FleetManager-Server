@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from schemas.agent import AgentHeartbeatRequest, AgentSshReport
 from services import agent_update, agent_version, ansible_runner
 from services.agent_version import agent_update_offer, installer_sha256
-from services.ssh_health import host_keys, ssh_blocked_reason, ssh_problems, store_ssh_report
+from services.ssh_health import host_keys, sshd_missing, ssh_blocked_reason, ssh_problems, store_ssh_report
 
 NOW = datetime(2026, 10, 25, 12, 0, tzinfo=timezone.utc)
 KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGxS0mEu5mVvM2oQ"
@@ -130,6 +130,27 @@ class AgentUpdateOfferTests(unittest.TestCase):
         host = SimpleNamespace(agent_update_target="2026.10.25.24")
         self.assertIsNone(agent_update_offer(host, None))
         self.assertEqual(host.agent_update_target, "2026.10.25.24")
+
+    def test_missing_sshd_gets_a_repair_of_the_same_version(self):
+        host = SimpleNamespace(agent_update_target=None)
+        offer = agent_update_offer(host, "2026.10.25.24", sshd_missing=True)
+        self.assertEqual(offer, {"version": "2026.10.25.24", "sha256": installer_sha256(), "repair": True})
+
+    def test_missing_sshd_on_an_outdated_agent_gets_a_plain_update(self):
+        offer = agent_update_offer(SimpleNamespace(agent_update_target=None), "2026.10.25.1", sshd_missing=True)
+        self.assertNotIn("repair", offer)
+
+    def test_no_repair_for_agents_that_cannot_take_it_or_are_newer(self):
+        with open(os.path.join(self.soft.name, agent_version.VERSION_SIDECAR), "w", encoding="utf-8") as f:
+            f.write("2026.10.24.23")
+        self.assertIsNone(agent_update_offer(SimpleNamespace(agent_update_target=None), "2026.10.24.23", sshd_missing=True))
+        self.assertIsNone(agent_update_offer(SimpleNamespace(agent_update_target=None), "2026.10.26.1", sshd_missing=True))
+
+    def test_install_error_is_shown_with_the_missing_sshd(self):
+        problems = ssh_problems(state(installed=False, install_error="Add-WindowsCapability failed. Error code = 0x800f0954"))
+        self.assertIn("0x800f0954", problems[0])
+        self.assertTrue(sshd_missing(state(installed=False), NOW))
+        self.assertFalse(sshd_missing(state(installed=False, reported_at=(NOW - timedelta(hours=2)).isoformat()), NOW))
 
     def test_unreachable_host_is_delegated_to_its_agent(self):
         db = mock.Mock()

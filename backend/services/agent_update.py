@@ -29,6 +29,7 @@ from models.task import TaskRun, TaskStatus
 from services.agent_version import (
     AGENT_DISPLAY_NAME,
     INSTALLER_FILENAME,
+    SELF_UPDATE_SINCE,
     STATUS_OUTDATED,
     available_agent_version,
     normalize_version,
@@ -37,9 +38,6 @@ from services.agent_version import (
 from services.ansible_runner import build_full_inventory, run_raw_command
 from services.host_parallel import HostOutcome, append_task_log, host_label, run_for_hosts
 from services.host_target import resolve_host_target
-
-# С этой версии агент обновляется сам по предложению в ответе на heartbeat (AgentSelfUpdate).
-SELF_UPDATE_SINCE = "2026.10.25.0"
 
 # Таймауты (сек) на выполнение шага через ansible-runner.
 PROBE_TIMEOUT = 120

@@ -317,6 +317,8 @@ class AgentSshReport(BaseModel):
     start_type: str | None = Field(default=None, max_length=16)
     listening: bool | None = None
     responding: bool | None = None
+    # sshd нет: почему установщик не смог его добавить (строка из install.log агента)
+    install_error: str | None = Field(default=None, max_length=1000)
     repaired: list[str] = Field(default_factory=list, max_length=20)
     firewall_rule: str | None = Field(default=None, max_length=16)
     firewall_ignored_on: list[str] = Field(default_factory=list, max_length=8)
