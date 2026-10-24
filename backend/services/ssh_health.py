@@ -51,7 +51,8 @@ def _connection_problems(state: dict) -> list[str]:
     """Причины, по которым SSH-подключение с сервера не состоится."""
     problems = []
     if state.get("installed") is False:
-        problems.append("OpenSSH Server не установлен")
+        error = state.get("install_error")
+        problems.append("OpenSSH Server не установлен" + (f" (установщик: {error})" if error else ""))
     elif state.get("start_type") == "disabled":
         problems.append("служба sshd отключена (решение администратора или групповой политики)")
     elif state.get("listening") is False:
@@ -97,6 +98,11 @@ def ssh_blocked_reason(state: dict | None, now: datetime | None = None) -> str |
         return None
     problems = _connection_problems(state)
     return "; ".join(problems) if problems else None
+
+
+def sshd_missing(state: dict | None, now: datetime | None = None) -> bool:
+    """Свежий отчёт говорит, что OpenSSH Server на ПК нет: его поставит переустановка агента."""
+    return _fresh(state, now) and state.get("installed") is False
 
 
 def host_keys(state: dict | None) -> list[str]:

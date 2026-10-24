@@ -106,23 +106,40 @@ def installer_sha256() -> str | None:
         return _sha_cache[key]
 
 
-def agent_update_offer(host, reported_version: str | None) -> dict | None:
+# С этой версии агент обновляется сам по предложению в ответе на heartbeat (AgentSelfUpdate)
+SELF_UPDATE_SINCE = "2026.10.25.0"
+
+
+def agent_update_offer(host, reported_version: str | None, sshd_missing: bool = False) -> dict | None:
     """Предложение обновиться без SSH для ответа на heartbeat; снимает цель, когда она достигнута.
 
-    Предлагается доступная сейчас версия (не старее цели): её и отдаёт GET /api/agent/installer."""
+    Предлагается доступная сейчас версия: её и отдаёт GET /api/agent/installer.
+    * цель от services/agent_update.py — версия не старее цели;
+    * на ПК нет sshd (sshd_missing) — та же версия как ремонт (repair): установщик ставит sshd
+      и настраивает его. Агент повторяет ремонт не больше трёх раз на версию."""
     target = host.agent_update_target
-    if not target:
-        return None
-    if compare_versions(reported_version, target) in (0, 1):
+    if target and compare_versions(reported_version, target) in (0, 1):
         host.agent_update_target = None
+        target = None
+    if not target and not sshd_missing:
         return None
     available = available_agent_version()
-    if not reported_version or not available or compare_versions(available, target) in (None, -1):
+    if not reported_version or not available:
         return None
-    if compare_versions(reported_version, available) != -1:
+    if target and compare_versions(available, target) in (None, -1):
+        return None
+    order = compare_versions(reported_version, available)
+    if order is None or order == 1 or (order == 0 and not sshd_missing):
+        return None
+    if order == 0 and compare_versions(reported_version, SELF_UPDATE_SINCE) == -1:
         return None
     sha = installer_sha256()
-    return {"version": available, "sha256": sha} if sha else None
+    if not sha:
+        return None
+    offer = {"version": available, "sha256": sha}
+    if order == 0:
+        offer["repair"] = True
+    return offer
 
 
 def available_agent_version() -> str | None:
