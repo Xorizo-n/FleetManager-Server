@@ -107,7 +107,7 @@ def installer_sha256() -> str | None:
 
 
 # С этой версии агент обновляется сам по предложению в ответе на heartbeat (AgentSelfUpdate)
-SELF_UPDATE_SINCE = "2026.10.25.0"
+SELF_UPDATE_SINCE = "2026.10.24.24"
 
 
 def agent_update_offer(host, reported_version: str | None, sshd_missing: bool = False) -> dict | None:
