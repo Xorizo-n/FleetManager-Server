@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
 from services.activation import activation_state
+from services.ssh_health import ssh_problems
 from services.workplace_devices import pending_devices
 
 
@@ -97,6 +98,12 @@ class Host(Base):
     hw_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Обои, которые стоят на ПК, по отчёту агента (services/wallpapers.py)
     wallpaper_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Состояние SSH по отчёту агента (heartbeat, поле ssh) и время отчёта: sshd, брандмауэр,
+    # PATH, права входа, ключи хоста (services/ssh_health.py)
+    ssh_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Версия, которую агент ставит сам, без SSH: сервер предлагает её в ответе на heartbeat,
+    # когда обновить по SSH не удалось (services/agent_update.py). None — ничего не предлагается
+    agent_update_target: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -112,6 +119,10 @@ class Host(Base):
     @property
     def hw_pending_devices(self) -> list[dict]:
         return pending_devices(self.hw_device_state)
+
+    @property
+    def ssh_problems(self) -> list[str]:
+        return ssh_problems(self.ssh_state)
 
     group: Mapped["HostGroup"] = relationship(back_populates="hosts")
     credential: Mapped["Credential"] = relationship(back_populates="hosts")

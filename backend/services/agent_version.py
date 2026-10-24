@@ -14,8 +14,10 @@ services/agent_update.py):
 services/agent_installer_sync.py.
 """
 
+import hashlib
 import os
 import re
+import threading
 
 from config import settings
 
@@ -77,6 +79,50 @@ def version_status(installed: str | None, available: str | None, *, has_agent: b
 
 def installer_path() -> str:
     return os.path.join(settings.soft_share_dir, INSTALLER_FILENAME)
+
+
+_sha_lock = threading.Lock()
+_sha_cache: dict[tuple[str, float, int], str] = {}
+
+
+def installer_sha256() -> str | None:
+    """SHA-256 установщика в папке установочников: агент сверяет с ним скачанный файл.
+
+    Считается один раз на версию файла (путь, mtime, размер) — heartbeat приходит часто."""
+    path = installer_path()
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    key = (path, stat.st_mtime, stat.st_size)
+    with _sha_lock:
+        if key not in _sha_cache:
+            digest = hashlib.sha256()
+            with open(path, "rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            _sha_cache.clear()
+            _sha_cache[key] = digest.hexdigest()
+        return _sha_cache[key]
+
+
+def agent_update_offer(host, reported_version: str | None) -> dict | None:
+    """Предложение обновиться без SSH для ответа на heartbeat; снимает цель, когда она достигнута.
+
+    Предлагается доступная сейчас версия (не старее цели): её и отдаёт GET /api/agent/installer."""
+    target = host.agent_update_target
+    if not target:
+        return None
+    if compare_versions(reported_version, target) in (0, 1):
+        host.agent_update_target = None
+        return None
+    available = available_agent_version()
+    if not reported_version or not available or compare_versions(available, target) in (None, -1):
+        return None
+    if compare_versions(reported_version, available) != -1:
+        return None
+    sha = installer_sha256()
+    return {"version": available, "sha256": sha} if sha else None
 
 
 def available_agent_version() -> str | None:

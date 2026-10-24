@@ -187,6 +187,10 @@ class HostOut(BaseModel):
     hw_changed_at: datetime | None = None
     # Обои на ПК по отчёту агента: desktop/lock_screen {path, sha256, source}, applied_*_id, error
     wallpaper_state: dict | None = None
+    # SSH по отчёту агента и найденные в нём причины, по которым сервер не попадёт на ПК
+    ssh_state: dict | None = None
+    ssh_problems: list[str] = []
+    agent_update_target: str | None = None
     created_at: datetime
     updated_at: datetime
 

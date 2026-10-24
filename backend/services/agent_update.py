@@ -38,6 +38,9 @@ from services.ansible_runner import build_full_inventory, run_raw_command
 from services.host_parallel import HostOutcome, append_task_log, host_label, run_for_hosts
 from services.host_target import resolve_host_target
 
+# С этой версии агент обновляется сам по предложению в ответе на heartbeat (AgentSelfUpdate).
+SELF_UPDATE_SINCE = "2026.10.25.0"
+
 # Таймауты (сек) на выполнение шага через ansible-runner.
 PROBE_TIMEOUT = 120
 UPDATE_TIMEOUT = 1800
@@ -321,18 +324,31 @@ def run_agent_version_scan(task_run_id: str):
         db.close()
 
 
+def _delegate_to_agent(db, host: Host, available: str | None) -> str:
+    """По SSH не достучаться: версию поставит сам агент, получив её в ответе на heartbeat.
+
+    Возвращает пояснение для журнала задачи. Агенты старше SELF_UPDATE_SINCE предложение не понимают."""
+    if not available or version_status(host.agent_version, available) != STATUS_OUTDATED:
+        return ""
+    host.agent_update_target = available
+    db.commit()
+    if version_status(host.agent_version, SELF_UPDATE_SINCE) == STATUS_OUTDATED:
+        return f"; агент {host.agent_version} не умеет обновляться сам — нужна установка на месте"
+    return f"; агент сам поставит {available} при следующем heartbeat"
+
+
 def _update_host(db, task_id: uuid.UUID, inventory: dict, available: str | None, host: Host) -> HostOutcome:
     label = _label(host)
     previous = host.agent_version
     if not _is_reachable(host):
-        _append_log(db, task_id, f"[{label}] недоступен по TCP {_ssh_port(host)}")
+        _append_log(db, task_id, f"[{label}] недоступен по TCP {_ssh_port(host)}{_delegate_to_agent(db, host, available)}")
         return HostOutcome.unreachable
     # Порт бывает открыт, а SSH сбрасывает соединение (MR32-044-SERGEY). Такой ПК —
     # недоступный, а не неудачное обновление: иначе он остановил бы раскатку на первом ПК.
     try:
         run_raw_command(inventory, str(host.id), PROBE_CMD, timeout=PROBE_TIMEOUT)
     except Exception as exc:  # noqa: BLE001
-        _append_log(db, task_id, f"[{label}] SSH не отвечает ({exc}); обновление не запускалось")
+        _append_log(db, task_id, f"[{label}] SSH не отвечает ({exc}); обновление не запускалось{_delegate_to_agent(db, host, available)}")
         return HostOutcome.unreachable
     _append_log(db, task_id, f"[{label}] запуск обновления (было: {previous or 'неизвестно'})")
     try:

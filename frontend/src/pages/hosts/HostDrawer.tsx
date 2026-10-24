@@ -22,6 +22,7 @@ import { downloadRdpFile, rdpAddress } from "../../lib/rdp";
 import { formatLinkSpeed, isSlowWiredLink, primaryAdapter } from "../../lib/hardware";
 import { DiskList } from "../../components/DiskUsage";
 import { ActivationSection } from "../../components/Activation";
+import { SshHealthSection } from "../../components/SshHealth";
 import { WorkplaceTab } from "../../components/Workplace";
 import { sameCmidCount } from "../../lib/activation";
 import { effectiveCredential, EffectiveCredential, isSshAssignable } from "../../lib/credentials";
@@ -279,6 +280,13 @@ function Overview({ host }: { host: Host }) {
         <section>
           <h3 className="mb-2 text-sm font-semibold text-foreground">Диски</h3>
           <DiskList disks={host.hw_disks} />
+        </section>
+      )}
+
+      {host.has_agent && (
+        <section>
+          <h3 className="mb-2 text-sm font-semibold text-foreground">SSH</h3>
+          <SshHealthSection host={host} />
         </section>
       )}
 
