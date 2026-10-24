@@ -41,14 +41,20 @@ def _validate_cron(value: str) -> str:
 
 class PlaybookRunRequest(BaseModel):
     repo_id: uuid.UUID
-    playbook_name: str
+    playbook_name: str | None = None  # прежний клиент: один плейбук
+    # Несколько плейбуков — отдельные задачи, выполняются по порядку списка
+    playbook_names: list[str] = []
     host_ids: list[uuid.UUID] = []
     # Группы раскрываются вместе с подгруппами: корпус = все его аудитории.
     host_group_ids: list[uuid.UUID] = []
     host_group_id: uuid.UUID | None = None  # прежний клиент: одна группа
     extra_vars: dict = {}
-    # Выключенные ПК получают отдельные задачи, которые запустятся при их появлении в сети
+    # Выключенные ПК получают общую ожидающую задачу, она запустится для них при появлении в сети
     defer_offline: bool = True
+
+    def playbooks(self) -> list[str]:
+        names = list(self.playbook_names) or ([self.playbook_name] if self.playbook_name else [])
+        return list(dict.fromkeys(name for name in names if name))
 
 
 class PlaybookScheduleCreate(BaseModel):

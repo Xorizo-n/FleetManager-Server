@@ -103,7 +103,7 @@ export const useTask = (id: string | null) =>
     refetchInterval: (query) => {
       const status = query.state.data?.status ?? "";
       if (["queued", "running"].includes(status)) return 2000;
-      return status === "waiting" ? 15000 : false; // ждёт включения ПК — проверяем реже
+      return ["waiting", "pending"].includes(status) ? 15000 : false; // ждёт ПК или предыдущий плейбук — проверяем реже
     },
   });
 

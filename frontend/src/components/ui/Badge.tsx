@@ -11,6 +11,8 @@ const STATUS_TONE: Record<string, BadgeTone> = {
   queued: "neutral",
   waiting: "waiting",
   cancelled: "neutral",
+  pending: "neutral",
+  released: "success",
   unknown: "neutral",
   disabled: "neutral",
 };

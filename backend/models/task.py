@@ -28,6 +28,10 @@ class TaskStatus(str, enum.Enum):
     waiting = "waiting"
     # Ожидающая задача отменена вручную или ПК не появился за waiting_task_ttl_days
     cancelled = "cancelled"
+    # Следующий плейбук цепочки: запустится, когда закончится after_task_id
+    pending = "pending"
+    # Все ПК ожидающей задачи появились в сети, для них запущены дочерние задачи (parent_id)
+    released = "released"
 
 
 class TaskRun(Base):
@@ -50,6 +54,12 @@ class TaskRun(Base):
     # расписания. Итог — run_as: {login, reason, as_user: [host_id], fallback: {host_id: причина}}
     run_as_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     run_as: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Задача, запущенная ожидающей задачей для появившихся в сети ПК
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("task_runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Цепочка плейбуков: задача стартует, когда закончится эта (services/waiting_tasks.start_followers)
+    after_task_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("task_runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Ожидающая задача: ПК уже в сети, их заберёт ближайший запуск (flush_released)
+    ready_host_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
