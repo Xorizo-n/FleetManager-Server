@@ -51,6 +51,12 @@ export interface Host {
   hw_changed_at?: string | null;
   /** Обои на ПК по отчёту агента (с 2026.10.18) */
   wallpaper_state?: WallpaperState | null;
+  /** SSH по отчёту агента: sshd, брандмауэр, PATH, права входа (с 2026.10.25 — полностью) */
+  ssh_state?: SshState | null;
+  /** Причины, по которым сервер не попадёт на ПК по SSH, найденные в отчёте агента */
+  ssh_problems?: string[];
+  /** Версия, которую агент поставит сам, без SSH */
+  agent_update_target?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -375,4 +381,18 @@ export interface AgentAlert {
 export interface HostSelection {
   groupIds: string[];
   hostIds: string[];
+}
+
+export interface SshState {
+  installed?: boolean | null;
+  start_type?: string | null;
+  listening?: boolean | null;
+  responding?: boolean | null;
+  repaired?: string[];
+  firewall_rule?: string | null;
+  domain_trust?: string | null;
+  login_is_admin?: boolean | null;
+  path_ok?: boolean | null;
+  host_keys?: string[];
+  reported_at?: string;
 }

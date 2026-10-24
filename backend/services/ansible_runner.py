@@ -13,6 +13,7 @@ from models.host import Host
 from models.playbook import PlaybookRepo, PlaybookSchedule
 from models.task import TaskRun, TaskStatus, TaskType
 from services.crypto import decrypt_secret
+from services.ssh_health import host_keys
 from services.inventory_generator import build_inventory_dict, host_group_credential, resolve_target_host_ids
 from services.schedule_targets import schedule_group_ids
 from services import run_as
@@ -97,6 +98,33 @@ def credential_vars(credential) -> dict:
     return {"ansible_user": credential.login, "ansible_password": secret}
 
 
+def known_host_args(host: Host) -> str:
+    """Проверка ключа хоста по ключам, которые прислал его агент, и по id хоста, а не по IP.
+
+    Общий known_hosts Ansible привязан к IP: после подготовки ПК из образа (AutoDomain генерирует
+    новые ключи хоста) или когда DHCP отдаёт адрес другому ПК, SSH отказывал с «REMOTE HOST
+    IDENTIFICATION HAS CHANGED». Ключи приходят от агента по его токену, поэтому им можно
+    доверять строже, чем первому подключению. Нет ключей (старый агент) — как раньше."""
+    keys = host_keys(host.ssh_state)
+    if not keys:
+        return ""
+    folder = os.path.join(settings.ansible_private_key_dir, "known_hosts")
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    path = os.path.join(folder, str(host.id))
+    content = "".join(f"{host.id} {key}\n" for key in keys)
+    try:
+        with open(path, encoding="utf-8") as f:
+            current = f.read()
+    except OSError:
+        current = None
+    if current != content:
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    return f" -o HostKeyAlias={host.id} -o UserKnownHostsFile={path} -o StrictHostKeyChecking=yes"
+
+
 def build_full_inventory(db, host_ids: list[uuid.UUID] | None, login_overrides: dict[str, str] | None = None) -> dict:
     """Inventory для реального запуска ansible-runner, с подставленными (расшифрованными) credentials.
 
@@ -114,6 +142,7 @@ def build_full_inventory(db, host_ids: list[uuid.UUID] | None, login_overrides: 
         host_vars.pop("_fleet_host_id", None)
         host_vars.pop("_fleet_credential_id", None)
         host_vars.update(_resolve_credential_vars(host))
+        host_vars["ansible_ssh_common_args"] = (host_vars.get("ansible_ssh_common_args", "") + known_host_args(host)).strip()
         if login_overrides and str(host.id) in login_overrides and host_vars.get("ansible_ssh_private_key_file"):
             host_vars["ansible_user"] = login_overrides[str(host.id)]
 

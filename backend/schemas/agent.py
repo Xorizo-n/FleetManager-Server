@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import datetime
 from typing import Literal
@@ -5,6 +6,10 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from models.host import HostOS, HostStatus
+
+# Ключ хоста из отчёта агента уходит в known_hosts: только тип и base64, ничего лишнего
+_HOST_KEY_TYPE = re.compile(r"(ssh|ecdsa)-[a-z0-9@.-]{1,60}")
+_BASE64 = re.compile(r"[A-Za-z0-9+/]{16,4096}={0,2}")
 
 
 # Agents read software names/versions straight from the Windows registry,
@@ -304,6 +309,45 @@ class AgentWallpaperReport(BaseModel):
         return _scrub(value)
 
 
+class AgentSshReport(BaseModel):
+    """С агента 2026.10.24: состояние sshd; с 2026.10.25 — ещё брандмауэр, sshd_config, PATH,
+    права входа и ключи хоста (services/ssh_health.py). Всё необязательно: старые агенты присылают часть."""
+
+    installed: bool | None = None
+    start_type: str | None = Field(default=None, max_length=16)
+    listening: bool | None = None
+    responding: bool | None = None
+    repaired: list[str] = Field(default_factory=list, max_length=20)
+    firewall_rule: str | None = Field(default=None, max_length=16)
+    firewall_ignored_on: list[str] = Field(default_factory=list, max_length=8)
+    firewall_gpo_allows: bool | None = None
+    firewall_blocking: list[str] = Field(default_factory=list, max_length=50)
+    firewall_error: str | None = Field(default=None, max_length=1000)
+    network_profiles: list[str] = Field(default_factory=list, max_length=16)
+    config_valid: bool | None = None
+    config_port: int | None = Field(default=None, ge=1, le=65535)
+    path_ok: bool | None = None
+    login_is_admin: bool | None = None
+    domain_trust: str | None = Field(default=None, max_length=16)
+    host_keys: list[str] = Field(default_factory=list, max_length=8)
+
+    @field_validator("repaired", "firewall_ignored_on", "firewall_blocking", "network_profiles", "host_keys", mode="before")
+    @classmethod
+    def _none_is_empty(cls, value):
+        return [] if value is None else value
+
+    @field_validator("host_keys")
+    @classmethod
+    def _keys(cls, value: list[str]) -> list[str]:
+        # Строка уходит в known_hosts: только "тип base64", без переводов строк и комментариев
+        keys = []
+        for item in value:
+            parts = (item or "").split()
+            if len(parts) >= 2 and _HOST_KEY_TYPE.fullmatch(parts[0]) and _BASE64.fullmatch(parts[1]):
+                keys.append(f"{parts[0]} {parts[1]}")
+        return keys
+
+
 class AgentHeartbeatRequest(BaseModel):
     machine_id: uuid.UUID
     hostname: str | None = Field(default=None, max_length=255)
@@ -318,6 +362,7 @@ class AgentHeartbeatRequest(BaseModel):
     # Старые агенты не присылают; новые — None, если собрать не удалось
     activation: AgentActivation | None = None
     wallpaper: AgentWallpaperReport | None = None
+    ssh: AgentSshReport | None = None
 
     @field_validator("ssh_login", "agent_version", mode="before")
     @classmethod

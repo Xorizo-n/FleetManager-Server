@@ -41,10 +41,12 @@ from schemas.task import TaskRunOut
 from services.agent_auth import hash_agent_token, is_machine_id_clone, issue_agent_token
 from services.software_sync import sync_host_software
 from services.agent_ssh import generate_agent_keypair
+from services.ssh_health import ssh_blocked_reason, store_ssh_report
 from services.agent_version import (
     INSTALLER_FILENAME,
     STATUS_OUTDATED,
     STATUS_UNKNOWN,
+    agent_update_offer,
     agent_version_from_software,
     available_agent_version,
     installer_path,
@@ -412,6 +414,13 @@ def heartbeat(
     if reported_version:
         host.agent_version = reported_version
         host.agent_version_checked_at = now
+    store_ssh_report(host, payload.ssh, now)
+    # Обновление без SSH: цель ставит services/agent_update.py, когда до ПК не достучаться
+    try:
+        update_offer = agent_update_offer(host, reported_version)
+    except OSError:
+        logger.exception("Agent update offer for %s", host.hostname)
+        update_offer = None
 
     # Commit the host status first, on its own, so the machine always shows up
     # online even if the software inventory below has a problem.
@@ -420,10 +429,12 @@ def heartbeat(
     # Группа по имени: после переименования ПК переходит в группу своей аудитории.
     apply_auto_group(db, host)
 
-    # ПК в сети — задачи, которые ждали его включения, уходят в очередь.
-    # Ошибка здесь не должна сорвать heartbeat.
+    # ПК в сети — задачи, которые ждали его включения, уходят в очередь. Но не тогда, когда
+    # агент сам сообщает, что SSH закрыт: задачи сорвались бы и ПК выпал бы из ожидания.
+    # Их заберёт проверка по SSH, когда SSH заработает. Ошибка здесь не должна сорвать heartbeat.
     try:
-        release_waiting_tasks(db, host.id)
+        if ssh_blocked_reason(host.ssh_state, now) is None:
+            release_waiting_tasks(db, host.id)
     except Exception:  # noqa: BLE001
         db.rollback()
         logger.exception("Failed to release waiting tasks for host %s", host.id)
@@ -452,6 +463,8 @@ def heartbeat(
     response = {"status": "accepted", "host_id": host.id, "last_seen_at": now, "software_count": stored}
     if wallpaper is not None:
         response["wallpaper"] = wallpaper
+    if update_offer is not None:
+        response["agent_update"] = update_offer
     return response
 
 
