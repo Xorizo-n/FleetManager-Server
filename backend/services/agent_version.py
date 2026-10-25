@@ -110,18 +110,18 @@ def installer_sha256() -> str | None:
 SELF_UPDATE_SINCE = "2026.10.24.24"
 
 
-def agent_update_offer(host, reported_version: str | None, sshd_missing: bool = False) -> dict | None:
+def agent_update_offer(host, reported_version: str | None, repair: bool = False) -> dict | None:
     """Предложение обновиться без SSH для ответа на heartbeat; снимает цель, когда она достигнута.
 
     Предлагается доступная сейчас версия: её и отдаёт GET /api/agent/installer.
     * цель от services/agent_update.py — версия не старее цели;
-    * на ПК нет sshd (sshd_missing) — та же версия как ремонт (repair): установщик ставит sshd
-      и настраивает его. Агент повторяет ремонт не больше трёх раз на версию."""
+    * SSH на ПК не настроен установщиком (repair, services/ssh_health.needs_reinstall) — та же
+      версия как ремонт: установщик ставит sshd и настраивает его. Агент повторяет ремонт не больше трёх раз на версию."""
     target = host.agent_update_target
     if target and compare_versions(reported_version, target) in (0, 1):
         host.agent_update_target = None
         target = None
-    if not target and not sshd_missing:
+    if not target and not repair:
         return None
     available = available_agent_version()
     if not reported_version or not available:
@@ -129,7 +129,7 @@ def agent_update_offer(host, reported_version: str | None, sshd_missing: bool = 
     if target and compare_versions(available, target) in (None, -1):
         return None
     order = compare_versions(reported_version, available)
-    if order is None or order == 1 or (order == 0 and not sshd_missing):
+    if order is None or order == 1 or (order == 0 and not repair):
         return None
     if order == 0 and compare_versions(reported_version, SELF_UPDATE_SINCE) == -1:
         return None

@@ -328,6 +328,9 @@ class AgentSshReport(BaseModel):
     network_profiles: list[str] = Field(default_factory=list, max_length=16)
     config_valid: bool | None = None
     config_port: int | None = Field(default=None, ge=1, le=65535)
+    # Агенты новее 2026.10.24.24: блок «только адрес сервера» в sshd_config и PowerShell как оболочка SSH
+    source_restricted: bool | None = None
+    default_shell_ok: bool | None = None
     path_ok: bool | None = None
     login_is_admin: bool | None = None
     domain_trust: str | None = Field(default=None, max_length=16)

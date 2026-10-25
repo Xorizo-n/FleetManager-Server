@@ -41,7 +41,7 @@ from schemas.task import TaskRunOut
 from services.agent_auth import hash_agent_token, is_machine_id_clone, issue_agent_token
 from services.software_sync import sync_host_software
 from services.agent_ssh import generate_agent_keypair
-from services.ssh_health import sshd_missing, ssh_blocked_reason, store_ssh_report
+from services.ssh_health import needs_reinstall, ssh_blocked_reason, store_ssh_report
 from services.agent_version import (
     INSTALLER_FILENAME,
     STATUS_OUTDATED,
@@ -417,7 +417,7 @@ def heartbeat(
     store_ssh_report(host, payload.ssh, now)
     # Обновление без SSH: цель ставит services/agent_update.py, когда до ПК не достучаться
     try:
-        update_offer = agent_update_offer(host, reported_version, sshd_missing(host.ssh_state, now))
+        update_offer = agent_update_offer(host, reported_version, needs_reinstall(host.ssh_state, now))
     except OSError:
         logger.exception("Agent update offer for %s", host.hostname)
         update_offer = None
