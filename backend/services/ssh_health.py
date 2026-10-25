@@ -70,6 +70,8 @@ def _connection_problems(state: dict) -> list[str]:
         )
     if state.get("firewall_blocking"):
         problems.append("порт 22 закрыт правилом брандмауэра: " + "; ".join(state["firewall_blocking"]))
+    if state.get("default_shell_ok") is False:
+        problems.append("оболочка SSH по умолчанию — не PowerShell: команды сервера не выполнятся (агент исправляет)")
     if state.get("login_is_admin") is False:
         problems.append("учётная запись входа по SSH не в локальных Администраторах — ключ сервера для неё не действует")
     if state.get("domain_trust") == "broken":
@@ -87,6 +89,8 @@ def ssh_problems(state: dict | None) -> list[str]:
         problems.append(f"sshd_config переносит SSH на порт {port}")
     if state.get("config_valid") is False:
         problems.append("sshd_config с ошибкой: после перезапуска sshd не запустится")
+    if state.get("source_restricted") is False:
+        problems.append("sshd_config не ограничивает вход адресом сервера: SSH настроен не установщиком агента (агент запросит переустановку)")
     if state.get("path_ok") is False:
         problems.append("в машинном PATH нет System32: Ansible не найдёт PowerShell")
     return problems
@@ -100,9 +104,13 @@ def ssh_blocked_reason(state: dict | None, now: datetime | None = None) -> str |
     return "; ".join(problems) if problems else None
 
 
-def sshd_missing(state: dict | None, now: datetime | None = None) -> bool:
-    """Свежий отчёт говорит, что OpenSSH Server на ПК нет: его поставит переустановка агента."""
-    return _fresh(state, now) and state.get("installed") is False
+def needs_reinstall(state: dict | None, now: datetime | None = None) -> bool:
+    """Свежий отчёт говорит, что SSH на ПК не настроен установщиком: OpenSSH Server нет или в
+    sshd_config нет блока «только адрес сервера» (MSI поставили вручную после агента).
+    Обе беды чинит переустановка агента — установщик ставит sshd (или берёт вшитый MSI) и настраивает его."""
+    if not _fresh(state, now):
+        return False
+    return state.get("installed") is False or (state.get("installed") is True and state.get("source_restricted") is False)
 
 
 def host_keys(state: dict | None) -> list[str]:
