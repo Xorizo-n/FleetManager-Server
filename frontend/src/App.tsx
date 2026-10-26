@@ -18,6 +18,7 @@ const Tasks = lazy(() => import("./pages/Tasks"));
 const Users = lazy(() => import("./pages/admin/Users"));
 const Credentials = lazy(() => import("./pages/admin/Credentials"));
 const Groups = lazy(() => import("./pages/admin/Groups"));
+const Tags = lazy(() => import("./pages/admin/Tags"));
 const Agent = lazy(() => import("./pages/admin/Agent"));
 const Files = lazy(() => import("./pages/admin/Files"));
 const Ldap = lazy(() => import("./pages/admin/Ldap"));
@@ -68,6 +69,7 @@ export default function App() {
                   <Route path="/admin/backup" element={guard(["admin"], <Backup />)} />
                   <Route path="/admin/credentials" element={guard(EDITORS, <Credentials />)} />
                   <Route path="/admin/groups" element={guard(EDITORS, <Groups />)} />
+                  <Route path="/admin/tags" element={guard(EDITORS, <Tags />)} />
                   <Route path="/admin/agent" element={guard(EDITORS, <Agent />)} />
                   <Route path="/admin/files" element={guard(EDITORS, <Files />)} />
                   {/* Старые адреса — закладки пользователей продолжают работать */}

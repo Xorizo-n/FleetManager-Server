@@ -1,6 +1,6 @@
 from models.user import User, AuditLog, UserRole
 from models.credential import Credential, CredentialType
-from models.host import Host, HostGroup, HostStatus, HostOS, HostStatusHistory
+from models.host import Host, HostGroup, HostTag, HostTagRule, HostStatus, HostOS, HostStatusHistory
 from models.software import SoftwareItem, SoftwareHistory, InstallMethod, SoftwareStatus, ChangeType
 from models.playbook import PlaybookRepo, PlaybookSchedule
 from models.task import TaskRun, TaskType, TaskStatus
@@ -20,6 +20,8 @@ __all__ = [
     "CredentialType",
     "Host",
     "HostGroup",
+    "HostTag",
+    "HostTagRule",
     "HostStatus",
     "HostOS",
     "HostStatusHistory",

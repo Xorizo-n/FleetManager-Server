@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTags } from "../../api/queries";
 import { ChevronDown, SlidersHorizontal, X } from "lucide-react";
 import type { Host, VersionStatus } from "../../api/types";
 import SearchInput from "../../components/ui/SearchInput";
@@ -22,8 +23,8 @@ interface FilterDef {
   options: { value: string; label: string }[];
 }
 
-// Фильтры по смыслу: что с ПК сейчас, что на нём стоит, что с рабочим местом
-const SECTIONS: { title: string; filters: FilterDef[] }[] = [
+// Фильтры по смыслу: что с ПК сейчас, что на нём стоит, что с рабочим местом; варианты тега — с сервера
+const sections = (tagOptions: { value: string; label: string }[]): { title: string; filters: FilterDef[] }[] => [
   {
     title: "Состояние",
     filters: [
@@ -52,11 +53,10 @@ const SECTIONS: { title: string; filters: FilterDef[] }[] = [
     filters: [
       { key: "devices", label: "Оборудование и диски", options: DEVICE_FILTERS },
       { key: "activation", label: "Активация", options: ACTIVATION_FILTERS },
+      { key: "tag", label: "Тег", options: tagOptions },
     ],
   },
 ];
-
-const ALL_FILTERS = SECTIONS.flatMap((s) => s.filters);
 
 interface FilterPanelProps {
   hosts: Host[];
@@ -75,6 +75,12 @@ interface FilterPanelProps {
  * панели по разделам; у каждого варианта — сколько ПК он оставит при остальных фильтрах.
  */
 export default function FilterPanel({ hosts, filters, setFilter, reset, tree, versionOf, alertCounts, open, onToggle }: FilterPanelProps) {
+  const tags = useTags();
+  const SECTIONS = useMemo(
+    () => sections([...(tags.data ?? []).map((t) => ({ value: t.id, label: t.name })), { value: "none", label: "Без тега" }, { value: "manual", label: "Поставлен вручную" }]),
+    [tags.data],
+  );
+  const ALL_FILTERS = useMemo(() => SECTIONS.flatMap((s) => s.filters), [SECTIONS]);
   const active = ALL_FILTERS.filter((f) => filters[f.key]);
   const activeCount = active.length + (filters.wallpaper ? 1 : 0);
 
@@ -89,7 +95,7 @@ export default function FilterPanel({ hosts, filters, setFilter, reset, tree, ve
       }
     }
     return result;
-  }, [open, hosts, filters, tree, versionOf, alertCounts]);
+  }, [open, hosts, filters, tree, versionOf, alertCounts, ALL_FILTERS]);
 
   const optionLabel = (f: FilterDef) => f.options.find((o) => o.value === filters[f.key])?.label ?? filters[f.key];
 

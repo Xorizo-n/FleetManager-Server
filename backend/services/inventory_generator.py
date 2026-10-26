@@ -149,10 +149,13 @@ def resolve_host_group_members(db: Session, host_group_id: uuid.UUID) -> list[Ho
     return db.execute(select(Host).where(Host.group_id.in_(group_ids))).scalars().all()
 
 
-def resolve_target_host_ids(db: Session, host_ids=(), group_ids=()) -> list[str]:
-    """Explicit hosts plus every host of the groups (with subgroups), without duplicates."""
+def resolve_target_host_ids(db: Session, host_ids=(), group_ids=(), tag_ids=()) -> list[str]:
+    """Explicit hosts plus every host of the groups (with subgroups) and of the tags, without duplicates."""
     result = [str(host_id) for host_id in host_ids]
     expanded = group_with_descendants(db, group_ids)
     if expanded:
         result += [str(host_id) for host_id in db.execute(select(Host.id).where(Host.group_id.in_(expanded))).scalars().all()]
+    tag_ids = [uuid.UUID(str(tag_id)) for tag_id in tag_ids]
+    if tag_ids:
+        result += [str(host_id) for host_id in db.execute(select(Host.id).where(Host.tag_id.in_(tag_ids)).order_by(Host.hostname)).scalars().all()]
     return list(dict.fromkeys(result))

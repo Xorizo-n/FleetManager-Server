@@ -21,9 +21,11 @@ export interface HostFilters {
   devices: string;
   /** sha256 обоев (рабочий стол или экран блокировки), «path:…» — файл без хэша, «none» — не заданы */
   wallpaper: string;
+  /** id тега, «none» — без тега, «manual» — тег поставлен вручную */
+  tag: string;
 }
 
-const FILTER_KEYS: (keyof HostFilters)[] = ["q", "group", "status", "agent", "os", "checked", "alerts", "activation", "devices", "wallpaper"];
+const FILTER_KEYS: (keyof HostFilters)[] = ["q", "group", "status", "agent", "os", "checked", "alerts", "activation", "devices", "wallpaper", "tag"];
 
 export const AGENT_FILTERS: { value: string; label: string }[] = [
   { value: "with", label: "С агентом" },
@@ -141,6 +143,7 @@ export function filterHosts(
     if (filters.status && h.status !== filters.status) return false;
     if (filters.alerts && !alertCounts.get(h.id)) return false;
     if (filters.os && h.os !== filters.os) return false;
+    if (filters.tag === "none" ? !!h.tag_id : filters.tag === "manual" ? !h.tag_manual : filters.tag && h.tag_id !== filters.tag) return false;
     if (filters.wallpaper && !showsWallpaper(h, filters.wallpaper)) return false;
     if (filters.devices && !DEVICE_FILTERS.find((f) => f.value === filters.devices)?.match(h)) return false;
     if (filters.activation && !ACTIVATION_FILTERS.find((f) => f.value === filters.activation)?.match(h)) return false;
