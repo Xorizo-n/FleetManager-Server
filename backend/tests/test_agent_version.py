@@ -143,8 +143,23 @@ class AgentUpdateScriptTests(unittest.TestCase):
 
     def test_commands_fit_the_ssh_command_line(self):
         # Over SSH a command of ~14k characters is dropped as "unreachable", 9k still passes.
-        for command in (PROBE_CMD, UPDATE_CMD):
+        from services.agent_update import update_command
+
+        link = ("http://10.152.240.10:8088/FleetManagerAgent-Setup.exe?md5=" + "A" * 22 + "&expires=1793000000", "ab" * 32)
+        for command in (PROBE_CMD, UPDATE_CMD, update_command(link)):
             self.assertLess(len(command), 8000)
+
+    def test_update_downloads_from_the_distribution_point_with_server_fallback(self):
+        import base64
+
+        from services.agent_update import update_command
+
+        script = base64.b64decode(update_command(("http://dist/x.exe?md5=a&expires=1", "ab" * 32)).rsplit(" ", 1)[1]).decode("utf-16le")
+        self.assertIn("$dist = 'http://dist/x.exe?md5=a&expires=1'", script)
+        self.assertIn("-eq '" + "AB" * 32 + "'", script)
+        self.assertIn("/api/agent/installer", script)
+        plain = base64.b64decode(UPDATE_CMD.rsplit(" ", 1)[1]).decode("utf-16le")
+        self.assertIn("$dist = ''", plain)
 
     def test_host_takes_the_installer_ssh_port_after_update(self):
         # Old agents reported random SSH ports (MR32-440-09: 44596); the installer

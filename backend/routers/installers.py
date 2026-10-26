@@ -10,9 +10,11 @@ from config import settings
 from database import SessionLocal, get_db
 from dependencies import authenticate_user, get_current_user, oauth2_scheme, require_roles
 from models.user import User, UserRole
-from schemas.installer import AgentInstallerSyncResult, InstallerFileOut, InstallerUploadResult
+from schemas.installer import AgentInstallerSyncResult, DistributionStatus, InstallerFileOut, InstallerUploadResult
 from services.agent_installer_sync import sync_agent_installer
 from services.audit import record_audit
+from services import distribution
+from services.distribution import request_sync
 
 router = APIRouter(prefix="/installers", tags=["installers"])
 
@@ -43,6 +45,7 @@ def _resolve_safe(name: str) -> str:
 @router.get("", response_model=list[InstallerFileOut])
 def list_installers(_: User = Depends(get_current_user)):
     base = _soft_dir()
+    manifest = distribution.load_manifest() if distribution.enabled() else None
     result = []
     with os.scandir(base) as entries:
         for entry in entries:
@@ -54,6 +57,8 @@ def list_installers(_: User = Depends(get_current_user)):
                     name=entry.name,
                     size=stat.st_size,
                     mtime=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+                    distributed=None if manifest is None
+                    else (manifest.get(entry.name) or [None, None])[:2] == [stat.st_size, stat.st_mtime_ns],
                 )
             )
     result.sort(key=lambda f: f.name.lower())
@@ -97,6 +102,7 @@ def upload_installer(
         raise
 
     record_audit(db, user.id, "installer_upload", f"{filename} ({size} bytes)", request)
+    request_sync()
     return InstallerUploadResult(name=filename, size=size, replaced=replaced)
 
 
@@ -110,6 +116,25 @@ def sync_agent_installer_endpoint(
     result = sync_agent_installer()
     record_audit(db, user.id, "installer_agent_sync", str(result), request)
     return result
+
+
+@router.get("/distribution", response_model=DistributionStatus)
+def distribution_status(_: User = Depends(get_current_user)):
+    """Точка раздачи: доступна ли, когда синхронизирована, сколько файлов уже там."""
+    return distribution.status()
+
+
+@router.post("/distribution/sync", response_model=DistributionStatus)
+def distribution_sync(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.operator)),
+):
+    if not distribution.enabled():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Точка раздачи не настроена (DIST_URL в .env)")
+    distribution.sync_distribution.delay()
+    record_audit(db, user.id, "distribution_sync", "", request)
+    return distribution.status()
 
 
 @router.get("/{name}/download")
@@ -141,3 +166,4 @@ def delete_installer(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Файл не найден")
     os.unlink(path)
     record_audit(db, user.id, "installer_delete", os.path.basename(path), request)
+    request_sync()

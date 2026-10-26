@@ -32,10 +32,12 @@ from services.agent_version import (
     SELF_UPDATE_SINCE,
     STATUS_OUTDATED,
     available_agent_version,
+    installer_path,
     normalize_version,
     version_status,
 )
 from services.ansible_runner import build_full_inventory, run_raw_command
+from services.distribution import link_for
 from services.host_parallel import HostOutcome, append_task_log, host_label, run_for_hosts
 from services.host_target import resolve_host_target
 
@@ -89,6 +91,7 @@ $service = Get-Service -Name FleetManagerAgent
     version = [string]$entry.DisplayVersion
     install_location = [string]$entry.InstallLocation
     service_status = [string]$service.Status
+    source = $source
 }} | ConvertTo-Json -Compress
 """
 
@@ -127,7 +130,17 @@ $base = $config.ServerUrl.TrimEnd('/')
 $dest = Join-Path $env:TEMP '{INSTALLER_FILENAME}'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $ProgressPreference = 'SilentlyContinue'
-Invoke-WebRequest -Uri "$base/api/agent/installer" -Headers @{{ Authorization = "Bearer $($config.AgentToken)" }} -OutFile $dest -UseBasicParsing -TimeoutSec 900
+$source = 'server'
+$dist = '__DIST_URL__'
+if ($dist) {{
+    try {{
+        Invoke-WebRequest -Uri $dist -OutFile $dest -UseBasicParsing -TimeoutSec 600
+        if ((Get-FileHash $dest -Algorithm SHA256).Hash -eq '__DIST_SHA__') {{ $source = 'distribution' }}
+    }} catch {{ }}
+}}
+if ($source -eq 'server') {{
+    Invoke-WebRequest -Uri "$base/api/agent/installer" -Headers @{{ Authorization = "Bearer $($config.AgentToken)" }} -OutFile $dest -UseBasicParsing -TimeoutSec 900
+}}
 
 {AGENT_ENTRY_SCRIPT}
 $previous = [string](& $installed).DisplayVersion
@@ -152,6 +165,7 @@ $service = Get-Service -Name FleetManagerAgent -ErrorAction SilentlyContinue
     exit_code = $exitCode
     finished = $finished
     service_status = [string]$service.Status
+    source = $source
 }} | ConvertTo-Json -Compress
 """
 
@@ -163,7 +177,16 @@ def encode_powershell(script: str) -> str:
 
 
 PROBE_CMD = encode_powershell(PROBE_SCRIPT)
-UPDATE_CMD = encode_powershell(UPDATE_SCRIPT)
+
+
+def update_command(link: tuple[str, str] | None) -> str:
+    """Команда обновления; link — (ссылка, sha256) установщика на точке раздачи: ПК качает
+    оттуда, а если не вышло или хеш не тот — с сервера (services/distribution.py)."""
+    url, sha = link or ("", "")
+    return encode_powershell(UPDATE_SCRIPT.replace("__DIST_URL__", url).replace("__DIST_SHA__", sha.upper()))
+
+
+UPDATE_CMD = update_command(None)
 
 
 def parse_probe_output(raw: str) -> dict:
@@ -350,7 +373,7 @@ def _update_host(db, task_id: uuid.UUID, inventory: dict, available: str | None,
         return HostOutcome.unreachable
     _append_log(db, task_id, f"[{label}] запуск обновления (было: {previous or 'неизвестно'})")
     try:
-        raw = run_raw_command(inventory, str(host.id), UPDATE_CMD, timeout=UPDATE_TIMEOUT)
+        raw = run_raw_command(inventory, str(host.id), update_command(link_for(installer_path())), timeout=UPDATE_TIMEOUT)
     except Exception as exc:  # noqa: BLE001
         # Установщик перезапускает службу агента и может задеть SSH-сессию.
         # Прежде чем считать хост упавшим, перепроверяем версию новой сессией.
@@ -381,7 +404,8 @@ def _update_host(db, task_id: uuid.UUID, inventory: dict, available: str | None,
         _append_log(db, task_id, f"[{label}] после установки версия {version} всё ещё старее {available}")
         return HostOutcome.failed
     service = result.get("service_status") or "неизвестно"
-    _append_log(db, task_id, f"[{label}] обновлено: {previous or 'неизвестно'} → {version}, служба: {service}")
+    via = ", установщик с точки раздачи" if result.get("source") == "distribution" else ""
+    _append_log(db, task_id, f"[{label}] обновлено: {previous or 'неизвестно'} → {version}, служба: {service}{via}")
     _adopt_installer_ssh_port(db, task_id, host)
     return HostOutcome.ok
 
