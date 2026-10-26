@@ -184,7 +184,7 @@ export interface Peripheral {
   device_class: string | null;
 }
 
-export type DeviceCategory = "system" | "baseboard" | "bios" | "memory" | "disk" | "gpu" | "monitor" | "keyboard" | "mouse" | "usb";
+export type DeviceCategory = "system" | "baseboard" | "bios" | "memory" | "disk" | "gpu" | "monitor" | "keyboard" | "mouse" | "usb" | "external_disk";
 
 export interface PendingDevice {
   category: DeviceCategory;
@@ -192,6 +192,8 @@ export interface PendingDevice {
   /** true — устройство пропало, false — появилось новое */
   missing: boolean;
   since: string;
+  /** Сколько изменение должно продержаться, чтобы попасть в журнал: 30 минут, внешний диск — 2 часа */
+  wait_minutes?: number;
 }
 
 export interface HardwareEvent {

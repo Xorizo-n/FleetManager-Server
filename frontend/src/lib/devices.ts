@@ -2,7 +2,7 @@ import type { DeviceCategory, Host, HwComponents, PendingDevice, Peripheral } fr
 import { formatRam } from "./format";
 
 // Состав рабочего места: агент присылает его в каждом heartbeat, изменения ведёт сервер
-// (backend/services/workplace_devices.py) — периферия подтверждается через 30 минут.
+// (backend/services/workplace_devices.py) — изменения подтверждаются через 30 минут, внешние диски — через 2 часа.
 
 export const CATEGORY_LABELS: Record<DeviceCategory, string> = {
   system: "Система",
@@ -15,7 +15,25 @@ export const CATEGORY_LABELS: Record<DeviceCategory, string> = {
   keyboard: "Клавиатура",
   mouse: "Мышь",
   usb: "USB",
+  external_disk: "Внешний диск",
 };
+
+/**
+ * Внешний USB-диск: USB-SSD с UASP Windows показывает с шиной SCSI («Samsung PSSD T7 SCSI Disk Device»).
+ * То же правило, что is_external_disk в backend/services/workplace_devices.py.
+ */
+export function isExternalDisk(d: { model: string | null; bus_type: string | null }): boolean {
+  const bus = (d.bus_type ?? "").toUpperCase();
+  if (!bus || ["NVME", "IDE", "SATA", "ATA", "RAID", "SAS"].includes(bus)) return false;
+  return !/virtio|virtual|vmware|msft/i.test(d.model ?? "");
+}
+
+/** «30 минут», «2 часа» */
+export function waitText(minutes = 30): string {
+  if (minutes % 60 !== 0) return `${minutes} минут`;
+  const h = minutes / 60;
+  return `${h} ${h === 1 ? "час" : h < 5 ? "часа" : "часов"}`;
+}
 
 /** VideoOutputTechnology монитора */
 export function connectionLabel(value: number | null | undefined): string | null {

@@ -18,7 +18,9 @@ import {
   monitorTitle,
   presence,
   PresenceState,
+  isExternalDisk,
   pendingText,
+  waitText,
 } from "../lib/devices";
 
 const PRESENCE_COLORS: Record<PresenceState, string> = {
@@ -112,7 +114,7 @@ export function WorkplaceTab({ host }: { host: Host }) {
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm">
               {pending.map((p) => (
                 <p key={`${p.category}${p.since}${pendingText(p)}`} className="text-amber-700 dark:text-amber-300">
-                  {pendingText(p)}: {p.missing ? "не видно" : "подключено"} с {formatDateTime(p.since)}. Изменение попадёт в журнал, если продержится 30 минут.
+                  {pendingText(p)}: {p.missing ? "не видно" : "подключено"} с {formatDateTime(p.since)}. Изменение попадёт в журнал, если продержится {waitText(p.wait_minutes)}.
                 </p>
               ))}
             </div>
@@ -156,7 +158,7 @@ export function WorkplaceTab({ host }: { host: Host }) {
                   key: `s${i}`,
                   title: d.model ?? "Диск",
                   meta: join(d.bus_type, d.size_bytes ? formatDiskSize(d.size_bytes) : null, serial(d.serial_number)),
-                  side: "диск",
+                  side: isExternalDisk(d) ? "внешний диск" : "диск",
                 })),
               ]}
             />
