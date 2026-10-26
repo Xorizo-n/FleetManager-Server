@@ -175,8 +175,14 @@ function makeWorkplace(host: Host) {
     input_devices: [...(noKeyboard ? [] : [KEYBOARD]), ...(noMouse ? [] : [MOUSE])],
     usb_devices: [...(chance(0.3) ? [{ kind: "usb" as const, name: "Logitech USB Headset", vid: "046D", pid: "0A45", serial: null, device_class: "USB" }] : []), { kind: "usb" as const, name: "MYSTIC LIGHT", vid: "1462", pid: "7D99", serial: "7D9924101807", device_class: "HIDClass" }],
   };
+  // Внешний USB-SSD (Windows показывает его с шиной SCSI) — учитывается, если подключён 2 часа
+  const t7 = host.status === "online" && chance(0.05);
+  if (t7) components.physical_disks.push({ model: "Samsung PSSD T7 SCSI Disk Device", serial_number: "W546501Y0SNEM7S", bus_type: "SCSI", size_bytes: 1000204886016 });
   host.hw_components = components;
-  host.hw_pending_devices = host.status === "online" && chance(0.03) ? [{ category: "mouse", item: MOUSE, missing: true, since: minutesAgo(Math.floor(rnd() * 25)) }] : [];
+  host.hw_pending_devices = [
+    ...(host.status === "online" && chance(0.03) ? [{ category: "mouse" as const, item: MOUSE, missing: true, since: minutesAgo(Math.floor(rnd() * 25)), wait_minutes: 30 }] : []),
+    ...(t7 ? [{ category: "external_disk" as const, item: components.physical_disks[components.physical_disks.length - 1], missing: false, since: minutesAgo(Math.floor(rnd() * 100)), wait_minutes: 120 }] : []),
+  ];
   const log = (minutes: number, category: HardwareEvent["category"], action: HardwareEvent["action"], summary: string) => {
     hardwareEvents.push({ id: uuid(), host_id: host.id, hostname: host.hostname, category, action, summary, details: null, created_at: minutesAgo(minutes) });
     host.hw_changed_at = host.hw_changed_at && host.hw_changed_at > minutesAgo(minutes) ? host.hw_changed_at : minutesAgo(minutes);

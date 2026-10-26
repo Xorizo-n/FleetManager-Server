@@ -251,7 +251,9 @@ class AgentUpdateScriptTests(unittest.TestCase):
                 return '{"version":"2026.10.09.8"}'
             return '{"version":"2026.10.12.13","exit_code":0,"finished":true,"service_status":"Running"}'
 
-        with mock.patch("services.agent_update._store_version"), mock.patch("services.agent_update._adopt_installer_ssh_port"):
+        # Без точки раздачи: в контейнере прода DIST_* заданы, и в команде была бы ссылка
+        with mock.patch("services.agent_update._store_version"), mock.patch("services.agent_update._adopt_installer_ssh_port"), \
+             mock.patch("services.agent_update.link_for", return_value=None):
             outcome, commands, logs = self._update(raw)
         self.assertEqual(outcome, HostOutcome.ok)
         self.assertEqual(commands, [PROBE_CMD, UPDATE_CMD])

@@ -14,6 +14,7 @@ from services.workplace_devices import (
     apply_components,
     compare_internal,
     describe,
+    is_external_disk,
     peripheral_items,
     pending_devices,
     update_peripherals,
@@ -52,36 +53,104 @@ def without_mouse():
     )
 
 
+def settle(new, minutes=35, old=SU5):
+    """Изменения, подтверждённые после того, как new продержался minutes минут."""
+    state, _ = update_peripherals(None, old, T0)
+    state, first = update_peripherals(state, new, T0 + timedelta(minutes=5))
+    state, second = update_peripherals(state, new, T0 + timedelta(minutes=5 + minutes))
+    return first + second, state
+
+
+T7 = {"model": "Samsung PSSD T7 SCSI Disk Device", "serial_number": "W546501Y0SNEM7S", "bus_type": "SCSI", "size_bytes": 1000204886016}
+
+
 class InternalComponentTests(unittest.TestCase):
     def test_no_changes(self):
         self.assertEqual(compare_internal(SU5, snapshot()), [])
+        self.assertEqual(settle(snapshot())[0], [])
 
     def test_memory_module_removed_and_replaced(self):
-        removed = compare_internal(SU5, snapshot(memory_modules=[]))
-        # Пустой список — сбой WMI, а не вынутая память
-        self.assertEqual(removed, [])
+        # Пустой список — сбой WMI, а не вынутая память, сколько бы он ни держался
+        changes, state = settle(snapshot(memory_modules=[]), minutes=600)
+        self.assertEqual(changes, [])
+        self.assertIn("memory", [e["category"] for e in state.values()])
 
         replaced = snapshot(memory_modules=[dict(SU5["memory_modules"][0], serial_number="99999999", capacity_bytes=8589934592)])
-        [change] = compare_internal(SU5, replaced)
+        self.assertEqual(settle(replaced, minutes=20)[0], [])
+        [change] = settle(replaced)[0]
         self.assertEqual((change.category, change.action, change.alert_type), ("memory", CHANGED, "hardware_changed"))
         self.assertIn("16 ГБ", change.summary)
         self.assertIn("8 ГБ", change.summary)
 
+    def test_memory_glitch_for_one_heartbeat_is_ignored(self):
+        state, _ = update_peripherals(None, SU5, T0)
+        odd = snapshot(memory_modules=[dict(SU5["memory_modules"][0], serial_number=None)])
+        state, changes = update_peripherals(state, odd, T0 + timedelta(minutes=5))
+        state, more = update_peripherals(state, SU5, T0 + timedelta(minutes=10))
+        self.assertEqual(changes + more, [])
+        self.assertEqual(pending_devices(state), [])
+
     def test_disk_swap_is_a_removal_and_an_addition(self):
         new_disk = {"model": "Samsung SSD 870 EVO 1TB", "serial_number": "S6PNNM0T", "bus_type": "IDE", "size_bytes": 1000204886016}
-        changes = compare_internal(SU5, snapshot(physical_disks=[SU5["physical_disks"][0], new_disk]))
+        changes, _ = settle(snapshot(physical_disks=[SU5["physical_disks"][0], new_disk]))
         self.assertEqual(sorted((c.action, c.category) for c in changes), [(ADDED, "disk"), (REMOVED, "disk")])
         self.assertTrue(all(c.alert_type == "hardware_changed" for c in changes))
-        self.assertIn("Пропал диск: TOSHIBA DT02ABA200V 2 ТБ (с/н 35F2S4R1SNDL)".replace("2 ТБ", "1,8 ТБ"), [c.summary for c in changes])
+        self.assertIn("Пропал диск: TOSHIBA DT02ABA200V 1,8 ТБ (с/н 35F2S4R1SNDL)", [c.summary for c in changes])
 
     def test_gpu_driver_rename_is_not_a_change(self):
         renamed = snapshot(gpus=[dict(SU5["gpus"][0], name="Intel(R) UHD Graphics", driver_version="33.0")])
-        self.assertEqual(compare_internal(SU5, renamed), [])
+        self.assertEqual(settle(renamed)[0], [])
 
     def test_bios_update_is_logged_without_alert(self):
         [change] = compare_internal(SU5, snapshot(bios_version="1.F2"))
         self.assertEqual(change.summary, "BIOS: 1.F1 → 1.F2")
         self.assertIsNone(change.alert_type)
+
+
+class ExternalDiskTests(unittest.TestCase):
+    def test_usb_ssd_shown_as_scsi_is_external_but_vm_disk_is_not(self):
+        self.assertTrue(is_external_disk(T7))
+        self.assertTrue(is_external_disk({"model": "Kingston XS1000 SCSI Disk Device", "bus_type": "SCSI"}))
+        self.assertFalse(is_external_disk({"model": "Red Hat VirtIO SCSI Disk Device", "bus_type": "SCSI"}))
+        for disk in SU5["physical_disks"]:
+            self.assertFalse(is_external_disk(disk))
+        self.assertFalse(is_external_disk({"model": "Old agent", "bus_type": None}))
+
+    def test_disk_left_for_a_lesson_is_not_logged(self):
+        with_t7 = snapshot(physical_disks=SU5["physical_disks"] + [T7])
+        state, _ = update_peripherals(None, SU5, T0)
+        state, changes = update_peripherals(state, with_t7, T0 + timedelta(minutes=5))
+        [pending] = pending_devices(state)
+        self.assertEqual((pending["category"], pending["missing"], pending["wait_minutes"]), ("external_disk", False, 120))
+        # Пара — полтора часа, потом диск забирают
+        state, more = update_peripherals(state, with_t7, T0 + timedelta(minutes=100))
+        state, after = update_peripherals(state, SU5, T0 + timedelta(minutes=105))
+        self.assertEqual(changes + more + after, [])
+        self.assertEqual(pending_devices(state), [])
+
+    def test_disk_connected_for_two_hours_is_logged_and_its_loss_alerts(self):
+        with_t7 = snapshot(physical_disks=SU5["physical_disks"] + [T7])
+        changes, state = settle(with_t7, minutes=120)
+        [added] = changes
+        self.assertEqual((added.category, added.action, added.alert_type), ("external_disk", ADDED, None))
+        self.assertEqual(added.summary, "Появился внешний диск: Samsung PSSD T7 SCSI Disk Device 932 ГБ (с/н W546501Y0SNEM7S)")
+        # Короткое отключение — ничего, отключение на 2 часа — алерт «Пропало устройство»
+        state, short = update_peripherals(state, SU5, T0 + timedelta(hours=3))
+        state, back = update_peripherals(state, with_t7, T0 + timedelta(hours=4))
+        self.assertEqual(short + back, [])
+        state, _ = update_peripherals(state, SU5, T0 + timedelta(hours=5))
+        state, gone = update_peripherals(state, SU5, T0 + timedelta(hours=7))
+        self.assertEqual([(c.action, c.alert_type) for c in gone], [(REMOVED, "device_missing")])
+
+    def test_disks_tracked_before_the_update_are_taken_from_the_last_snapshot(self):
+        # Состояние, которое вела прошлая версия сервера: только периферия, диски — в снимке
+        with_t7 = snapshot(physical_disks=SU5["physical_disks"] + [T7])
+        old_state = {k: {"category": c, "item": i, "present": True, "since": None}
+                     for k, (c, i) in peripheral_items(SU5).items()}
+        state, changes = update_peripherals(old_state, with_t7, T0, seed=with_t7)
+        self.assertEqual(changes, [])
+        self.assertEqual(pending_devices(state), [])
+        self.assertEqual({e["category"] for e in state.values()} >= {"memory", "disk", "gpu", "external_disk"}, True)
 
 
 class PeripheralTests(unittest.TestCase):
@@ -169,7 +238,7 @@ class RecordChangesTests(unittest.TestCase):
         apply_components(host, SU5, T0, same_agent_version=True)
         state, _ = update_peripherals(host.hw_device_state, without_mouse(), T0 + timedelta(minutes=5))
         _, mouse = update_peripherals(state, without_mouse(), T0 + timedelta(minutes=40))
-        memory = compare_internal(SU5, snapshot(memory_modules=[dict(SU5["memory_modules"][0], serial_number="1")]))
+        memory, _ = settle(snapshot(memory_modules=[dict(SU5["memory_modules"][0], serial_number="1")]))
         db = self.FakeDb()
 
         _record_hardware_changes(db, host, ["Память: 16 ГБ → 8 ГБ"], memory + mouse, "new", T0)

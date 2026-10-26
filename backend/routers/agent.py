@@ -55,7 +55,7 @@ from services.agent_version import (
     version_status,
 )
 from services.audit import record_audit
-from services.hardware_change import hardware_changes
+from services.hardware_change import hardware_changes, is_disk_list
 from services.workplace_devices import DeviceChange, apply_components
 from services.wallpapers import heartbeat_wallpaper, store_report, wallpaper_path
 from models.wallpaper import Wallpaper
@@ -396,7 +396,9 @@ def heartbeat(
     host.hardware_fingerprint = payload.hardware.fingerprint
     host.hw_manufacturer = payload.hardware.manufacturer
     host.hw_model = payload.hardware.model
-    host.hw_serial_number = payload.hardware.serial_number
+    # Список дисков от старого скриптового агента не затирает настоящий серийный номер
+    if not (is_disk_list(payload.hardware.serial_number) and host.hw_serial_number):
+        host.hw_serial_number = payload.hardware.serial_number
     host.hw_os_caption = payload.hardware.operating_system
     host.hw_processor = payload.hardware.processor
     host.hw_total_memory_bytes = payload.hardware.total_memory_bytes
