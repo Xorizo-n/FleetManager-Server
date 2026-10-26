@@ -34,6 +34,9 @@ RUN ansible-galaxy collection install -r /tmp/ansible-collections.yml
 
 COPY . .
 
+# fm_fetch: плейбуки качают установщики с точки раздачи (services/distribution.py)
+ENV ANSIBLE_ACTION_PLUGINS=/app/ansible_plugins/action
+
 EXPOSE 8000
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

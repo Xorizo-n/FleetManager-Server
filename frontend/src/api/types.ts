@@ -359,6 +359,7 @@ export interface InstallerFile {
   name: string;
   size: number;
   mtime: string;
+  distributed?: boolean | null;
 }
 
 export interface AlertSummary {

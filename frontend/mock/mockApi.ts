@@ -373,11 +373,21 @@ const playbookFiles = [
   ...INSTALL.map((n) => ({ name: `install_${n}.yml`, path: `playbooks/install/install_${n}.yml`, display_name: `Install ${n.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}` })),
 ];
 
-const installers = [
-  { name: "FleetManagerAgent-Setup.exe", size: 18_400_000, mtime: minutesAgo(300) },
-  { name: "FleetManagerAgent-Setup.exe.version", size: 12, mtime: minutesAgo(300) },
-  ...["7z2407-x64.exe", "ChromeSetup.exe", "VSCodeSetup-x64-1.104.3.exe", "Git-2.51.0-64-bit.exe", "python-3.13.7-amd64.exe", "vlc-3.0.21-win64.exe", "kompas3d-v23.exe", "termidesk-5.1.2.msi", "veyon-4.9.7-win64-setup.exe", "MATLAB_Runtime_R2021a_Update_8_win64.zip"].map((name, i) => ({ name, size: Math.floor(5e6 + rnd() * 2e9), mtime: minutesAgo(60 * 24 * (i + 3)) })),
+const installers: { name: string; size: number; mtime: string; distributed: boolean | null }[] = [
+  { name: "FleetManagerAgent-Setup.exe", size: 18_400_000, mtime: minutesAgo(300), distributed: true },
+  { name: "FleetManagerAgent-Setup.exe.version", size: 12, mtime: minutesAgo(300), distributed: true },
+  ...["7z2407-x64.exe", "ChromeSetup.exe", "VSCodeSetup-x64-1.104.3.exe", "Git-2.51.0-64-bit.exe", "python-3.13.7-amd64.exe", "vlc-3.0.21-win64.exe", "kompas3d-v23.exe", "termidesk-5.1.2.msi", "veyon-4.9.7-win64-setup.exe", "MATLAB_Runtime_R2021a_Update_8_win64.zip"].map((name, i) => ({ name, size: Math.floor(5e6 + rnd() * 2e9), mtime: minutesAgo(60 * 24 * (i + 3)), distributed: i !== 2 })),
 ];
+// Точка раздачи (services/distribution.py): синхронизация «идёт» 6 секунд
+let distSyncUntil = 0;
+let distSyncedAt = minutesAgo(7);
+function distributionState() {
+  const running = Date.now() < distSyncUntil;
+  if (!running && distSyncUntil) { distSyncUntil = 0; distSyncedAt = now().toISOString(); installers.forEach((f) => { f.distributed = true; }); }
+  const done = installers.filter((f) => f.distributed);
+  return { enabled: true, url: "http://10.152.240.10:8088", running, healthy: true, checked_at: distSyncedAt, last_attempt: distSyncedAt,
+    last_success: distSyncedAt, error: null, files: done.length, bytes: done.reduce((a, f) => a + f.size, 0), pending: 0 };
+}
 const tokens = [
   { id: uuid(), name: "NVK-SU5", expires_at: null, is_active: true, created_at: minutesAgo(60 * 24 * 40), installer_available: true },
   { id: uuid(), name: "P-411-autoinstall", expires_at: null, is_active: true, created_at: minutesAgo(60 * 24 * 20), installer_available: true },
@@ -861,8 +871,10 @@ route("GET", "/hardware", () => hosts.map((h) => ({ id: h.id, hostname: h.hostna
 
 // installers
 route("GET", "/installers", () => installers);
-route("POST", "/installers", (ctx) => { editor(ctx); const f = { name: `uploaded-${installers.length}.exe`, size: 1_000_000, mtime: now().toISOString() }; installers.push(f); return { name: f.name, size: f.size, replaced: false }; });
+route("POST", "/installers", (ctx) => { editor(ctx); const f = { name: `uploaded-${installers.length}.exe`, size: 1_000_000, mtime: now().toISOString(), distributed: false }; installers.push(f); return { name: f.name, size: f.size, replaced: false }; });
 route("DELETE", "/installers/{name}", (ctx, p) => { editor(ctx); const i = installers.findIndex((f) => f.name === decodeURIComponent(p.name)); if (i >= 0) installers.splice(i, 1); return null; });
+route("GET", "/installers/distribution", () => distributionState());
+route("POST", "/installers/distribution/sync", (ctx) => { editor(ctx); distSyncUntil = Date.now() + 6000; return distributionState(); });
 route("GET", "/installers/{name}/download", () => "mock-file");
 route("POST", "/installers/agent/sync", (ctx) => { editor(ctx); return { updated: false, version: AVAILABLE_AGENT, reason: `Установлена последняя версия ${AVAILABLE_AGENT}` }; });
 

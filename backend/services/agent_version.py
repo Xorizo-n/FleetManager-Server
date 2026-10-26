@@ -137,6 +137,12 @@ def agent_update_offer(host, reported_version: str | None, repair: bool = False)
     if not sha:
         return None
     offer = {"version": available, "sha256": sha}
+    # Ссылка на точку раздачи (services/distribution.py): агент качает оттуда, а при сбое — с сервера
+    from services.distribution import link_for
+
+    link = link_for(installer_path())
+    if link and link[1] == sha:
+        offer["url"] = link[0]
     if order == 0:
         offer["repair"] = True
     return offer

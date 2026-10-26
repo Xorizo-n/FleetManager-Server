@@ -118,6 +118,8 @@ services:
       # AutoDomain) для плейбука set_local_admin_password.yml: расшифровываются здесь,
       # на ПК уходит только пароль его аудитории. В git не попадает.
       - ./secrets/room-passwords:/mnt/room-passwords:ro
+      # Ключ rsync на точку раздачи (services/distribution.py): id_ed25519 + known_hosts
+      - ./secrets/dist:/mnt/dist-ssh:ro
     command: celery -A celery_app.celery_app worker --loglevel=info --concurrency=4
 
   celery-beat:

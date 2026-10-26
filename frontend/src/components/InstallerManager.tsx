@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { Download, HardDrive, Search, Trash2, Upload } from "lucide-react";
+import { CircleCheck, Clock, Download, HardDrive, Search, Trash2, Upload } from "lucide-react";
 import { apiClient, getAccessToken } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { APP_TIME_ZONE } from "../lib/format";
 import Button from "./ui/Button";
+import DistributionStatus from "./DistributionStatus";
 
 interface InstallerFile {
   name: string;
   size: number;
   mtime: string;
+  // Лежит ли эта версия файла на точке раздачи; null — точка раздачи не настроена
+  distributed?: boolean | null;
 }
 
 function formatSize(bytes: number): string {
@@ -102,8 +105,11 @@ export default function InstallerManager() {
   const visible = files.filter((f) => f.name.toLowerCase().includes(search.toLowerCase()));
   const totalSize = files.reduce((acc, f) => acc + f.size, 0);
 
+  const showDistribution = files.some((f) => f.distributed != null);
+
   return (
     <div className="space-y-4">
+      <DistributionStatus canManage={canManage} onSynced={loadFiles} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-subtle" />
@@ -149,6 +155,7 @@ export default function InstallerManager() {
               <th>Файл</th>
               <th>Размер</th>
               <th>Изменён</th>
+              {showDistribution && <th>Точка раздачи</th>}
               <th className="w-24"></th>
             </tr>
           </thead>
@@ -160,6 +167,21 @@ export default function InstallerManager() {
                 <td className="whitespace-nowrap text-muted-foreground">
                   {new Date(f.mtime).toLocaleString("ru-RU", { timeZone: APP_TIME_ZONE })}
                 </td>
+                {showDistribution && (
+                  <td className="whitespace-nowrap">
+                    {f.distributed ? (
+                      <span className="inline-flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
+                        <CircleCheck className="h-4 w-4" aria-hidden="true" />
+                        есть
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 text-muted-foreground" title="Пока файла там нет, ПК получают его с сервера по SSH">
+                        <Clock className="h-4 w-4" aria-hidden="true" />
+                        ожидает синхронизации
+                      </span>
+                    )}
+                  </td>
+                )}
                 <td>
                   <div className="flex justify-end gap-1">
                     <button
@@ -184,7 +206,7 @@ export default function InstallerManager() {
             ))}
             {visible.length === 0 && (
               <tr>
-                <td colSpan={4} className="py-8 text-center text-subtle">
+                <td colSpan={showDistribution ? 5 : 4} className="py-8 text-center text-subtle">
                   {files.length === 0 ? "В хранилище нет файлов" : "Ничего не найдено"}
                 </td>
               </tr>

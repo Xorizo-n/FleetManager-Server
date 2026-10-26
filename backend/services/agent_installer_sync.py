@@ -74,6 +74,9 @@ def sync_agent_installer() -> dict:
         # выполняется задача, — без этого ошибка терялась в логах celery.
         return {"updated": False, "reason": f"Не удалось сохранить установщик в {soft_dir}: {exc}", "version": tag}
 
+    from services.distribution import request_sync
+
+    request_sync()  # новая версия — сразу на точку раздачи
     return {"updated": True, "version": tag}
 
 

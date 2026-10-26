@@ -20,6 +20,7 @@ celery_app = Celery(
         "services.wake_on_lan",
         "services.wallpapers",
         "services.offsite_backup",
+        "services.distribution",
     ],
 )
 
@@ -43,6 +44,11 @@ celery_app.conf.update(
         "expire-waiting-tasks": {
             "task": "services.waiting_tasks.expire_waiting_tasks",
             "schedule": 3600.0,
+        },
+        # Зеркало шары на точке раздачи; после загрузок запускается и сразу (services/distribution.py)
+        "sync-distribution": {
+            "task": "services.distribution.sync_distribution",
+            "schedule": 900.0,
         },
         "sync-agent-installer": {
             "task": "services.agent_installer_sync.sync_agent_installer_task",
