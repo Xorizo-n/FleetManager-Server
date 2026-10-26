@@ -15,6 +15,7 @@ import {
   Power,
   RefreshCw,
   ScanLine,
+  Tag,
   Trash2,
   Upload,
   X,
@@ -34,7 +35,7 @@ import WallpaperAssignDialog from "../../components/WallpaperAssignDialog";
 import GroupSidebar from "./GroupSidebar";
 import HostTable, { ColumnSet } from "./HostTable";
 import HostDrawer from "./HostDrawer";
-import { AddHostDialog, CredentialDialog, GroupDialog } from "./dialogs";
+import { AddHostDialog, CredentialDialog, GroupDialog, TagDialog } from "./dialogs";
 import FilterPanel from "./FilterPanel";
 import { alertDays, filterHosts, useHostFilters } from "./filters";
 import { downloadFromApi } from "../../lib/download";
@@ -63,6 +64,7 @@ export default function HostsPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [runFor, setRunFor] = useState<string[] | null>(null);
   const [groupFor, setGroupFor] = useState<string[] | null>(null);
+  const [tagFor, setTagFor] = useState<string[] | null>(null);
   const [credentialFor, setCredentialFor] = useState<string[] | null>(null);
   const [adding, setAdding] = useState(false);
   const [wallpaperFor, setWallpaperFor] = useState<string[] | null>(null);
@@ -334,6 +336,7 @@ export default function HostsPage() {
                 { label: "Обои…", icon: <ImageIcon className="h-4 w-4" />, onClick: () => setWallpaperFor([...selected]) },
                 "divider",
                 { label: "Назначить группу…", icon: <FolderInput className="h-4 w-4" />, onClick: () => setGroupFor([...selected]) },
+                { label: "Тег…", icon: <Tag className="h-4 w-4" />, onClick: () => setTagFor([...selected]) },
                 { label: "Учётные данные SSH…", icon: <KeyRound className="h-4 w-4" />, onClick: () => setCredentialFor([...selected]) },
                 { label: "Удалить из реестра", icon: <Trash2 className="h-4 w-4" />, danger: true, onClick: bulkDelete },
               ]}
@@ -352,6 +355,7 @@ export default function HostsPage() {
         </Modal>
       )}
       {groupFor && <GroupDialog hostIds={groupFor} onClose={() => setGroupFor(null)} onDone={() => { setGroupFor(null); setSelected(new Set()); }} />}
+      {tagFor && <TagDialog hostIds={tagFor} onClose={() => setTagFor(null)} onDone={() => { setTagFor(null); setSelected(new Set()); }} />}
       {credentialFor && <CredentialDialog hostIds={credentialFor} onClose={() => setCredentialFor(null)} onDone={() => { setCredentialFor(null); setSelected(new Set()); }} />}
       {adding && <AddHostDialog onClose={() => setAdding(false)} />}
       {wallpaperFor && <WallpaperAssignDialog initialHostIds={wallpaperFor} onClose={() => setWallpaperFor(null)} />}

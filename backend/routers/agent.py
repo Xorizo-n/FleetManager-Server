@@ -60,6 +60,7 @@ from services.workplace_devices import DeviceChange, apply_components
 from services.wallpapers import heartbeat_wallpaper, store_report, wallpaper_path
 from models.wallpaper import Wallpaper
 from services.host_grouping import apply_auto_group, cleanup_auto_groups
+from services.host_tags import apply_rule, load_rule_map
 from services.waiting_tasks import create_task_runs, enqueue, release_waiting_tasks, waiting_count
 from services.wake_on_lan import agent_lan_address, normalize_mac, primary_adapter
 from services.crypto import decrypt_secret, encrypt_secret
@@ -396,6 +397,8 @@ def heartbeat(
     host.hardware_fingerprint = payload.hardware.fingerprint
     host.hw_manufacturer = payload.hardware.manufacturer
     host.hw_model = payload.hardware.model
+    if not host.tag_manual:
+        apply_rule(host, load_rule_map(db))
     # Список дисков от старого скриптового агента не затирает настоящий серийный номер
     if not (is_disk_list(payload.hardware.serial_number) and host.hw_serial_number):
         host.hw_serial_number = payload.hardware.serial_number

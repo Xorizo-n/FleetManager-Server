@@ -44,6 +44,30 @@ class HostGroup(Base):
     parent: Mapped["HostGroup | None"] = relationship(remote_side="HostGroup.id")
 
 
+class HostTag(Base):
+    """Тег хоста — роль ПК («Студенты», «Администрация»): цель запуска плейбуков наряду с
+    группами. По умолчанию ставится по производителю и модели (HostTagRule, services/host_tags.py)."""
+
+    __tablename__ = "host_tags"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class HostTagRule(Base):
+    """Производитель + модель → тег. Сравнение без учёта регистра и лишних пробелов."""
+
+    __tablename__ = "host_tag_rules"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    manufacturer: Mapped[str] = mapped_column(String(255), nullable=False)
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    tag_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("host_tags.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Host(Base):
     __tablename__ = "hosts"
 
@@ -56,6 +80,10 @@ class Host(Base):
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     credential_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("credentials.id", ondelete="SET NULL"), nullable=True)
+    # Тег ПК: по правилу производитель + модель или вручную (tag_manual — правила его не трогают,
+    # в том числе ручное «без тега»)
+    tag_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("host_tags.id", ondelete="SET NULL"), nullable=True, index=True)
+    tag_manual: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
 
     # Agent registration & auth
     agent_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), unique=True, nullable=True, index=True)

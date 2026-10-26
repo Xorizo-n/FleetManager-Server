@@ -41,6 +41,7 @@ interface Host {
   license_activation?: LicenseActivation | null; activation_windows?: ActivationState | null; activation_office?: ActivationState | null;
   hw_components?: HwComponents | null; hw_pending_devices?: PendingDevice[]; hw_changed_at?: string | null;
   wallpaper_state?: WallpaperState | null;
+  tag_id?: string | null; tag_manual?: boolean;
 }
 interface Credential { id: string; name: string; type: string; login: string | null; created_at: string; is_agent_managed: boolean }
 interface Software { id: string; host_id: string; name: string; version: string | null; install_method: string; status: string; detected_at: string }
@@ -54,7 +55,7 @@ interface Task {
 }
 interface Schedule {
   id: string; repo_id: string; playbook_name: string; host_group_id: string | null; host_group_ids: string[];
-  host_ids: string[]; extra_vars: Record<string, unknown>; cron_expression: string; enabled: boolean; created_at: string;
+  host_ids: string[]; host_tag_ids?: string[]; extra_vars: Record<string, unknown>; cron_expression: string; enabled: boolean; created_at: string;
 }
 
 const AVAILABLE_AGENT = "2026.10.10.9";
@@ -95,13 +96,21 @@ function addGroup(name: string, parent: string | null, isAuto = true, descriptio
   return g;
 }
 
+// Модели парка примерно в тех же долях, что на проде
+const IRBIS_STUDENT = { m: "IRBIS", model: "GDCS7001HA", cpu: "12th Gen Intel(R) Core(TM) i5-12400", ram: 16 };
 const HW = [
-  { m: "Micro-Star International Co., Ltd.", model: "Modern ADL-P AM272 (MS-AF82)", cpu: "12th Gen Intel(R) Core(TM) i7-1260P", ram: 16 },
-  { m: "ASRock", model: "B760 Pro RS/D4", cpu: "12th Gen Intel(R) Core(TM) i7-12700F", ram: 32 },
-  { m: "Micro-Star International Co., Ltd.", model: "MS-7D98", cpu: "Intel(R) Core(TM) i7-14700F", ram: 32 },
-  { m: "Lenovo", model: "ThinkCentre M70q Gen 3", cpu: "12th Gen Intel(R) Core(TM) i5-12400T", ram: 16 },
-  { m: "HP", model: "ProDesk 400 G7 SFF", cpu: "Intel(R) Core(TM) i5-10500", ram: 8 },
+  ...Array(7).fill(IRBIS_STUDENT),
+  { m: "IRBIS", model: "SDCS5007HA", cpu: "12th Gen Intel(R) Core(TM) i3-12100", ram: 8 },
+  { m: "Micro-Star International Co., Ltd.", model: "PRO H610 AP272 14M (MS-AF83)", cpu: "Intel(R) Core(TM) i5-14400", ram: 16 },
+  { m: "LENOVO", model: "F0J20046RU", cpu: "Intel(R) Core(TM) i5-10400T", ram: 8 },
+  { m: "System manufacturer", model: "System Product Name", cpu: "Intel(R) Core(TM) i7-14700F", ram: 32 },
 ];
+
+// Теги и правила «производитель + модель → тег» (backend/services/host_tags.py)
+interface Tag { id: string; name: string; description: string | null }
+interface TagRule { id: string; manufacturer: string; model: string; tag_id: string }
+const tags: Tag[] = [];
+const tagRules: TagRule[] = [];
 
 const SOFTWARE_POOL: [string, string[], number][] = [
   ["7-Zip 24.07 (x64)", ["24.07"], 0.95], ["Yandex Browser", ["25.8.1.842", "25.6.0.2370"], 0.97], ["Python 3.12.6 Core Interpreter (64-bit)", ["3.12.6150.0"], 0.8],
@@ -444,6 +453,36 @@ for (const [i, host] of hosts.filter((h) => h.status === "offline").slice(0, 6).
   });
 }
 
+for (const [name, models] of [
+  ["Студенты", [["IRBIS", "GDCS7001HA"]]],
+  ["Семинарские", [["IRBIS", "SDCS5007HA"]]],
+  ["Администрация", [["LENOVO", "F0J20046RU"], ["LENOVO", "F0HM00DSRU"], ["Micro-Star International Co., Ltd.", "PRO H610 AP272 14M (MS-AF83)"]]],
+] as [string, [string, string][]][]) {
+  const tag: Tag = { id: uuid(), name, description: null };
+  tags.push(tag);
+  models.forEach(([m, model]) => tagRules.push({ id: uuid(), manufacturer: m, model, tag_id: tag.id }));
+}
+const cleanText = (v: unknown) => (typeof v === "string" ? v.split(/\s+/).filter(Boolean).join(" ") : "");
+const modelKey = (m: unknown, model: unknown) => {
+  const a = cleanText(m).toLowerCase();
+  const b = cleanText(model).toLowerCase();
+  return a && b ? `${a}|${b}` : null;
+};
+function retagHosts() {
+  const rules = new Map(tagRules.map((r) => [modelKey(r.manufacturer, r.model), r.tag_id]));
+  let changed = 0;
+  for (const h of hosts) {
+    if (h.tag_manual) continue;
+    const key = modelKey(h.hw_manufacturer, h.hw_model);
+    const tagId = (key && rules.get(key)) || null;
+    if ((h.tag_id ?? null) !== tagId) { h.tag_id = tagId; changed += 1; }
+  }
+  return changed;
+}
+retagHosts();
+// Пара преподавательских ПК в аудиториях помечена вручную
+hosts.filter((h) => h.hostname?.endsWith("-02")).slice(0, 3).forEach((h) => { h.tag_id = tags[2].id; h.tag_manual = true; });
+
 // ---------- помощники ----------
 const hostById = (id: string) => hosts.find((h) => h.id === id);
 function descendants(ids: string[]) {
@@ -457,9 +496,14 @@ function descendants(ids: string[]) {
   }
   return result;
 }
-function resolveTargets(hostIds: string[] = [], groupIds: string[] = []) {
+function resolveTargets(hostIds: string[] = [], groupIds: string[] = [], tagIds: string[] = []) {
   const set = descendants(groupIds);
-  return [...new Set([...hostIds, ...hosts.filter((h) => h.group_id && set.has(h.group_id)).map((h) => h.id)])];
+  const tagSet = new Set(tagIds);
+  return [...new Set([
+    ...hostIds,
+    ...hosts.filter((h) => h.group_id && set.has(h.group_id)).map((h) => h.id),
+    ...hosts.filter((h) => h.tag_id && tagSet.has(h.tag_id)).map((h) => h.id),
+  ])];
 }
 function versionStatus(h: Host) {
   if (!h.has_agent) return "no_agent";
@@ -505,7 +549,7 @@ function taskOut(t: Task) {
 function scheduleOut(s: Schedule) {
   // Как на сервере: cron — время Екатеринбурга
   const next = nextRuns(s.cron_expression, 1)[0];
-  return { ...s, next_run_at: s.enabled && next ? next.date.toISOString() : null };
+  return { ...s, host_tag_ids: s.host_tag_ids ?? [], next_run_at: s.enabled && next ? next.date.toISOString() : null };
 }
 function credentialOut(c: Credential) {
   return {
@@ -923,7 +967,7 @@ route("PUT", "/playbooks/local/file", (ctx) => {
 route("DELETE", "/playbooks/local/file", (ctx) => { editor(ctx); localFiles.delete(String(ctx.query.get("path"))); return null; });
 route("POST", "/playbooks/run", (ctx) => {
   editor(ctx);
-  const ids = resolveTargets(ctx.body.host_ids, [...(ctx.body.host_group_ids ?? []), ...(ctx.body.host_group_id ? [ctx.body.host_group_id] : [])]);
+  const ids = resolveTargets(ctx.body.host_ids, [...(ctx.body.host_group_ids ?? []), ...(ctx.body.host_group_id ? [ctx.body.host_group_id] : [])], ctx.body.host_tag_ids);
   if (!ids.length) throw new HttpError(400, "Не выбраны хосты");
   const names: string[] = ctx.body.playbook_names?.length ? ctx.body.playbook_names : [ctx.body.playbook_name];
   const online = ids.filter((id) => hostById(id)?.status === "online");
@@ -969,8 +1013,8 @@ route("GET", "/playbooks/schedules", (ctx) => { editor(ctx); return schedules.ma
 route("POST", "/playbooks/schedules", (ctx) => {
   editor(ctx);
   if (!/^\S+ \S+ \S+ \S+ \S+$/.test(ctx.body.cron_expression.trim())) throw new HttpError(422, "Некорректное cron-выражение");
-  if (!ctx.body.host_ids?.length && !ctx.body.host_group_ids?.length) throw new HttpError(400, "Не выбраны хосты");
-  const s: Schedule = { id: uuid(), repo_id: ctx.body.repo_id, playbook_name: ctx.body.playbook_name, host_group_id: null, host_group_ids: ctx.body.host_group_ids ?? [], host_ids: ctx.body.host_ids ?? [], extra_vars: ctx.body.extra_vars ?? {}, cron_expression: ctx.body.cron_expression.trim(), enabled: ctx.body.enabled ?? true, created_at: now().toISOString() };
+  if (!ctx.body.host_ids?.length && !ctx.body.host_group_ids?.length && !ctx.body.host_tag_ids?.length) throw new HttpError(400, "Не выбраны хосты");
+  const s: Schedule = { id: uuid(), repo_id: ctx.body.repo_id, playbook_name: ctx.body.playbook_name, host_group_id: null, host_group_ids: ctx.body.host_group_ids ?? [], host_ids: ctx.body.host_ids ?? [], host_tag_ids: ctx.body.host_tag_ids ?? [], extra_vars: ctx.body.extra_vars ?? {}, cron_expression: ctx.body.cron_expression.trim(), enabled: ctx.body.enabled ?? true, created_at: now().toISOString() };
   schedules.unshift(s);
   return scheduleOut(s);
 });
@@ -981,6 +1025,89 @@ route("PATCH", "/playbooks/schedules/{id}", (ctx, p) => {
   Object.assign(s, ctx.body);
   return scheduleOut(s);
 });
+// Теги хостов (backend/routers/host_tags.py)
+function tagOut(t: Tag) {
+  const tagged = hosts.filter((h) => h.tag_id === t.id);
+  return {
+    ...t, host_count: tagged.length, manual_count: tagged.filter((h) => h.tag_manual).length,
+    rule_count: tagRules.filter((r) => r.tag_id === t.id).length, schedule_count: schedules.filter((s) => s.host_tag_ids?.includes(t.id)).length,
+  };
+}
+route("GET", "/host-tags", () => [...tags].sort((a, b) => a.name.localeCompare(b.name, "ru")).map(tagOut));
+route("POST", "/host-tags", (ctx) => {
+  admin(ctx);
+  const name = cleanText(ctx.body.name);
+  if (!name) throw new HttpError(422, "Название тега не может быть пустым");
+  if (tags.some((t) => t.name === name)) throw new HttpError(409, "Тег с таким названием уже есть");
+  const tag: Tag = { id: uuid(), name, description: cleanText(ctx.body.description) || null };
+  tags.push(tag);
+  return tagOut(tag);
+});
+route("PATCH", "/host-tags/{id}", (ctx, p) => {
+  admin(ctx);
+  const tag = find(tags, p.id, "Тег");
+  if ("name" in ctx.body) {
+    const name = cleanText(ctx.body.name);
+    if (!name) throw new HttpError(400, "Название тега не может быть пустым");
+    if (tags.some((t) => t.name === name && t.id !== tag.id)) throw new HttpError(409, "Тег с таким названием уже есть");
+    tag.name = name;
+  }
+  if ("description" in ctx.body) tag.description = cleanText(ctx.body.description) || null;
+  return tagOut(tag);
+});
+route("DELETE", "/host-tags/{id}", (ctx, p) => {
+  admin(ctx);
+  const tag = find(tags, p.id, "Тег");
+  const used = schedules.filter((s) => s.host_tag_ids?.includes(tag.id)).length;
+  if (used) throw new HttpError(409, `Тег — цель ${used} расписани${used === 1 ? "я" : "й"}: сначала уберите его из расписаний`);
+  hosts.filter((h) => h.tag_id === tag.id).forEach((h) => { h.tag_id = null; h.tag_manual = false; });
+  for (let i = tagRules.length - 1; i >= 0; i--) if (tagRules[i].tag_id === tag.id) tagRules.splice(i, 1);
+  tags.splice(tags.indexOf(tag), 1);
+  retagHosts();
+  return null;
+});
+route("GET", "/host-tags/models", () => {
+  const map = new Map<string, { manufacturer: string; model: string; host_count: number; manual_count: number; rule_id: string | null; tag_id: string | null }>();
+  for (const h of hosts) {
+    const key = modelKey(h.hw_manufacturer, h.hw_model);
+    if (!key) continue;
+    if (!map.has(key)) map.set(key, { manufacturer: h.hw_manufacturer!, model: h.hw_model!, host_count: 0, manual_count: 0, rule_id: null, tag_id: null });
+    const item = map.get(key)!;
+    item.host_count += 1;
+    if (h.tag_manual) item.manual_count += 1;
+  }
+  for (const r of tagRules) {
+    const key = modelKey(r.manufacturer, r.model)!;
+    if (!map.has(key)) map.set(key, { manufacturer: r.manufacturer, model: r.model, host_count: 0, manual_count: 0, rule_id: null, tag_id: null });
+    Object.assign(map.get(key)!, { rule_id: r.id, tag_id: r.tag_id });
+  }
+  return [...map.values()].sort((a, b) => b.host_count - a.host_count || a.manufacturer.localeCompare(b.manufacturer));
+});
+route("PUT", "/host-tags/rules", (ctx) => {
+  admin(ctx);
+  const key = modelKey(ctx.body.manufacturer, ctx.body.model);
+  if (!key) throw new HttpError(422, "Укажите производителя и модель");
+  if (ctx.body.tag_id) find(tags, ctx.body.tag_id, "Тег");
+  const existing = tagRules.find((r) => modelKey(r.manufacturer, r.model) === key);
+  if (!ctx.body.tag_id) { if (existing) tagRules.splice(tagRules.indexOf(existing), 1); }
+  else if (existing) existing.tag_id = ctx.body.tag_id;
+  else tagRules.push({ id: uuid(), manufacturer: cleanText(ctx.body.manufacturer), model: cleanText(ctx.body.model), tag_id: ctx.body.tag_id });
+  return { retagged: retagHosts() };
+});
+route("POST", "/host-tags/assign", (ctx) => {
+  editor(ctx);
+  const ids: string[] = ctx.body.host_ids ?? [];
+  if (!ids.length) throw new HttpError(422, "Необходимо выбрать хотя бы один хост");
+  if (ctx.body.tag_id) find(tags, ctx.body.tag_id, "Тег");
+  ids.forEach((id) => {
+    const h = find(hosts, id, "Хост");
+    if (ctx.body.by_rule) { h.tag_manual = false; h.tag_id = null; }
+    else { h.tag_manual = true; h.tag_id = ctx.body.tag_id ?? null; }
+  });
+  if (ctx.body.by_rule) retagHosts();
+  return { updated: ids.length };
+});
+
 route("DELETE", "/playbooks/schedules/{id}", (ctx, p) => { editor(ctx); schedules.splice(schedules.indexOf(find(schedules, p.id, "Расписание")), 1); return null; });
 
 // software

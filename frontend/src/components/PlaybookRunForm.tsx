@@ -6,6 +6,7 @@ import { apiClient } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { keys, useFleet, usePlaybookCatalog } from "../api/queries";
 import HostPicker from "./HostPicker";
+import { TagTargets, tagHostIds, useTagById } from "./HostTags";
 import PlaybookSelect, { catalogKey, rememberPlaybook } from "./PlaybookSelect";
 import ExtraVarsEditor, { VarPair, varsToObject } from "./ExtraVarsEditor";
 import Button from "./ui/Button";
@@ -37,7 +38,7 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
   const openTask = useOpenTask();
   const { user } = useAuth();
   const canEdit = user?.role === "admin"; // редактор плейбуков — только админ
-  const { tree, hostById } = useFleet();
+  const { tree, hostById, hosts } = useFleet();
   const catalog = usePlaybookCatalog();
   const repos = catalog.repos;
   // Ключи каталога repo_id::path по порядку выполнения: плейбуки всех источников в одном списке
@@ -59,6 +60,12 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
       return next;
     });
   const [selection, setSelection] = useState<Set<string>>(() => new Set(initialHostIds));
+  // Теги раскрываются в ПК на сервере в момент запуска (у расписания — при каждом срабатывании)
+  const [tagIds, setTagIds] = useState<Set<string>>(() => new Set());
+  const tagged = useMemo(() => tagHostIds(hosts, tagIds), [hosts, tagIds]);
+  const targets = useMemo(() => new Set([...selection, ...tagged]), [selection, tagged]);
+  const tagById = useTagById();
+  const hasTargets = selection.size > 0 || tagIds.size > 0;
   const [vars, setVars] = useState<VarPair[]>([]);
   const [cron, setCron] = useState(DEFAULT_CRON);
   // Выключенным ПК — общая ожидающая задача: запустится для каждого, когда он появится в сети
@@ -66,7 +73,7 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const offline = useMemo(() => [...selection].filter((id) => hostById.get(id)?.status !== "online").length, [selection, hostById]);
+  const offline = useMemo(() => [...targets].filter((id) => hostById.get(id)?.status !== "online").length, [targets, hostById]);
   const gitRepos = (repos.data ?? []).filter((r) => r.kind !== "local");
   // От чьего имени пойдёт плейбук (backend/services/run_as.py)
   const runAsHint =
@@ -91,11 +98,11 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
   }
 
   async function submit() {
-    if (!repoId || !playbook || selection.size === 0 || mixedSources || tooManyForSchedule) return;
+    if (!repoId || !playbook || !hasTargets || mixedSources || tooManyForSchedule) return;
     const { groupIds, hostIds } = compactSelection(tree, selection);
     setError(null);
     const what = chosen.length > 1 ? `${chosen.length} плейбука по очереди` : "плейбук";
-    if (mode === "now" && selection.size > 30 && !window.confirm(`Запустить ${what} на ${pcCount(selection.size)}?`)) return;
+    if (mode === "now" && targets.size > 30 && !window.confirm(`Запустить ${what} на ${pcCount(targets.size)}?`)) return;
     setBusy(true);
     try {
       if (mode === "now") {
@@ -104,6 +111,7 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
           playbook_names: chosen.map((f) => f.path),
           host_ids: hostIds,
           host_group_ids: groupIds,
+          host_tag_ids: [...tagIds],
           extra_vars: varsToObject(vars),
           defer_offline: deferOffline,
         });
@@ -118,6 +126,7 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
           playbook_name: playbook,
           host_ids: hostIds,
           host_group_ids: groupIds,
+          host_tag_ids: [...tagIds],
           extra_vars: varsToObject(vars),
           cron_expression: cron,
           enabled: true,
@@ -217,13 +226,21 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
 
       <section className="space-y-2">
         <label className="field-label mb-0">2. Хосты</label>
+        <TagTargets value={tagIds} onChange={setTagIds} hosts={hosts} />
         <HostPicker value={selection} onChange={setSelection} height={pickerHeight} />
+        {tagIds.size > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {tagIds.size > 1 ? "Теги" : "Тег"} {[...tagIds].map((id) => `«${tagById.get(id)?.name ?? "…"}»`).join(", ")}: {pcCount(tagged.length)}
+            {selection.size > 0 && ` + выбрано в дереве ${pcCount(selection.size)}, всего ${pcCount(targets.size)}`}
+            {mode === "schedule" && " — теги раскрываются при каждом запуске, новые ПК с тегом попадут в расписание сами"}.
+          </p>
+        )}
         {offline > 0 && mode === "now" && (
           <div className="flex items-start gap-2.5 text-xs">
             <Switch checked={deferOffline} onChange={setDeferOffline} label="Запустить на выключенных ПК, когда они появятся в сети" />
             <p className={deferOffline ? "text-muted-foreground" : "flex items-center gap-1.5 text-amber-600 dark:text-amber-400"}>
               {!deferOffline && <AlertTriangle className="h-3.5 w-3.5 shrink-0" />}
-              {offline} из {pcCount(selection.size)} сейчас не в сети.{" "}
+              {offline} из {pcCount(targets.size)} сейчас не в сети.{" "}
               {deferOffline
                 ? "На каждом из них задача запустится сама, когда он появится в сети (ждём до 7 дней)."
                 : "На них запуск, скорее всего, завершится ошибкой."}
@@ -233,7 +250,7 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
         {offline > 0 && mode === "schedule" && (
           <p className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
             <AlertTriangle className="h-3.5 w-3.5" />
-            {offline} из {pcCount(selection.size)} сейчас не в сети — если при срабатывании расписания они будут выключены, запуск на них завершится ошибкой
+            {offline} из {pcCount(targets.size)} сейчас не в сети — если при срабатывании расписания они будут выключены, запуск на них завершится ошибкой
           </p>
         )}
       </section>
@@ -266,7 +283,7 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
         {mode === "schedule" && (
           <div className="space-y-2">
             <CronEditor value={cron} onChange={setCron} />
-            <p className="text-xs text-subtle">Выбранные группы раскрываются при каждом запуске: новые ПК в аудитории попадут в расписание сами.</p>
+            <p className="text-xs text-subtle">Выбранные группы и теги раскрываются при каждом запуске: новые ПК в аудитории или с тегом попадут в расписание сами.</p>
           </div>
         )}
 
@@ -275,18 +292,18 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
           <Button
             onClick={submit}
             loading={busy}
-            disabled={!playbook || selection.size === 0 || mixedSources || tooManyForSchedule || (mode === "schedule" && !isValidCron(cron))}
+            disabled={!playbook || !hasTargets || mixedSources || tooManyForSchedule || (mode === "schedule" && !isValidCron(cron))}
           >
             {mode === "now" ? <Play className="h-4 w-4" /> : <CalendarClock className="h-4 w-4" />}
             {mode === "now"
               ? chosen.length > 1
-                ? `Запустить ${chosen.length} плейбука на ${pcCount(selection.size)}`
-                : `Запустить на ${pcCount(selection.size)}`
+                ? `Запустить ${chosen.length} плейбука на ${pcCount(targets.size)}`
+                : `Запустить на ${pcCount(targets.size)}`
               : "Создать расписание"}
           </Button>
           {runAsHint && <span className="text-xs text-subtle">{runAsHint}</span>}
           {!playbook && <span className="text-xs text-subtle">Выберите плейбук</span>}
-          {playbook && selection.size === 0 && <span className="text-xs text-subtle">Выберите хосты</span>}
+          {playbook && !hasTargets && <span className="text-xs text-subtle">Выберите хосты</span>}
         </div>
       </section>
     </div>

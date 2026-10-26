@@ -13,6 +13,28 @@ export interface HostGroup {
   is_auto: boolean;
 }
 
+/** Тег хоста — роль ПК («Студенты», «Администрация»), цель запуска плейбуков */
+export interface HostTag {
+  id: string;
+  name: string;
+  description: string | null;
+  host_count: number;
+  /** Из них с ручным тегом */
+  manual_count: number;
+  rule_count: number;
+  schedule_count: number;
+}
+
+/** Модель ПК в парке или из правила и тег, который ставит правило */
+export interface HostTagModel {
+  manufacturer: string;
+  model: string;
+  host_count: number;
+  manual_count: number;
+  rule_id: string | null;
+  tag_id: string | null;
+}
+
 export interface Host {
   id: string;
   ip_address: string | null;
@@ -23,6 +45,9 @@ export interface Host {
   last_checked_at: string | null;
   comment: string | null;
   credential_id: string | null;
+  /** Тег ПК: по правилу «производитель + модель» или вручную (tag_manual) */
+  tag_id?: string | null;
+  tag_manual?: boolean;
   has_agent: boolean;
   agent_version: string | null;
   agent_version_checked_at: string | null;
@@ -330,6 +355,7 @@ export interface Schedule {
   host_group_id: string | null;
   host_group_ids: string[];
   host_ids: string[];
+  host_tag_ids: string[];
   extra_vars: Record<string, string>;
   cron_expression: string;
   enabled: boolean;

@@ -13,6 +13,8 @@ import type {
   Credential,
   Host,
   HostGroup,
+  HostTag,
+  HostTagModel,
   InstallerFile,
   PlaybookFile,
   Repo,
@@ -37,6 +39,8 @@ export const queryClient = new QueryClient({
 export const keys = {
   hosts: ["hosts"] as const,
   groups: ["groups"] as const,
+  tags: ["host-tags"] as const,
+  tagModels: ["host-tags", "models"] as const,
   agentVersions: ["agent-versions"] as const,
   credentials: ["credentials"] as const,
   tasks: (params: Record<string, unknown>) => ["tasks", params] as const,
@@ -55,6 +59,8 @@ const get = <T,>(url: string, params?: Record<string, unknown>) => apiClient.get
 
 export const useHosts = () => useQuery({ queryKey: keys.hosts, queryFn: () => get<Host[]>("/hosts") });
 export const useGroups = () => useQuery({ queryKey: keys.groups, queryFn: () => get<HostGroup[]>("/hosts/groups") });
+export const useTags = () => useQuery({ queryKey: keys.tags, queryFn: () => get<HostTag[]>("/host-tags") });
+export const useTagModels = () => useQuery({ queryKey: keys.tagModels, queryFn: () => get<HostTagModel[]>("/host-tags/models") });
 export const useAgentVersions = () =>
   useQuery({ queryKey: keys.agentVersions, queryFn: () => get<AgentVersionOverview>("/agent/versions") });
 
