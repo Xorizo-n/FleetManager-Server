@@ -116,7 +116,7 @@ function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }
 
   async function retryFailed() {
     if (!task) return;
-    if (!window.confirm(`Запустить ${playbookShortName(task.playbook_name ?? "")} ещё раз на ${pcCount(failedHosts.length)} с ошибкой?`)) return;
+    if (!window.confirm(`Запустить «${taskTitle(task)}» ещё раз на ${pcCount(failedHosts.length)} с ошибкой?`)) return;
     setBusy("retry");
     try {
       const { data } = await apiClient.post<{ task_run_id: string }>("/playbooks/run", {
@@ -158,6 +158,8 @@ function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }
             <Meta label="Длительность">{formatDuration(task.started_at, task.finished_at)}</Meta>
             <Meta label="ПК">{task.host_ids.length}</Meta>
           </dl>
+
+          {task.playbook_description && <p className="text-sm text-muted-foreground">{task.playbook_description}</p>}
 
           {(task.chain?.length ?? 0) > 1 && <ChainSteps task={task} onOpen={openTask} />}
 
@@ -416,7 +418,7 @@ function ChainSteps({ task, onOpen }: { task: TaskRunDetail; onOpen: (id: string
                 }`}
               >
                 <span className="tabular-nums text-subtle">{index + 1}.</span>
-                {playbookShortName(step.playbook_name ?? "")}
+                {step.playbook_title || playbookShortName(step.playbook_name ?? "")}
                 <Badge status={step.status} className="px-1.5 py-0">{STATUS_LABELS[step.status] ?? step.status}</Badge>
               </button>
             </li>

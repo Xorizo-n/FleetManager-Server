@@ -24,10 +24,20 @@ class PlaybookRepoOut(BaseModel):
     created_at: datetime
 
 
+class PlaybookShareFileOut(BaseModel):
+    """Файл из шары, который берёт плейбук (fm_files): маска и есть ли он сейчас в шаре."""
+    pattern: str
+    present: bool
+    found: str | None = None
+
+
 class PlaybookFileOut(BaseModel):
     name: str
     path: str
     display_name: str | None = None
+    # fm_description и fm_files из vars первого play (services/playbook_meta.py)
+    description: str | None = None
+    files: list[PlaybookShareFileOut] = []
 
 
 def _validate_cron(value: str) -> str:
@@ -104,6 +114,8 @@ class PlaybookScheduleOut(BaseModel):
     owner_id: uuid.UUID | None = None
     owner_name: str | None = None
     owner_domain: bool = False
+    playbook_title: str | None = None
+    playbook_description: str | None = None
 
     @field_validator("host_group_ids", "host_ids", mode="before")
     @classmethod

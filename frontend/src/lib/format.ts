@@ -59,8 +59,8 @@ export function playbookShortName(path: string) {
   return path.split("/").pop()?.replace(/\.(yml|yaml)$/, "") ?? path;
 }
 
-export function taskTitle(task: Pick<TaskRun, "task_type" | "playbook_name">) {
-  if (task.task_type === "playbook" && task.playbook_name) return playbookShortName(task.playbook_name);
+export function taskTitle(task: Pick<TaskRun, "task_type" | "playbook_name" | "playbook_title">) {
+  if (task.task_type === "playbook" && task.playbook_name) return task.playbook_title || playbookShortName(task.playbook_name);
   return TASK_TYPE_LABELS[task.task_type] ?? task.task_type;
 }
 

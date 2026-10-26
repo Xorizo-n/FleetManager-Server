@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Clock } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Clock } from "lucide-react";
 import SearchInput from "./ui/SearchInput";
 import type { PlaybookFile } from "../api/types";
 import { playbookShortName } from "../lib/format";
@@ -20,6 +20,43 @@ export const catalogKey = (repoId: string, path: string) => `${repoId}::${path}`
 
 export function playbookLabel(file: PlaybookFile) {
   return file.display_name || playbookShortName(file.path).replace(/_/g, " ");
+}
+
+/** Маски fm_files, которых сейчас нет в шаре: такой плейбук упадёт на каждом ПК */
+export function missingShareFiles(file: PlaybookFile) {
+  return (file.files ?? []).filter((f) => !f.present).map((f) => f.pattern);
+}
+
+/** Что делает плейбук и какие файлы из шары берёт (fm_description, fm_files) — в форме запуска. */
+export function PlaybookDetails({ file, heading }: { file: PlaybookFile; heading?: string }) {
+  const files = file.files ?? [];
+  if (!file.description && files.length === 0) return null;
+  const missing = missingShareFiles(file);
+  return (
+    <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs">
+      {heading && <p className="mb-0.5 font-medium text-foreground">{heading}</p>}
+      {file.description && <p className="text-muted-foreground">{file.description}</p>}
+      {files.length > 0 && (
+        <ul className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1" aria-label="Файлы из шары">
+          {files.map((f) => (
+            <li
+              key={f.pattern}
+              className={`inline-flex items-center gap-1 font-mono ${f.present ? "text-subtle" : "text-amber-600 dark:text-amber-400"}`}
+              title={f.present ? `В шаре: ${f.found}` : `Нет в шаре: ${f.pattern}`}
+            >
+              {f.present ? <Check className="h-3 w-3 text-emerald-500" /> : <AlertTriangle className="h-3 w-3" />}
+              {f.found ?? f.pattern}
+            </li>
+          ))}
+        </ul>
+      )}
+      {missing.length > 0 && (
+        <p className="mt-1.5 text-amber-600 dark:text-amber-400">
+          В шаре /mnt/soft-share нет {missing.length === 1 ? "файла" : "файлов"} {missing.join(", ")} — плейбук завершится ошибкой на каждом ПК.
+        </p>
+      )}
+    </div>
+  );
 }
 
 /** Папка внутри репозитория без общего корня: playbooks/install/x.yml -> install */
@@ -76,7 +113,9 @@ export default function PlaybookSelect({ files, value, onChange, loading }: Prop
 
   const groups = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const matched = files.filter((f) => !q || f.path.toLowerCase().includes(q) || playbookLabel(f).toLowerCase().includes(q));
+    const matched = files.filter(
+      (f) => !q || f.path.toLowerCase().includes(q) || playbookLabel(f).toLowerCase().includes(q) || (f.description ?? "").toLowerCase().includes(q),
+    );
     const map = new Map<string, CatalogFile[]>();
     if (!q) {
       const recent = readRecent().map((p) => files.find((f) => isRecent(f, p))).filter((f): f is CatalogFile => !!f);
@@ -118,7 +157,7 @@ export default function PlaybookSelect({ files, value, onChange, loading }: Prop
       {open && (
         <div className="absolute left-0 right-0 top-full z-50 mt-1 animate-scale-in overflow-hidden rounded-xl border border-border bg-surface shadow-panel-lg">
           <div className="border-b border-border p-2">
-            <SearchInput value={search} onChange={setSearch} placeholder="Поиск по названию или файлу" autoFocus />
+            <SearchInput value={search} onChange={setSearch} placeholder="Поиск по названию, описанию или файлу" autoFocus />
           </div>
           <div className="max-h-80 overflow-y-auto" role="listbox">
             {groups.length === 0 && <p className="px-4 py-6 text-center text-sm text-subtle">Ничего не найдено</p>}
@@ -140,10 +179,23 @@ export default function PlaybookSelect({ files, value, onChange, loading }: Prop
                       setOpen(false);
                       setSearch("");
                     }}
-                    className={`flex w-full items-baseline justify-between gap-3 px-4 py-2 text-left hover:bg-muted ${f.key === value ? "bg-blue-500/10" : ""}`}
+                    className={`flex w-full flex-col gap-0.5 px-4 py-2 text-left hover:bg-muted ${f.key === value ? "bg-blue-500/10" : ""}`}
                   >
-                    <span className="truncate text-sm font-medium text-foreground">{playbookLabel(f)}</span>
-                    <span className="shrink-0 font-mono text-xs text-subtle">{f.name}</span>
+                    <span className="flex w-full items-baseline justify-between gap-3">
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span className="truncate text-sm font-medium text-foreground">{playbookLabel(f)}</span>
+                        {missingShareFiles(f).length > 0 && (
+                          <AlertTriangle
+                            className="h-3.5 w-3.5 shrink-0 text-amber-500"
+                            aria-label="Нет файла в шаре"
+                          >
+                            <title>{`Нет в шаре: ${missingShareFiles(f).join(", ")}`}</title>
+                          </AlertTriangle>
+                        )}
+                      </span>
+                      <span className="shrink-0 font-mono text-xs text-subtle">{f.name}</span>
+                    </span>
+                    {f.description && <span className="w-full truncate text-xs text-muted-foreground">{f.description}</span>}
                   </button>
                 ))}
               </div>

@@ -31,12 +31,16 @@ class TaskRunOut(BaseModel):
     after_task_id: uuid.UUID | None = None
     # Ответ на запуск: сколько ПК ждут появления в сети
     waiting_hosts: int = 0
+    # Понятное название и описание плейбука (services/playbook_meta.py); нет — показывается имя файла
+    playbook_title: str | None = None
+    playbook_description: str | None = None
 
 
 class ChainStep(BaseModel):
     """Плейбук цепочки, запущенной одним запуском, — для навигации по ней."""
     id: uuid.UUID
     playbook_name: str | None
+    playbook_title: str | None = None
     status: TaskStatus
 
 

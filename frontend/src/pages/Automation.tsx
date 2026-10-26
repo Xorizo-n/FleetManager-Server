@@ -99,7 +99,7 @@ function SchedulesTab() {
   }
 
   async function remove(schedule: Schedule) {
-    if (!window.confirm(`Удалить расписание «${playbookShortName(schedule.playbook_name)}»?`)) return;
+    if (!window.confirm(`Удалить расписание «${schedule.playbook_title || playbookShortName(schedule.playbook_name)}»?`)) return;
     await apiClient.delete(`/playbooks/schedules/${schedule.id}`);
     queryClient.invalidateQueries({ queryKey: keys.schedules });
     toast({ tone: "success", message: "Расписание удалено" });
@@ -136,7 +136,10 @@ function SchedulesTab() {
                   <Switch checked={s.enabled} onChange={(enabled) => patch(s, { enabled })} label={s.enabled ? "Выключить расписание" : "Включить расписание"} />
                 </td>
                 <td>
-                  <div className="font-medium text-foreground">{playbookShortName(s.playbook_name)}</div>
+                  <div className="font-medium text-foreground" title={s.playbook_description ?? undefined}>
+                    {s.playbook_title || playbookShortName(s.playbook_name)}
+                  </div>
+                  {s.playbook_description && <div className="max-w-md truncate text-xs text-muted-foreground">{s.playbook_description}</div>}
                   <div className="font-mono text-xs text-subtle">
                     {s.playbook_name}
                     {(repos.data?.length ?? 0) > 1 && ` · ${repos.data?.find((r) => r.id === s.repo_id)?.name}`}
