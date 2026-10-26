@@ -25,6 +25,13 @@ def _memory_gb(value) -> int | None:
     return round(value / GIB) if value else None
 
 
+def is_disk_list(serial) -> bool:
+    """«AirDisk 512GB SSD (477 GB), TOSHIBA DT02ABA200V (1863 GB)» вместо серийного номера:
+    так пишет старый скриптовый агент, ещё оставшийся на части ПК. Сравнивать его с серийным
+    номером BIOS нельзя — каждое его срабатывание давало алерт «Смена оборудования»."""
+    return isinstance(serial, str) and serial.strip().endswith("GB)")
+
+
 def _comparable(field: str, value):
     if field == "hw_total_memory_bytes":
         return _memory_gb(value)
@@ -56,6 +63,8 @@ def hardware_changes(host: Host, hardware, agent_version: str | None) -> list[st
         old = getattr(host, host_field)
         new = getattr(hardware, hardware_field)
         if old in (None, "") or new in (None, ""):
+            continue
+        if host_field == "hw_serial_number" and (is_disk_list(old) or is_disk_list(new)):
             continue
         if _comparable(host_field, old) != _comparable(host_field, new):
             changes.append(f"{label}: {_shown(host_field, old)} → {_shown(host_field, new)}")

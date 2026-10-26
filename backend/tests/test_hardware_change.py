@@ -62,6 +62,12 @@ class HardwareChangeTests(unittest.TestCase):
         self.assertEqual(hardware_changes(stored(hw_serial_number=None), reported(serial_number="X"), VERSION), [])
         self.assertEqual(hardware_changes(stored(), reported(processor=None), VERSION), [])
 
+    def test_disk_list_from_the_script_agent_is_not_a_serial_change(self):
+        # SU5-D113-OP, 23.10: скриптовый агент срабатывал между heartbeat настоящего
+        disks = "AirDisk 512GB SSD (477 GB), TOSHIBA DT02ABA200V (1863 GB), Samsung Portable SSD T5 SCSI Disk Device (466 GB)"
+        self.assertEqual(hardware_changes(stored(), reported(serial_number=disks), VERSION), [])
+        self.assertEqual(hardware_changes(stored(hw_serial_number=disks), reported(), VERSION), [])
+
     def test_only_reports_of_the_same_agent_version_are_compared(self):
         # Скриптовый агент писал модель диска в серийный номер
         old = stored(hw_serial_number="WD PC SN560 SDDPNQE-512G-1032 (477 GB)", hw_agent_version=None)
