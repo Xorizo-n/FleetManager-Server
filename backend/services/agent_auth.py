@@ -20,7 +20,7 @@ def verify_agent_token(token: str, token_hash: str) -> bool:
 CLONE_GUARD_WINDOW = timedelta(minutes=15)
 
 
-def _short_name(hostname: str) -> str:
+def short_name(hostname: str) -> str:
     return hostname.strip().split(".", 1)[0].lower()
 
 
@@ -39,6 +39,6 @@ def is_machine_id_clone(
     """
     if not host_hostname or not registering_hostname:
         return False
-    if _short_name(host_hostname) == _short_name(registering_hostname):
+    if short_name(host_hostname) == short_name(registering_hostname):
         return False
     return host_last_seen_at is not None and now - host_last_seen_at < CLONE_GUARD_WINDOW
