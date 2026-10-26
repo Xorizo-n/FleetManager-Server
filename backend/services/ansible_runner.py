@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -157,15 +158,37 @@ def playbook_matched_hosts(result, expected_hosts: set[str], observed_hosts: set
     return not expected_hosts or bool(observed.intersection(expected_hosts))
 
 
-def host_outcomes(result, expected_hosts: set[str], *, trusted: bool, fallback: TaskStatus) -> dict[str, str]:
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_RECAP_LINE = re.compile(r"^(\S+)\s*:\s*ok=\d+\s+changed=\d+\s+unreachable=(\d+)\s+failed=(\d+)", re.M)
+
+
+def recap_from_log(log_text: str | None) -> dict[str, bool]:
+    """Строки последнего PLAY RECAP из журнала: {хост: прошёл ли (unreachable=0 и failed=0)}."""
+    if not log_text or "PLAY RECAP" not in log_text:
+        return {}
+    recap = _ANSI.sub("", log_text.rsplit("PLAY RECAP", 1)[1])
+    return {m.group(1): m.group(2) == "0" and m.group(3) == "0" for m in _RECAP_LINE.finditer(recap)}
+
+
+def host_outcomes(result, expected_hosts: set[str], *, trusted: bool, fallback: TaskStatus,
+                  log_text: str | None = None) -> dict[str, str]:
     """Итог по каждому ПК из PLAY RECAP: failed — ошибка или недоступен, success — прошёл.
 
     Хост, которого нет в recap, плейбук не тронул (не подошёл ни одному play) — это
     ошибка. Если recap не напечатан (прогон оборвался), верить статистике нельзя:
     всем ПК — итог задачи целиком.
+
+    На длинных прогонах структурная статистика (playbook_on_stats) иногда не попадает в
+    result.stats, хотя recap напечатан (см. run_playbook_task). Тогда итог по ПК берётся из
+    строк PLAY RECAP в журнале — иначе один упавший ПК помечал ошибкой все: 497 ПК
+    hide_shutdown_button 26.10, из которых 490 прошли.
     """
     stats = getattr(result, "stats", None) or {}
     processed = set(stats.get("processed") or {})
+    if trusted and not processed:
+        recap = recap_from_log(log_text)
+        if recap:
+            return {host: "success" if recap.get(host) else "failed" for host in expected_hosts}
     if not trusted or not processed:
         state = "success" if fallback == TaskStatus.success else "failed"
         return {host: state for host in expected_hosts}
@@ -256,7 +279,8 @@ def run_playbook_task(self, task_run_id: str):
             task_run.log_output = (task_run.log_output or "") + "\n[ERROR] Playbook matched no hosts."
         else:
             task_run.status = TaskStatus.success
-        task_run.host_states = host_outcomes(result, expected_hosts, trusted=has_final_recap, fallback=task_run.status)
+        task_run.host_states = host_outcomes(result, expected_hosts, trusted=has_final_recap, fallback=task_run.status,
+                                             log_text=task_run.log_output)
         task_run.finished_at = datetime.now(timezone.utc)
         db.commit()
     except Exception as exc:  # noqa: BLE001

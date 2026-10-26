@@ -5,7 +5,7 @@ from unittest import mock
 
 from models.task import TaskStatus, TaskType
 from services import waiting_tasks
-from services.ansible_runner import host_outcomes
+from services.ansible_runner import host_outcomes, recap_from_log
 
 
 class _FakeDb:
@@ -125,6 +125,35 @@ class HostResultsTests(unittest.TestCase):
     def test_no_recap_means_task_status_for_all(self):
         result = SimpleNamespace(stats={"processed": {"a": 1}})
         self.assertEqual(host_outcomes(result, {"a", "b"}, trusted=False, fallback=TaskStatus.failed), {"a": "failed", "b": "failed"})
+
+    LOG = (
+        "[Fleet Manager] Выполняется от учётки установки агента\n"
+        "TASK [Check] ****\nok: [a]\nfatal: [b]: FAILED! => {}\n\n"
+        "PLAY RECAP *********************************************************************\n"
+        "a                          : ok=4    changed=1    unreachable=0    failed=0    skipped=3    rescued=0    ignored=0   \n"
+        "\x1b[0;31mb\x1b[0m                          : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=1   \n"
+        "c                          : ok=0    changed=0    unreachable=1    failed=0    skipped=0    rescued=0    ignored=0   \n"
+    )
+
+    def test_recap_from_the_log_when_stats_are_lost(self):
+        # Long runs: playbook_on_stats sometimes misses result.stats although the recap is printed
+        result = SimpleNamespace(stats=None)
+        self.assertEqual(host_outcomes(result, {"a", "b", "c", "d"}, trusted=True, fallback=TaskStatus.failed, log_text=self.LOG),
+                         {"a": "success", "b": "failed", "c": "failed", "d": "failed"})
+
+    def test_stats_win_over_the_log(self):
+        result = SimpleNamespace(stats={"processed": {"a": 1, "b": 1}, "failures": {"a": 1}})
+        self.assertEqual(host_outcomes(result, {"a", "b"}, trusted=True, fallback=TaskStatus.failed, log_text=self.LOG),
+                         {"a": "failed", "b": "success"})
+
+    def test_untrusted_run_ignores_the_log(self):
+        self.assertEqual(host_outcomes(SimpleNamespace(stats=None), {"a"}, trusted=False, fallback=TaskStatus.failed, log_text=self.LOG),
+                         {"a": "failed"})
+
+    def test_recap_parsing(self):
+        self.assertEqual(recap_from_log(self.LOG), {"a": True, "b": False, "c": False})
+        self.assertEqual(recap_from_log("no recap here"), {})
+        self.assertEqual(recap_from_log(None), {})
 
 
 class DispatchTests(unittest.TestCase):
