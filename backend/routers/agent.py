@@ -42,6 +42,7 @@ from services.agent_auth import hash_agent_token, is_machine_id_clone, issue_age
 from services.software_sync import sync_host_software
 from services.agent_ssh import generate_agent_keypair
 from services.ssh_health import needs_reinstall, ssh_blocked_reason, store_ssh_report
+from services.host_dedup import absorb_stale_twins, adoptable_host, reset_for_new_install
 from services.agent_version import (
     INSTALLER_FILENAME,
     STATUS_OUTDATED,
@@ -246,6 +247,11 @@ def register_agent(payload: AgentRegisterRequest, request: Request, db: Session 
         host = db.execute(
             select(Host).where(Host.agent_id.is_(None), Host.ip_address == payload.ip_address)
         ).scalar_one_or_none()
+    # Переустановленный ПК (чистая установка сбрасывает machine-id) занимает свою старую запись,
+    # если от неё давно нет heartbeat: история, группа, комментарий и задачи остаются при нём
+    adopted = None
+    if host is None:
+        adopted = host = adoptable_host(db, payload.hostname, now)
     raw_agent_token = issue_agent_token()
     ssh_public_key: str | None = None
     ssh_login: str | None = payload.ssh_login or "Administrator"
@@ -271,6 +277,9 @@ def register_agent(payload: AgentRegisterRequest, request: Request, db: Session 
         # uninstall can remove that automatically created host completely.
         if matched_existing_agent:
             host.is_agent_managed = True
+        if adopted is not None:
+            reset_for_new_install(host)
+            record_audit(db, None, "agent.register_adopted", f"{payload.hostname}: machine_id {host.agent_id} -> {payload.machine_id}", request)
         # A host found by name or address has no agent yet: bind it to this one.
         host.agent_id = payload.machine_id
         host.agent_token_hash = hash_agent_token(raw_agent_token)
@@ -425,6 +434,13 @@ def heartbeat(
     # Commit the host status first, on its own, so the machine always shows up
     # online even if the software inventory below has a problem.
     db.commit()
+
+    # Старые записи этого же ПК (до переустановки агента): данные переходят в самую старую
+    try:
+        host = absorb_stale_twins(db, host, now)
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.exception("Host dedup for %s", host.hostname)
 
     # Группа по имени: после переименования ПК переходит в группу своей аудитории.
     apply_auto_group(db, host)
