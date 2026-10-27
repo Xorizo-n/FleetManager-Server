@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import tempfile
@@ -16,8 +17,10 @@ from models.task import TaskRun, TaskStatus, TaskType
 from services.crypto import decrypt_secret
 from services.ssh_health import host_keys
 from services.inventory_generator import build_inventory_dict, host_group_credential, resolve_target_host_ids
-from services.schedule_targets import schedule_group_ids
+from services.schedule_targets import schedule_group_ids, schedule_tag_ids
 from services import run_as
+
+logger = logging.getLogger(__name__)
 
 
 def run_ansible(**kwargs):
@@ -319,7 +322,11 @@ def dispatch_scheduled_playbooks():
             if not schedule_is_due(schedule.cron_expression, now):
                 continue  # ничего не должно было сработать за последнюю минуту
 
-            host_ids = resolve_target_host_ids(db, schedule.host_ids or [], schedule_group_ids(schedule))
+            host_ids = resolve_target_host_ids(db, schedule.host_ids or [], schedule_group_ids(schedule), schedule_tag_ids(schedule))
+            if not host_ids:
+                # Пустой список хостов inventory понимает как «все ПК»: группа или тег опустели — пропускаем
+                logger.warning("Schedule %s: no hosts left in its targets, skipped", schedule.id)
+                continue
 
             task_run = TaskRun(
                 task_type=TaskType.playbook,

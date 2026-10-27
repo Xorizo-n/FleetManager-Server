@@ -11,6 +11,7 @@ import { ActivationCell } from "../../components/Activation";
 import { PeripheralCell } from "../../components/Workplace";
 import { cleanName, monitorTitle, presence } from "../../lib/devices";
 import { activationSeverity } from "../../lib/activation";
+import { TagBadge, useTagById } from "../../components/HostTags";
 
 export type ColumnSet = "main" | "hardware";
 type SortKey = "name" | "ip" | "status" | "agent" | "checked" | "disk" | "net" | "activation" | "devices";
@@ -63,6 +64,7 @@ const linkSpeed = (h: Host) => primaryAdapter(h)?.link_speed_bps ?? Number.MAX_S
 /** Реестр хостов: одна виртуализованная таблица, разделители по аудиториям. */
 export default function HostTable({ hosts, tree, versionOf, columns, grouped, selectable, selected, onToggle, onOpen, alertCounts }: Props) {
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "name", desc: false });
+  const tagById = useTagById();
   const listRef = useRef<HTMLDivElement>(null);
   const shellRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
@@ -240,6 +242,7 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
               <div className="min-w-0">
                 <div className="flex min-w-0 items-center gap-1.5">
                   <span className="truncate font-medium text-foreground">{hostLabel(h)}</span>
+                  {!mobile && h.tag_id && <TagBadge tag={tagById.get(h.tag_id)} manual={h.tag_manual} />}
                   {!!alertCounts?.get(h.id) && (
                     <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-amber-500/15 px-1 text-[11px] font-medium text-amber-700 dark:text-amber-300" title="Алерты агента — подробности в карточке, вкладка «Алерты»">
                       <BellRing className="h-3 w-3" />

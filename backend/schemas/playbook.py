@@ -58,6 +58,8 @@ class PlaybookRunRequest(BaseModel):
     # Группы раскрываются вместе с подгруппами: корпус = все его аудитории.
     host_group_ids: list[uuid.UUID] = []
     host_group_id: uuid.UUID | None = None  # прежний клиент: одна группа
+    # Теги: все ПК с тегом на момент запуска
+    host_tag_ids: list[uuid.UUID] = []
     extra_vars: dict = {}
     # Выключенные ПК получают общую ожидающую задачу, она запустится для них при появлении в сети
     defer_offline: bool = True
@@ -73,6 +75,7 @@ class PlaybookScheduleCreate(BaseModel):
     host_group_id: uuid.UUID | None = None
     host_group_ids: list[uuid.UUID] = []
     host_ids: list[uuid.UUID] = []
+    host_tag_ids: list[uuid.UUID] = []
     extra_vars: dict = {}
     cron_expression: str
     enabled: bool = True
@@ -87,6 +90,7 @@ class PlaybookScheduleUpdate(BaseModel):
     playbook_name: str | None = None
     host_group_ids: list[uuid.UUID] | None = None
     host_ids: list[uuid.UUID] | None = None
+    host_tag_ids: list[uuid.UUID] | None = None
     extra_vars: dict | None = None
     cron_expression: str | None = None
     enabled: bool | None = None
@@ -106,6 +110,7 @@ class PlaybookScheduleOut(BaseModel):
     host_group_id: uuid.UUID | None
     host_group_ids: list[uuid.UUID] = []
     host_ids: list[uuid.UUID] = []
+    host_tag_ids: list[uuid.UUID] = []
     extra_vars: dict = {}
     cron_expression: str
     enabled: bool
@@ -117,7 +122,7 @@ class PlaybookScheduleOut(BaseModel):
     playbook_title: str | None = None
     playbook_description: str | None = None
 
-    @field_validator("host_group_ids", "host_ids", mode="before")
+    @field_validator("host_group_ids", "host_ids", "host_tag_ids", mode="before")
     @classmethod
     def none_as_empty_list(cls, value):
         return value or []

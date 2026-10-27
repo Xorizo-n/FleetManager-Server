@@ -163,6 +163,9 @@ class HostOut(BaseModel):
     last_checked_at: datetime | None
     comment: str | None
     credential_id: uuid.UUID | None
+    # Тег ПК (services/host_tags.py); tag_manual — поставлен вручную, правила его не меняют
+    tag_id: uuid.UUID | None = None
+    tag_manual: bool = False
     has_agent: bool = False
     agent_version: str | None = None
     agent_version_checked_at: datetime | None = None
@@ -193,6 +196,11 @@ class HostOut(BaseModel):
     agent_update_target: str | None = None
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("tag_manual", mode="before")
+    @classmethod
+    def unsaved_host_has_no_manual_tag(cls, value):
+        return bool(value)
 
 
 class CsvImportResult(BaseModel):

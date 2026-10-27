@@ -13,9 +13,12 @@ import type {
   Credential,
   Host,
   HostGroup,
+  HostTag,
+  HostTagModel,
   InstallerFile,
   PlaybookFile,
   Repo,
+  RolloutRequest,
   Schedule,
   SoftwareItem,
   SoftwarePackage,
@@ -37,6 +40,8 @@ export const queryClient = new QueryClient({
 export const keys = {
   hosts: ["hosts"] as const,
   groups: ["groups"] as const,
+  tags: ["host-tags"] as const,
+  tagModels: ["host-tags", "models"] as const,
   agentVersions: ["agent-versions"] as const,
   credentials: ["credentials"] as const,
   tasks: (params: Record<string, unknown>) => ["tasks", params] as const,
@@ -49,12 +54,16 @@ export const keys = {
   packageHosts: (name: string) => ["package-hosts", name] as const,
   installers: ["installers"] as const,
   alerts: (hostId?: string) => ["alerts", hostId ?? "all"] as const,
+  rollouts: ["rollouts"] as const,
+  rolloutAssignees: ["rollouts", "assignees"] as const,
 };
 
 const get = <T,>(url: string, params?: Record<string, unknown>) => apiClient.get<T>(url, { params }).then((r) => r.data);
 
 export const useHosts = () => useQuery({ queryKey: keys.hosts, queryFn: () => get<Host[]>("/hosts") });
 export const useGroups = () => useQuery({ queryKey: keys.groups, queryFn: () => get<HostGroup[]>("/hosts/groups") });
+export const useTags = () => useQuery({ queryKey: keys.tags, queryFn: () => get<HostTag[]>("/host-tags") });
+export const useTagModels = () => useQuery({ queryKey: keys.tagModels, queryFn: () => get<HostTagModel[]>("/host-tags/models") });
 export const useAgentVersions = () =>
   useQuery({ queryKey: keys.agentVersions, queryFn: () => get<AgentVersionOverview>("/agent/versions") });
 
@@ -94,6 +103,10 @@ export function useFleet() {
 
 export const useTasks = (params: Record<string, unknown>, refetchInterval: number | false = 5000) =>
   useQuery({ queryKey: keys.tasks(params), queryFn: () => get<TaskRun[]>("/tasks", params), refetchInterval });
+
+export const useRollouts = () => useQuery({ queryKey: keys.rollouts, queryFn: () => get<RolloutRequest[]>("/rollouts"), refetchInterval: 30_000 });
+export const useRolloutAssignees = () =>
+  useQuery({ queryKey: keys.rolloutAssignees, queryFn: () => get<{ id: string; name: string }[]>("/rollouts/assignees"), staleTime: 300_000 });
 
 export const useTask = (id: string | null) =>
   useQuery({

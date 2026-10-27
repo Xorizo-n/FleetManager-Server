@@ -10,6 +10,7 @@ from config import settings
 from database import get_db
 from dependencies import require_roles
 from models.credential import Credential, CredentialType
+from models.host import HostTag
 from models.playbook import PlaybookRepo, PlaybookSchedule
 from models.task import TaskType
 from models.user import User, UserRole
@@ -32,7 +33,7 @@ from services.audit import record_audit
 from services.crypto import encrypt_secret, decrypt_secret
 from services.git_ssh import build_git_ssh_command
 from services.inventory_generator import resolve_target_host_ids
-from services.schedule_targets import schedule_group_ids, schedule_out
+from services.schedule_targets import schedule_group_ids, schedule_out, schedule_tag_ids
 from services.waiting_tasks import create_task_sequence, waiting_count
 
 
@@ -45,6 +46,15 @@ def _resolve_ssh_credential(db: Session, credential_id) -> Credential | None:
     if credential.type != CredentialType.ssh_key:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Для SSH-подключения нужен credential типа ssh_key")
     return credential
+
+def _require_tags(db: Session, tag_ids) -> None:
+    """Расписание хранит теги и раскрывает их при каждом запуске: несуществующий тег не сохраняем."""
+    if not tag_ids:
+        return
+    found = set(db.execute(select(HostTag.id).where(HostTag.id.in_(list(tag_ids)))).scalars().all())
+    if len(found) != len({str(t) for t in tag_ids}):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Тег не найден")
+
 
 router = APIRouter(prefix="/playbooks", tags=["playbooks"])
 # Управление репозиториями, запуск и расписания — админ и оператор.
@@ -283,7 +293,7 @@ def run_playbook(
     group_ids = list(payload.host_group_ids)
     if payload.host_group_id:
         group_ids.append(payload.host_group_id)
-    host_ids = resolve_target_host_ids(db, payload.host_ids, group_ids)
+    host_ids = resolve_target_host_ids(db, payload.host_ids, group_ids, payload.host_tag_ids)
 
     if not host_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Не выбраны хосты")
@@ -332,13 +342,15 @@ def create_schedule(
     group_ids = list(payload.host_group_ids)
     if payload.host_group_id:
         group_ids.append(payload.host_group_id)
-    if not group_ids and not payload.host_ids:
+    if not group_ids and not payload.host_ids and not payload.host_tag_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Не выбраны хосты")
+    _require_tags(db, payload.host_tag_ids)
     schedule = PlaybookSchedule(
         repo_id=payload.repo_id,
         playbook_name=payload.playbook_name,
         host_group_ids=list(dict.fromkeys(str(g) for g in group_ids)),
         host_ids=[str(h) for h in payload.host_ids],
+        host_tag_ids=list(dict.fromkeys(str(t) for t in payload.host_tag_ids)),
         extra_vars=payload.extra_vars,
         cron_expression=payload.cron_expression,
         enabled=payload.enabled,
@@ -364,14 +376,17 @@ def update_schedule(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Расписание не найдено")
 
     changes = payload.model_dump(exclude_unset=True)
-    if "host_group_ids" in changes or "host_ids" in changes:
+    if "host_group_ids" in changes or "host_ids" in changes or "host_tag_ids" in changes:
         group_ids = changes.get("host_group_ids", schedule_group_ids(schedule)) or []
         host_ids = changes.get("host_ids", schedule.host_ids) or []
-        if not group_ids and not host_ids:
+        tag_ids = changes.get("host_tag_ids", schedule_tag_ids(schedule)) or []
+        if not group_ids and not host_ids and not tag_ids:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Не выбраны хосты")
+        _require_tags(db, [t for t in tag_ids if str(t) not in schedule_tag_ids(schedule)])
         schedule.host_group_ids = list(dict.fromkeys(str(g) for g in group_ids))
         schedule.host_group_id = None  # цели теперь целиком в host_group_ids
         schedule.host_ids = [str(h) for h in host_ids]
+        schedule.host_tag_ids = list(dict.fromkeys(str(t) for t in tag_ids))
     for field in ("playbook_name", "extra_vars", "cron_expression", "enabled"):
         if changes.get(field) is not None:
             setattr(schedule, field, changes[field])

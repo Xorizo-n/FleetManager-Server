@@ -13,6 +13,28 @@ export interface HostGroup {
   is_auto: boolean;
 }
 
+/** Тег хоста — роль ПК («Студенты», «Администрация»), цель запуска плейбуков */
+export interface HostTag {
+  id: string;
+  name: string;
+  description: string | null;
+  host_count: number;
+  /** Из них с ручным тегом */
+  manual_count: number;
+  rule_count: number;
+  schedule_count: number;
+}
+
+/** Модель ПК в парке или из правила и тег, который ставит правило */
+export interface HostTagModel {
+  manufacturer: string;
+  model: string;
+  host_count: number;
+  manual_count: number;
+  rule_id: string | null;
+  tag_id: string | null;
+}
+
 export interface Host {
   id: string;
   ip_address: string | null;
@@ -23,6 +45,9 @@ export interface Host {
   last_checked_at: string | null;
   comment: string | null;
   credential_id: string | null;
+  /** Тег ПК: по правилу «производитель + модель» или вручную (tag_manual) */
+  tag_id?: string | null;
+  tag_manual?: boolean;
   has_agent: boolean;
   agent_version: string | null;
   agent_version_checked_at: string | null;
@@ -159,7 +184,7 @@ export interface Peripheral {
   device_class: string | null;
 }
 
-export type DeviceCategory = "system" | "baseboard" | "bios" | "memory" | "disk" | "gpu" | "monitor" | "keyboard" | "mouse" | "usb";
+export type DeviceCategory = "system" | "baseboard" | "bios" | "memory" | "disk" | "gpu" | "monitor" | "keyboard" | "mouse" | "usb" | "external_disk";
 
 export interface PendingDevice {
   category: DeviceCategory;
@@ -167,6 +192,8 @@ export interface PendingDevice {
   /** true — устройство пропало, false — появилось новое */
   missing: boolean;
   since: string;
+  /** Сколько изменение должно продержаться, чтобы попасть в журнал: 30 минут, внешний диск — 2 часа */
+  wait_minutes?: number;
 }
 
 export interface HardwareEvent {
@@ -342,6 +369,7 @@ export interface Schedule {
   host_group_id: string | null;
   host_group_ids: string[];
   host_ids: string[];
+  host_tag_ids: string[];
   extra_vars: Record<string, string>;
   cron_expression: string;
   enabled: boolean;
@@ -375,6 +403,7 @@ export interface InstallerFile {
   name: string;
   size: number;
   mtime: string;
+  distributed?: boolean | null;
 }
 
 export interface AlertSummary {
@@ -411,4 +440,55 @@ export interface SshState {
   path_ok?: boolean | null;
   host_keys?: string[];
   reported_at?: string;
+}
+
+/** Заявка на раскатку ПО (Задачи → Раскатка ПО), backend/routers/rollouts.py */
+export type RolloutStatus = "new" | "in_progress" | "blocked" | "done" | "cancelled";
+export type RolloutItemStatus = "todo" | "in_progress" | "blocked" | "done";
+
+/** Готовность по ПК: done — стоит, active — идёт или ждёт включения, failed — только ошибки, not_started — не запускалось */
+export interface RolloutProgress {
+  total: number;
+  done: number;
+  active: number;
+  failed: number;
+  not_started: number;
+}
+
+export interface RolloutItem {
+  id?: string;
+  software: string;
+  /** Подпись, если программа нужна не во всех аудиториях заявки */
+  rooms: string | null;
+  status: RolloutItemStatus;
+  note: string | null;
+  /** Группы аудиторий: по их ПК считается готовность */
+  host_group_ids: string[];
+  /** Запуски плейбуков, которыми ставилась программа */
+  task_run_ids: string[];
+  runs?: { id: string; status: TaskStatus; playbook_name: string | null; created_at: string | null; host_count: number }[];
+  /** null — ни аудиторий, ни запусков: статус ведётся вручную */
+  progress?: RolloutProgress | null;
+}
+
+export interface RolloutRequest {
+  id: string;
+  partner: string | null;
+  course: string;
+  rooms: string | null;
+  /** Когда занятия, как в заявке */
+  schedule: string | null;
+  /** Требования к ПО, как прислал партнёр */
+  requirements: string | null;
+  status: RolloutStatus;
+  assignee_id: string | null;
+  assignee_name: string | null;
+  due_date: string | null;
+  notes: string | null;
+  created_by_name: string | null;
+  created_at: string;
+  updated_at: string;
+  items: RolloutItem[];
+  /** Сумма по программам с подсчётом */
+  progress: RolloutProgress | null;
 }

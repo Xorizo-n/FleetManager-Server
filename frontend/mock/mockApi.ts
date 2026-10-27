@@ -41,6 +41,7 @@ interface Host {
   license_activation?: LicenseActivation | null; activation_windows?: ActivationState | null; activation_office?: ActivationState | null;
   hw_components?: HwComponents | null; hw_pending_devices?: PendingDevice[]; hw_changed_at?: string | null;
   wallpaper_state?: WallpaperState | null;
+  tag_id?: string | null; tag_manual?: boolean;
 }
 interface Credential { id: string; name: string; type: string; login: string | null; created_at: string; is_agent_managed: boolean }
 interface Software { id: string; host_id: string; name: string; version: string | null; install_method: string; status: string; detected_at: string }
@@ -54,7 +55,7 @@ interface Task {
 }
 interface Schedule {
   id: string; repo_id: string; playbook_name: string; host_group_id: string | null; host_group_ids: string[];
-  host_ids: string[]; extra_vars: Record<string, unknown>; cron_expression: string; enabled: boolean; created_at: string;
+  host_ids: string[]; host_tag_ids?: string[]; extra_vars: Record<string, unknown>; cron_expression: string; enabled: boolean; created_at: string;
 }
 
 const AVAILABLE_AGENT = "2026.10.10.9";
@@ -95,13 +96,21 @@ function addGroup(name: string, parent: string | null, isAuto = true, descriptio
   return g;
 }
 
+// Модели парка примерно в тех же долях, что на проде
+const IRBIS_STUDENT = { m: "IRBIS", model: "GDCS7001HA", cpu: "12th Gen Intel(R) Core(TM) i5-12400", ram: 16 };
 const HW = [
-  { m: "Micro-Star International Co., Ltd.", model: "Modern ADL-P AM272 (MS-AF82)", cpu: "12th Gen Intel(R) Core(TM) i7-1260P", ram: 16 },
-  { m: "ASRock", model: "B760 Pro RS/D4", cpu: "12th Gen Intel(R) Core(TM) i7-12700F", ram: 32 },
-  { m: "Micro-Star International Co., Ltd.", model: "MS-7D98", cpu: "Intel(R) Core(TM) i7-14700F", ram: 32 },
-  { m: "Lenovo", model: "ThinkCentre M70q Gen 3", cpu: "12th Gen Intel(R) Core(TM) i5-12400T", ram: 16 },
-  { m: "HP", model: "ProDesk 400 G7 SFF", cpu: "Intel(R) Core(TM) i5-10500", ram: 8 },
+  ...Array(7).fill(IRBIS_STUDENT),
+  { m: "IRBIS", model: "SDCS5007HA", cpu: "12th Gen Intel(R) Core(TM) i3-12100", ram: 8 },
+  { m: "Micro-Star International Co., Ltd.", model: "PRO H610 AP272 14M (MS-AF83)", cpu: "Intel(R) Core(TM) i5-14400", ram: 16 },
+  { m: "LENOVO", model: "F0J20046RU", cpu: "Intel(R) Core(TM) i5-10400T", ram: 8 },
+  { m: "System manufacturer", model: "System Product Name", cpu: "Intel(R) Core(TM) i7-14700F", ram: 32 },
 ];
+
+// Теги и правила «производитель + модель → тег» (backend/services/host_tags.py)
+interface Tag { id: string; name: string; description: string | null }
+interface TagRule { id: string; manufacturer: string; model: string; tag_id: string }
+const tags: Tag[] = [];
+const tagRules: TagRule[] = [];
 
 const SOFTWARE_POOL: [string, string[], number][] = [
   ["7-Zip 24.07 (x64)", ["24.07"], 0.95], ["Yandex Browser", ["25.8.1.842", "25.6.0.2370"], 0.97], ["Python 3.12.6 Core Interpreter (64-bit)", ["3.12.6150.0"], 0.8],
@@ -175,8 +184,14 @@ function makeWorkplace(host: Host) {
     input_devices: [...(noKeyboard ? [] : [KEYBOARD]), ...(noMouse ? [] : [MOUSE])],
     usb_devices: [...(chance(0.3) ? [{ kind: "usb" as const, name: "Logitech USB Headset", vid: "046D", pid: "0A45", serial: null, device_class: "USB" }] : []), { kind: "usb" as const, name: "MYSTIC LIGHT", vid: "1462", pid: "7D99", serial: "7D9924101807", device_class: "HIDClass" }],
   };
+  // Внешний USB-SSD (Windows показывает его с шиной SCSI) — учитывается, если подключён 2 часа
+  const t7 = host.status === "online" && chance(0.05);
+  if (t7) components.physical_disks.push({ model: "Samsung PSSD T7 SCSI Disk Device", serial_number: "W546501Y0SNEM7S", bus_type: "SCSI", size_bytes: 1000204886016 });
   host.hw_components = components;
-  host.hw_pending_devices = host.status === "online" && chance(0.03) ? [{ category: "mouse", item: MOUSE, missing: true, since: minutesAgo(Math.floor(rnd() * 25)) }] : [];
+  host.hw_pending_devices = [
+    ...(host.status === "online" && chance(0.03) ? [{ category: "mouse" as const, item: MOUSE, missing: true, since: minutesAgo(Math.floor(rnd() * 25)), wait_minutes: 30 }] : []),
+    ...(t7 ? [{ category: "external_disk" as const, item: components.physical_disks[components.physical_disks.length - 1], missing: false, since: minutesAgo(Math.floor(rnd() * 100)), wait_minutes: 120 }] : []),
+  ];
   const log = (minutes: number, category: HardwareEvent["category"], action: HardwareEvent["action"], summary: string) => {
     hardwareEvents.push({ id: uuid(), host_id: host.id, hostname: host.hostname, category, action, summary, details: null, created_at: minutesAgo(minutes) });
     host.hw_changed_at = host.hw_changed_at && host.hw_changed_at > minutesAgo(minutes) ? host.hw_changed_at : minutesAgo(minutes);
@@ -373,11 +388,21 @@ const playbookFiles = [
   ...INSTALL.map((n) => ({ name: `install_${n}.yml`, path: `playbooks/install/install_${n}.yml`, display_name: `Install ${n.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}` })),
 ];
 
-const installers = [
-  { name: "FleetManagerAgent-Setup.exe", size: 18_400_000, mtime: minutesAgo(300) },
-  { name: "FleetManagerAgent-Setup.exe.version", size: 12, mtime: minutesAgo(300) },
-  ...["7z2407-x64.exe", "ChromeSetup.exe", "VSCodeSetup-x64-1.104.3.exe", "Git-2.51.0-64-bit.exe", "python-3.13.7-amd64.exe", "vlc-3.0.21-win64.exe", "kompas3d-v23.exe", "termidesk-5.1.2.msi", "veyon-4.9.7-win64-setup.exe", "MATLAB_Runtime_R2021a_Update_8_win64.zip"].map((name, i) => ({ name, size: Math.floor(5e6 + rnd() * 2e9), mtime: minutesAgo(60 * 24 * (i + 3)) })),
+const installers: { name: string; size: number; mtime: string; distributed: boolean | null }[] = [
+  { name: "FleetManagerAgent-Setup.exe", size: 18_400_000, mtime: minutesAgo(300), distributed: true },
+  { name: "FleetManagerAgent-Setup.exe.version", size: 12, mtime: minutesAgo(300), distributed: true },
+  ...["7z2407-x64.exe", "ChromeSetup.exe", "VSCodeSetup-x64-1.104.3.exe", "Git-2.51.0-64-bit.exe", "python-3.13.7-amd64.exe", "vlc-3.0.21-win64.exe", "kompas3d-v23.exe", "termidesk-5.1.2.msi", "veyon-4.9.7-win64-setup.exe", "MATLAB_Runtime_R2021a_Update_8_win64.zip"].map((name, i) => ({ name, size: Math.floor(5e6 + rnd() * 2e9), mtime: minutesAgo(60 * 24 * (i + 3)), distributed: i !== 2 })),
 ];
+// Точка раздачи (services/distribution.py): синхронизация «идёт» 6 секунд
+let distSyncUntil = 0;
+let distSyncedAt = minutesAgo(7);
+function distributionState() {
+  const running = Date.now() < distSyncUntil;
+  if (!running && distSyncUntil) { distSyncUntil = 0; distSyncedAt = now().toISOString(); installers.forEach((f) => { f.distributed = true; }); }
+  const done = installers.filter((f) => f.distributed);
+  return { enabled: true, url: "http://10.152.240.10:8088", running, healthy: true, checked_at: distSyncedAt, last_attempt: distSyncedAt,
+    last_success: distSyncedAt, error: null, files: done.length, bytes: done.reduce((a, f) => a + f.size, 0), pending: 0 };
+}
 const tokens = [
   { id: uuid(), name: "NVK-SU5", expires_at: null, is_active: true, created_at: minutesAgo(60 * 24 * 40), installer_available: true },
   { id: uuid(), name: "P-411-autoinstall", expires_at: null, is_active: true, created_at: minutesAgo(60 * 24 * 20), installer_available: true },
@@ -428,6 +453,36 @@ for (const [i, host] of hosts.filter((h) => h.status === "offline").slice(0, 6).
   });
 }
 
+for (const [name, models] of [
+  ["Студенты", [["IRBIS", "GDCS7001HA"]]],
+  ["Семинарские", [["IRBIS", "SDCS5007HA"]]],
+  ["Администрация", [["LENOVO", "F0J20046RU"], ["LENOVO", "F0HM00DSRU"], ["Micro-Star International Co., Ltd.", "PRO H610 AP272 14M (MS-AF83)"]]],
+] as [string, [string, string][]][]) {
+  const tag: Tag = { id: uuid(), name, description: null };
+  tags.push(tag);
+  models.forEach(([m, model]) => tagRules.push({ id: uuid(), manufacturer: m, model, tag_id: tag.id }));
+}
+const cleanText = (v: unknown) => (typeof v === "string" ? v.split(/\s+/).filter(Boolean).join(" ") : "");
+const modelKey = (m: unknown, model: unknown) => {
+  const a = cleanText(m).toLowerCase();
+  const b = cleanText(model).toLowerCase();
+  return a && b ? `${a}|${b}` : null;
+};
+function retagHosts() {
+  const rules = new Map(tagRules.map((r) => [modelKey(r.manufacturer, r.model), r.tag_id]));
+  let changed = 0;
+  for (const h of hosts) {
+    if (h.tag_manual) continue;
+    const key = modelKey(h.hw_manufacturer, h.hw_model);
+    const tagId = (key && rules.get(key)) || null;
+    if ((h.tag_id ?? null) !== tagId) { h.tag_id = tagId; changed += 1; }
+  }
+  return changed;
+}
+retagHosts();
+// Пара преподавательских ПК в аудиториях помечена вручную
+hosts.filter((h) => h.hostname?.endsWith("-02")).slice(0, 3).forEach((h) => { h.tag_id = tags[2].id; h.tag_manual = true; });
+
 // ---------- помощники ----------
 const hostById = (id: string) => hosts.find((h) => h.id === id);
 function descendants(ids: string[]) {
@@ -441,9 +496,14 @@ function descendants(ids: string[]) {
   }
   return result;
 }
-function resolveTargets(hostIds: string[] = [], groupIds: string[] = []) {
+function resolveTargets(hostIds: string[] = [], groupIds: string[] = [], tagIds: string[] = []) {
   const set = descendants(groupIds);
-  return [...new Set([...hostIds, ...hosts.filter((h) => h.group_id && set.has(h.group_id)).map((h) => h.id)])];
+  const tagSet = new Set(tagIds);
+  return [...new Set([
+    ...hostIds,
+    ...hosts.filter((h) => h.group_id && set.has(h.group_id)).map((h) => h.id),
+    ...hosts.filter((h) => h.tag_id && tagSet.has(h.tag_id)).map((h) => h.id),
+  ])];
 }
 function versionStatus(h: Host) {
   if (!h.has_agent) return "no_agent";
@@ -489,7 +549,7 @@ function taskOut(t: Task) {
 function scheduleOut(s: Schedule) {
   // Как на сервере: cron — время Екатеринбурга
   const next = nextRuns(s.cron_expression, 1)[0];
-  return { ...s, next_run_at: s.enabled && next ? next.date.toISOString() : null };
+  return { ...s, host_tag_ids: s.host_tag_ids ?? [], next_run_at: s.enabled && next ? next.date.toISOString() : null };
 }
 function credentialOut(c: Credential) {
   return {
@@ -861,8 +921,10 @@ route("GET", "/hardware", () => hosts.map((h) => ({ id: h.id, hostname: h.hostna
 
 // installers
 route("GET", "/installers", () => installers);
-route("POST", "/installers", (ctx) => { editor(ctx); const f = { name: `uploaded-${installers.length}.exe`, size: 1_000_000, mtime: now().toISOString() }; installers.push(f); return { name: f.name, size: f.size, replaced: false }; });
+route("POST", "/installers", (ctx) => { editor(ctx); const f = { name: `uploaded-${installers.length}.exe`, size: 1_000_000, mtime: now().toISOString(), distributed: false }; installers.push(f); return { name: f.name, size: f.size, replaced: false }; });
 route("DELETE", "/installers/{name}", (ctx, p) => { editor(ctx); const i = installers.findIndex((f) => f.name === decodeURIComponent(p.name)); if (i >= 0) installers.splice(i, 1); return null; });
+route("GET", "/installers/distribution", () => distributionState());
+route("POST", "/installers/distribution/sync", (ctx) => { editor(ctx); distSyncUntil = Date.now() + 6000; return distributionState(); });
 route("GET", "/installers/{name}/download", () => "mock-file");
 route("POST", "/installers/agent/sync", (ctx) => { editor(ctx); return { updated: false, version: AVAILABLE_AGENT, reason: `Установлена последняя версия ${AVAILABLE_AGENT}` }; });
 
@@ -905,7 +967,7 @@ route("PUT", "/playbooks/local/file", (ctx) => {
 route("DELETE", "/playbooks/local/file", (ctx) => { editor(ctx); localFiles.delete(String(ctx.query.get("path"))); return null; });
 route("POST", "/playbooks/run", (ctx) => {
   editor(ctx);
-  const ids = resolveTargets(ctx.body.host_ids, [...(ctx.body.host_group_ids ?? []), ...(ctx.body.host_group_id ? [ctx.body.host_group_id] : [])]);
+  const ids = resolveTargets(ctx.body.host_ids, [...(ctx.body.host_group_ids ?? []), ...(ctx.body.host_group_id ? [ctx.body.host_group_id] : [])], ctx.body.host_tag_ids);
   if (!ids.length) throw new HttpError(400, "Не выбраны хосты");
   const names: string[] = ctx.body.playbook_names?.length ? ctx.body.playbook_names : [ctx.body.playbook_name];
   const online = ids.filter((id) => hostById(id)?.status === "online");
@@ -951,8 +1013,8 @@ route("GET", "/playbooks/schedules", (ctx) => { editor(ctx); return schedules.ma
 route("POST", "/playbooks/schedules", (ctx) => {
   editor(ctx);
   if (!/^\S+ \S+ \S+ \S+ \S+$/.test(ctx.body.cron_expression.trim())) throw new HttpError(422, "Некорректное cron-выражение");
-  if (!ctx.body.host_ids?.length && !ctx.body.host_group_ids?.length) throw new HttpError(400, "Не выбраны хосты");
-  const s: Schedule = { id: uuid(), repo_id: ctx.body.repo_id, playbook_name: ctx.body.playbook_name, host_group_id: null, host_group_ids: ctx.body.host_group_ids ?? [], host_ids: ctx.body.host_ids ?? [], extra_vars: ctx.body.extra_vars ?? {}, cron_expression: ctx.body.cron_expression.trim(), enabled: ctx.body.enabled ?? true, created_at: now().toISOString() };
+  if (!ctx.body.host_ids?.length && !ctx.body.host_group_ids?.length && !ctx.body.host_tag_ids?.length) throw new HttpError(400, "Не выбраны хосты");
+  const s: Schedule = { id: uuid(), repo_id: ctx.body.repo_id, playbook_name: ctx.body.playbook_name, host_group_id: null, host_group_ids: ctx.body.host_group_ids ?? [], host_ids: ctx.body.host_ids ?? [], host_tag_ids: ctx.body.host_tag_ids ?? [], extra_vars: ctx.body.extra_vars ?? {}, cron_expression: ctx.body.cron_expression.trim(), enabled: ctx.body.enabled ?? true, created_at: now().toISOString() };
   schedules.unshift(s);
   return scheduleOut(s);
 });
@@ -963,6 +1025,89 @@ route("PATCH", "/playbooks/schedules/{id}", (ctx, p) => {
   Object.assign(s, ctx.body);
   return scheduleOut(s);
 });
+// Теги хостов (backend/routers/host_tags.py)
+function tagOut(t: Tag) {
+  const tagged = hosts.filter((h) => h.tag_id === t.id);
+  return {
+    ...t, host_count: tagged.length, manual_count: tagged.filter((h) => h.tag_manual).length,
+    rule_count: tagRules.filter((r) => r.tag_id === t.id).length, schedule_count: schedules.filter((s) => s.host_tag_ids?.includes(t.id)).length,
+  };
+}
+route("GET", "/host-tags", () => [...tags].sort((a, b) => a.name.localeCompare(b.name, "ru")).map(tagOut));
+route("POST", "/host-tags", (ctx) => {
+  admin(ctx);
+  const name = cleanText(ctx.body.name);
+  if (!name) throw new HttpError(422, "Название тега не может быть пустым");
+  if (tags.some((t) => t.name === name)) throw new HttpError(409, "Тег с таким названием уже есть");
+  const tag: Tag = { id: uuid(), name, description: cleanText(ctx.body.description) || null };
+  tags.push(tag);
+  return tagOut(tag);
+});
+route("PATCH", "/host-tags/{id}", (ctx, p) => {
+  admin(ctx);
+  const tag = find(tags, p.id, "Тег");
+  if ("name" in ctx.body) {
+    const name = cleanText(ctx.body.name);
+    if (!name) throw new HttpError(400, "Название тега не может быть пустым");
+    if (tags.some((t) => t.name === name && t.id !== tag.id)) throw new HttpError(409, "Тег с таким названием уже есть");
+    tag.name = name;
+  }
+  if ("description" in ctx.body) tag.description = cleanText(ctx.body.description) || null;
+  return tagOut(tag);
+});
+route("DELETE", "/host-tags/{id}", (ctx, p) => {
+  admin(ctx);
+  const tag = find(tags, p.id, "Тег");
+  const used = schedules.filter((s) => s.host_tag_ids?.includes(tag.id)).length;
+  if (used) throw new HttpError(409, `Тег — цель ${used} расписани${used === 1 ? "я" : "й"}: сначала уберите его из расписаний`);
+  hosts.filter((h) => h.tag_id === tag.id).forEach((h) => { h.tag_id = null; h.tag_manual = false; });
+  for (let i = tagRules.length - 1; i >= 0; i--) if (tagRules[i].tag_id === tag.id) tagRules.splice(i, 1);
+  tags.splice(tags.indexOf(tag), 1);
+  retagHosts();
+  return null;
+});
+route("GET", "/host-tags/models", () => {
+  const map = new Map<string, { manufacturer: string; model: string; host_count: number; manual_count: number; rule_id: string | null; tag_id: string | null }>();
+  for (const h of hosts) {
+    const key = modelKey(h.hw_manufacturer, h.hw_model);
+    if (!key) continue;
+    if (!map.has(key)) map.set(key, { manufacturer: h.hw_manufacturer!, model: h.hw_model!, host_count: 0, manual_count: 0, rule_id: null, tag_id: null });
+    const item = map.get(key)!;
+    item.host_count += 1;
+    if (h.tag_manual) item.manual_count += 1;
+  }
+  for (const r of tagRules) {
+    const key = modelKey(r.manufacturer, r.model)!;
+    if (!map.has(key)) map.set(key, { manufacturer: r.manufacturer, model: r.model, host_count: 0, manual_count: 0, rule_id: null, tag_id: null });
+    Object.assign(map.get(key)!, { rule_id: r.id, tag_id: r.tag_id });
+  }
+  return [...map.values()].sort((a, b) => b.host_count - a.host_count || a.manufacturer.localeCompare(b.manufacturer));
+});
+route("PUT", "/host-tags/rules", (ctx) => {
+  admin(ctx);
+  const key = modelKey(ctx.body.manufacturer, ctx.body.model);
+  if (!key) throw new HttpError(422, "Укажите производителя и модель");
+  if (ctx.body.tag_id) find(tags, ctx.body.tag_id, "Тег");
+  const existing = tagRules.find((r) => modelKey(r.manufacturer, r.model) === key);
+  if (!ctx.body.tag_id) { if (existing) tagRules.splice(tagRules.indexOf(existing), 1); }
+  else if (existing) existing.tag_id = ctx.body.tag_id;
+  else tagRules.push({ id: uuid(), manufacturer: cleanText(ctx.body.manufacturer), model: cleanText(ctx.body.model), tag_id: ctx.body.tag_id });
+  return { retagged: retagHosts() };
+});
+route("POST", "/host-tags/assign", (ctx) => {
+  editor(ctx);
+  const ids: string[] = ctx.body.host_ids ?? [];
+  if (!ids.length) throw new HttpError(422, "Необходимо выбрать хотя бы один хост");
+  if (ctx.body.tag_id) find(tags, ctx.body.tag_id, "Тег");
+  ids.forEach((id) => {
+    const h = find(hosts, id, "Хост");
+    if (ctx.body.by_rule) { h.tag_manual = false; h.tag_id = null; }
+    else { h.tag_manual = true; h.tag_id = ctx.body.tag_id ?? null; }
+  });
+  if (ctx.body.by_rule) retagHosts();
+  return { updated: ids.length };
+});
+
 route("DELETE", "/playbooks/schedules/{id}", (ctx, p) => { editor(ctx); schedules.splice(schedules.indexOf(find(schedules, p.id, "Расписание")), 1); return null; });
 
 // software
@@ -991,6 +1136,110 @@ route("GET", "/software/history", ({ query }) => history.filter((h) => !query.ge
 route("POST", "/software/scan", (ctx) => { editor(ctx); return { task_run_id: startTask("software_scan", ctx.body.host_ids, ctx.user!.id).id }; });
 route("GET", "/software/export.csv", () => "name,version\n");
 route("GET", "/software/export.pdf", () => "%PDF-mock");
+
+// rollouts — тот же контракт, что backend/routers/rollouts.py
+type RolloutItemMock = {
+  id: string; software: string; rooms: string | null; status: string; note: string | null; host_group_ids: string[]; task_run_ids: string[];
+};
+type RolloutMock = {
+  id: string; partner: string | null; course: string; rooms: string | null; schedule: string | null; requirements: string | null;
+  status: string; assignee_id: string | null; due_date: string | null; notes: string | null; created_by: string | null;
+  created_at: string; updated_at: string; items: RolloutItemMock[];
+};
+const rolloutItem = (i: Partial<RolloutItemMock> & { software: string }): RolloutItemMock =>
+  ({ id: uuid(), rooms: null, status: "todo", note: null, host_group_ids: [], task_run_ids: [], ...i });
+const firstRoom = groups.find((g) => hosts.some((h) => h.group_id === g.id));
+const rollouts: RolloutMock[] = [
+  {
+    id: uuid(), partner: "Фирма «1С»", course: "Разработка на бизнес-ориентированных языках (часть 1)", rooms: "K-103", schedule: "Вторник, 3 пара",
+    requirements: "Платформа 1С 8.3.27 (клиент, на ПК преподавателя — и сервер), Git 2.55, GitExtensions 7.2, 1C:EDT 2026.1", status: "blocked",
+    assignee_id: users[1].id, due_date: "2026-10-27", notes: "Сервер ждёт 64-битный дистрибутив", created_by: users[1].id,
+    created_at: new Date(Date.now() - 4 * 86_400_000).toISOString(), updated_at: new Date().toISOString(),
+    items: [
+      rolloutItem({ software: "1С 8.3.27 клиент", status: "in_progress", host_group_ids: firstRoom ? [firstRoom.id] : [] }),
+      rolloutItem({ software: "Git 2.55", status: "done" }),
+      rolloutItem({ software: "Сервер 1С 8.3.27", rooms: "K-103-OP", status: "blocked", note: "нет windows64full_8_3_27_2342" }),
+    ],
+  },
+  {
+    id: uuid(), partner: "Контур", course: "Программирование (БВО)", rooms: "D108, K305, D102", schedule: "Четверг 16:00–19:10", requirements: ".NET SDK 10",
+    status: "done", assignee_id: users[3].id, due_date: null, notes: null, created_by: users[0].id,
+    created_at: new Date(Date.now() - 6 * 86_400_000).toISOString(), updated_at: new Date().toISOString(),
+    items: [rolloutItem({ software: ".NET SDK 10", status: "done" })],
+  },
+];
+const userName = (id: string | null) => {
+  const u = users.find((x) => x.id === id) as { username: string; display_name?: string } | undefined;
+  return u ? u.display_name ?? u.username : null;
+};
+const RANK: Record<string, number> = { success: 6, running: 5, queued: 4, ready: 3, waiting: 3, pending: 3, failed: 2, cancelled: 1 };
+function rolloutProgress(item: RolloutItemMock) {
+  const runs = item.task_run_ids.map((id) => tasks.find((t) => t.id === id)).filter((t): t is Task => !!t);
+  const targets = item.host_group_ids.length ? hosts.filter((h) => h.group_id && item.host_group_ids.includes(h.group_id)).map((h) => h.id) : null;
+  if (!targets?.length && !runs.length) return null;
+  const best: Record<string, string> = {};
+  for (const t of runs) {
+    for (const h of t.host_ids) {
+      const state = t.host_states?.[h] ?? t.status;
+      if ((RANK[state] ?? 0) > (RANK[best[h]] ?? 0)) best[h] = state;
+    }
+  }
+  const all = targets?.length ? targets : Object.keys(best);
+  const p = { total: all.length, done: 0, active: 0, failed: 0, not_started: 0 };
+  for (const h of all) {
+    const state = best[h];
+    if (state === "success") p.done++;
+    else if (["running", "queued", "ready", "waiting", "pending"].includes(state)) p.active++;
+    else if (state === "failed") p.failed++;
+    else p.not_started++;
+  }
+  return p;
+}
+function rolloutOut(r: RolloutMock) {
+  const items = r.items.map((i) => ({
+    ...i,
+    runs: i.task_run_ids.map((id) => tasks.find((t) => t.id === id)).filter((t): t is Task => !!t)
+      .map((t) => ({ id: t.id, status: t.status, playbook_name: t.playbook_name, created_at: t.created_at, host_count: t.host_ids.length })),
+    progress: rolloutProgress(i),
+  }));
+  const total = { total: 0, done: 0, active: 0, failed: 0, not_started: 0 };
+  items.forEach((i) => i.progress && (Object.keys(total) as (keyof typeof total)[]).forEach((k) => (total[k] += i.progress![k])));
+  return { ...r, assignee_name: userName(r.assignee_id), created_by_name: userName(r.created_by), items, progress: total.total ? total : null };
+}
+function rolloutFields(body: any, base?: RolloutMock): RolloutMock {
+  const text = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  const pick = (k: keyof RolloutMock) => (k in body ? text(body[k]) : base ? base[k] : null) as string | null;
+  const course = pick("course");
+  if (!course) throw new HttpError(422, "Укажите курс");
+  return {
+    id: base?.id ?? uuid(), partner: pick("partner"), course, rooms: pick("rooms"), schedule: pick("schedule"), requirements: pick("requirements"),
+    status: body.status ?? base?.status ?? "new", assignee_id: "assignee_id" in body ? body.assignee_id || null : base?.assignee_id ?? null,
+    due_date: "due_date" in body ? body.due_date || null : base?.due_date ?? null, notes: pick("notes"),
+    created_by: base?.created_by ?? null, created_at: base?.created_at ?? new Date().toISOString(), updated_at: new Date().toISOString(),
+    items: Array.isArray(body.items)
+      ? body.items.filter((i: any) => text(i.software)).map((i: any) => rolloutItem({
+        software: text(i.software)!, rooms: text(i.rooms), status: i.status ?? "todo", note: text(i.note),
+        host_group_ids: [...new Set<string>(i.host_group_ids ?? [])], task_run_ids: [...new Set<string>(i.task_run_ids ?? [])],
+      }))
+      : base?.items ?? [],
+  };
+}
+route("GET", "/rollouts", () => rollouts.map(rolloutOut));
+route("GET", "/rollouts/assignees", () => users.filter((u) => u.role !== "viewer" && u.is_active).map((u) => ({ id: u.id, name: userName(u.id)! })));
+route("POST", "/rollouts", (ctx) => {
+  editor(ctx);
+  const r = { ...rolloutFields(ctx.body), created_by: ctx.user!.id };
+  rollouts.unshift(r);
+  return rolloutOut(r);
+});
+route("PATCH", "/rollouts/{id}", (ctx, p) => {
+  editor(ctx);
+  const old = find(rollouts, p.id, "Заявка");
+  const r = rolloutFields(ctx.body, old);
+  rollouts.splice(rollouts.indexOf(old), 1, r);
+  return rolloutOut(r);
+});
+route("DELETE", "/rollouts/{id}", (ctx, p) => { editor(ctx); rollouts.splice(rollouts.indexOf(find(rollouts, p.id, "Заявка")), 1); return null; });
 
 // tasks
 route("GET", "/tasks", ({ query, user }) => {

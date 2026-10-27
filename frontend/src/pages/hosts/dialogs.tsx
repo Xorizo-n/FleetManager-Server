@@ -1,7 +1,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../api/client";
-import { keys, useCredentials, useFleet } from "../../api/queries";
+import { keys, useCredentials, useFleet, useTags } from "../../api/queries";
 import Modal from "../../components/ui/Modal";
 import Button from "../../components/ui/Button";
 import { ErrorText } from "../../components/ui/States";
@@ -9,6 +9,7 @@ import { useToast } from "../../components/ui/Toast";
 import { apiError, OS_OPTIONS, osLabel, pcCount } from "../../lib/format";
 import { effectiveCredential, isSshAssignable } from "../../lib/credentials";
 import { useAccessChange } from "../../components/useAccessChange";
+import { useAssignTag } from "../../components/HostTags";
 
 export function AddHostDialog({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
@@ -245,6 +246,51 @@ export function CredentialDialog({ hostIds, onClose, onDone }: { hostIds: string
             {pcCount(withAgentKey)} подключаются ключом агента — он не меняется, эти ПК будут пропущены.
           </p>
         )}
+      </div>
+    </Modal>
+  );
+}
+
+/** Тег для выбранных ПК: ручной тег, вручную без тега или снова по модели ПК. */
+export function TagDialog({ hostIds, onClose, onDone }: { hostIds: string[]; onClose: () => void; onDone: () => void }) {
+  const toast = useToast();
+  const tags = useTags();
+  const assign = useAssignTag();
+  const [choice, setChoice] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    setBusy(true);
+    const ok = await assign(hostIds, choice === "rule" ? { byRule: true } : { tagId: choice === "none" ? null : choice });
+    setBusy(false);
+    if (!ok) return;
+    toast({ tone: "success", message: choice === "rule" ? `${pcCount(hostIds.length)}: тег снова по модели` : `Тег изменён у ${pcCount(hostIds.length)}` });
+    onDone();
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="sm"
+      title={`Тег для ${pcCount(hostIds.length)}`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Отмена</Button>
+          <Button onClick={submit} loading={busy} disabled={!choice}>Применить</Button>
+        </>
+      }
+    >
+      <div className="space-y-3 text-sm">
+        <select value={choice} onChange={(e) => setChoice(e.target.value)} className="input-base" autoFocus aria-label="Тег">
+          <option value="">Выберите тег</option>
+          {(tags.data ?? []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          <option value="none">Без тега</option>
+          <option value="rule">По модели ПК (снять ручной тег)</option>
+        </select>
+        <p className="text-xs text-subtle">
+          Ручной тег правила по производителю и модели не меняют. «По модели ПК» возвращает тег, который ставит правило.
+        </p>
       </div>
     </Modal>
   );

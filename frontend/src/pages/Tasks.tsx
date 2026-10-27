@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { ReactNode, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useFleet, useTasks } from "../api/queries";
 import type { TaskRun } from "../api/types";
 import PageHeader from "../components/ui/PageHeader";
+import Tabs from "../components/ui/Tabs";
 import Badge from "../components/ui/Badge";
 import Button from "../components/ui/Button";
 import SearchInput from "../components/ui/SearchInput";
@@ -11,10 +12,30 @@ import { useOpenTask } from "../components/TaskPanel";
 import HostStateBar from "../components/HostStateBar";
 import { countHostStates, displayStatus } from "../lib/hostStates";
 import { formatDateTime, formatDuration, hostLabel, pcCount, STATUS_LABELS, TASK_TYPE_LABELS, taskTitle } from "../lib/format";
+import Rollouts from "./tasks/Rollouts";
 
 const PAGE = 100;
 
+type Tab = "runs" | "rollouts";
+
 export default function Tasks() {
+  const [params, setParams] = useSearchParams();
+  const tab: Tab = params.get("tab") === "rollouts" ? "rollouts" : "runs";
+  const tabs = (
+    <Tabs<Tab>
+      value={tab}
+      onChange={(id) => setParams(id === "runs" ? {} : { tab: id })}
+      tabs={[
+        { id: "runs", label: "Запуски" },
+        { id: "rollouts", label: "Раскатка ПО" },
+      ]}
+    />
+  );
+  return tab === "rollouts" ? <Rollouts tabs={tabs} /> : <TaskJournal tabs={tabs} />;
+}
+
+/** Журнал запусков плейбуков, сканирований, диагностик и обновлений агента. */
+function TaskJournal({ tabs }: { tabs: ReactNode }) {
   const [params] = useSearchParams();
   const [type, setType] = useState(params.get("type") ?? "");
   const [status, setStatus] = useState(params.get("status") ?? "");
@@ -50,6 +71,7 @@ export default function Tasks() {
         title="Задачи"
         description={summary || "Журнал запусков плейбуков, сканирований, диагностик и обновлений агента"}
       />
+      {tabs}
       <div className="flex flex-wrap items-center gap-2">
         <SearchInput value={search} onChange={setSearch} placeholder="Плейбук, хост или автор" className="min-w-[220px] flex-1" />
         <select value={type} onChange={(e) => { setType(e.target.value); setLimit(PAGE); }} className="input-base w-auto py-2" aria-label="Тип задачи">

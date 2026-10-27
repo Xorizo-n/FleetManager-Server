@@ -68,6 +68,18 @@ class Settings(BaseSettings):
     # Каталог обоев (services/wallpapers.py): файлы <sha256>.<расширение>
     wallpaper_dir: str = "/mnt/soft-share/wallpapers"
 
+    # Точка раздачи — зеркало шары ближе к ПК (services/distribution.py). Пустой DIST_URL —
+    # выключена: плейбуки копируют файлы по SSH, агент качает установщик с бэкенда.
+    dist_url: str = ""
+    dist_secret: str = ""
+    dist_rsync_target: str = ""  # fleetdist@10.152.240.10
+    dist_ssh_dir: str = "/mnt/dist-ssh"  # id_ed25519 + known_hosts (secrets/dist)
+    dist_manifest_path: str = "/app/ansible_data/dist-manifest.json"
+    dist_state_path: str = "/app/ansible_data/dist-state.json"
+    dist_link_ttl_seconds: int = 12 * 3600
+    # ~400 Мбит/с: синхронизация не забирает весь канал бэкенда у heartbeat и плейбуков
+    dist_bwlimit_kbps: int = 50000
+
     # Ежедневные бэкапы БД (backup-db.sh на хосте), смонтированы только на чтение.
     # Мониторинг считает бэкап устаревшим, если последний удачный старше этого срока
     # (сутки между запусками в 23:00 плюс запас на сам дамп).

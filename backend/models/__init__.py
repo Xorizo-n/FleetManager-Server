@@ -1,6 +1,6 @@
 from models.user import User, AuditLog, UserRole
 from models.credential import Credential, CredentialType
-from models.host import Host, HostGroup, HostStatus, HostOS, HostStatusHistory
+from models.host import Host, HostGroup, HostTag, HostTagRule, HostStatus, HostOS, HostStatusHistory
 from models.software import SoftwareItem, SoftwareHistory, InstallMethod, SoftwareStatus, ChangeType
 from models.playbook import PlaybookRepo, PlaybookSchedule
 from models.task import TaskRun, TaskType, TaskStatus
@@ -8,6 +8,7 @@ from models.agent import AgentEnrollmentToken, AgentAlert
 from models.wallpaper import Wallpaper, WallpaperAssignment, WallpaperSchedule, ObservedWallpaper
 from models.ldap_settings import LdapSettings
 from models.backup import BackupRun, BackupSettings
+from models.rollout import RolloutRequest, RolloutItem, RolloutStatus, RolloutItemStatus
 
 __all__ = [
     "BackupRun",
@@ -20,6 +21,8 @@ __all__ = [
     "CredentialType",
     "Host",
     "HostGroup",
+    "HostTag",
+    "HostTagRule",
     "HostStatus",
     "HostOS",
     "HostStatusHistory",
@@ -39,4 +42,8 @@ __all__ = [
     "WallpaperAssignment",
     "WallpaperSchedule",
     "ObservedWallpaper",
+    "RolloutRequest",
+    "RolloutItem",
+    "RolloutStatus",
+    "RolloutItemStatus",
 ]

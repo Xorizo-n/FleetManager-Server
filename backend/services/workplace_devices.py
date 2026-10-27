@@ -2,14 +2,20 @@
 
 Агент с версии 2026.10.17 присылает в каждом heartbeat (раз в 5 минут) материнскую плату,
 BIOS, модули памяти, физические диски, видеокарты, мониторы, клавиатуры, мыши и прочие
-USB-устройства (hardware.components). Сервер сравнивает снимок с прошлым:
+USB-устройства (hardware.components). Сервер сравнивает снимок с прошлым.
 
-- внутренние компоненты (плата, память, диски, видеокарта) меняются только при вскрытии
-  корпуса — изменение сразу пишется в журнал и даёт алерт «Смена оборудования»; обновление
-  BIOS только пишется в журнал;
-- периферию переподключают постоянно, поэтому её изменение подтверждается, только если
-  держится DEBOUNCE: мышь, переткнутая в другой порт или отключённая на пять минут, в журнал
-  не попадает. Пропажа клавиатуры, мыши или монитора даёт алерт «Пропало устройство».
+Появление и пропажа устройства подтверждаются, только если держатся не меньше задержки
+категории (wait_for): мышь, переткнутая в другой порт, или модуль памяти, который WMI один
+раз не вернул, в журнал не попадают.
+- Внешние диски — 2 часа. USB-SSD с UASP (Samsung T7, Kingston XS1000) Windows показывает
+  как «… SCSI Disk Device» с шиной SCSI, мимо фильтра агента по InterfaceType USB, и раньше
+  каждое подключение давало алерт «Смена оборудования». Преподаватель оставляет диск на пару —
+  это не изменение рабочего места. Пропажа диска, простоявшего больше 2 часов, — алерт
+  «Пропало устройство».
+- Память, внутренние диски, видеокарта — 30 минут, затем алерт «Смена оборудования».
+  Плата и BIOS — одно значение на ПК, их смена пишется сразу (обновление BIOS — без алерта).
+- Мониторы, клавиатуры, мыши, прочие USB — 30 минут; пропажа клавиатуры, мыши или
+  монитора — алерт «Пропало устройство».
 
 Состояние подтверждения хранится в hosts.hw_device_state: {ключ: {category, item, present, since}},
 где present — подтверждённое состояние, since — с какого момента наблюдается обратное.
@@ -20,11 +26,15 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 DEBOUNCE = timedelta(minutes=30)
+EXTERNAL_DISK_WAIT = timedelta(hours=2)
+WAIT = {"external_disk": EXTERNAL_DISK_WAIT}
 
 INTERNAL = ("baseboard", "bios", "memory", "disk", "gpu")
-PERIPHERAL = ("monitor", "keyboard", "mouse", "usb")
+PERIPHERAL = ("monitor", "keyboard", "mouse", "usb", "external_disk")
+# Отслеживаются по наличию, с задержкой; плата и BIOS — сравнением снимков
+TRACKED_INTERNAL = ("memory", "disk", "gpu")
 # Пропажа этих устройств — повод для алерта; прочие USB только пишутся в журнал
-ALERT_ON_MISSING = {"monitor", "keyboard", "mouse"}
+ALERT_ON_MISSING = {"monitor", "keyboard", "mouse", "external_disk"}
 # Изменение этих компонентов — алерт «Смена оборудования»
 ALERT_ON_CHANGE = {"baseboard", "memory", "disk", "gpu"}
 
@@ -41,6 +51,7 @@ _NOUNS = {
     "keyboard": ("клавиатура", "f"),
     "mouse": ("мышь", "f"),
     "usb": ("USB-устройство", "n"),
+    "external_disk": ("внешний диск", "m"),
 }
 _VERBS = {ADDED: {"m": "Появился", "f": "Появилась", "n": "Появилось"}, REMOVED: {"m": "Пропал", "f": "Пропала", "n": "Пропало"}}
 
@@ -65,6 +76,11 @@ class DeviceChange:
         return None
 
 
+def wait_for(category: str) -> timedelta:
+    """Сколько изменение устройства этой категории должно продержаться, чтобы попасть в журнал."""
+    return WAIT.get(category, DEBOUNCE)
+
+
 def _size(value) -> str:
     if not value:
         return ""
@@ -83,7 +99,7 @@ def describe(category: str, item: dict) -> str:
     if category == "memory":
         slot = f", слот {item['slot']}" if item.get("slot") else ""
         return _join(item.get("manufacturer"), item.get("part_number"), _size(item.get("capacity_bytes"))) + slot + tail
-    if category == "disk":
+    if category in ("disk", "external_disk"):
         return _join(item.get("model"), _size(item.get("size_bytes"))) + tail
     if category == "gpu":
         return item.get("name") or "видеокарта"
@@ -111,11 +127,30 @@ def _gpu_key(item: dict) -> str:
     return f"{match.group(1)}:{match.group(2)}".upper() if match else (item.get("name") or "")
 
 
+# Шины внутренних дисков в отчёте агента: «NVMe» или InterfaceType из Win32_DiskDrive
+_INTERNAL_BUSES = {"NVME", "IDE", "SATA", "ATA", "RAID", "SAS"}
+_VIRTUAL_DISK = re.compile(r"virtio|virtual|vmware|msft", re.IGNORECASE)
+
+
+def is_external_disk(disk: dict) -> bool:
+    """Внешний USB-диск. Агент отсекает только InterfaceType USB, а USB-SSD с UASP Windows
+    показывает с шиной SCSI. Внутренние диски ПК — NVMe и IDE (SATA через AHCI); SCSI у диска
+    виртуальной машины (Red Hat VirtIO SCSI Disk Device) — тоже внутренний."""
+    bus = (disk.get("bus_type") or "").upper()
+    if not bus or bus in _INTERNAL_BUSES:
+        return False
+    return not _VIRTUAL_DISK.search(disk.get("model") or "")
+
+
+def _disk_key(d: dict) -> str:
+    return d.get("serial_number") or f"{d.get('model')}|{d.get('size_bytes')}"
+
+
 def _internal_items(components: dict, category: str) -> dict[str, dict]:
     if category == "memory":
         return {(m.get("slot") or f"#{i}"): m for i, m in enumerate(components.get("memory_modules") or [])}
     if category == "disk":
-        return {(d.get("serial_number") or f"{d.get('model')}|{d.get('size_bytes')}"): d for d in components.get("physical_disks") or []}
+        return {_disk_key(d): d for d in components.get("physical_disks") or [] if not is_external_disk(d)}
     if category == "gpu":
         return {_gpu_key(g): g for g in components.get("gpus") or []}
     return {}
@@ -126,7 +161,8 @@ def _memory_identity(m: dict) -> tuple:
 
 
 def compare_internal(old: dict, new: dict) -> list[DeviceChange]:
-    """Изменения платы, BIOS, памяти, дисков и видеокарт между двумя снимками."""
+    """Смена материнской платы и BIOS между двумя снимками. Память, диски и видеокарты
+    подтверждаются с задержкой в update_peripherals."""
     changes: list[DeviceChange] = []
     old_board, new_board = old.get("baseboard") or {}, new.get("baseboard") or {}
     if old_board and new_board and (old_board.get("product"), old_board.get("serial_number")) != (new_board.get("product"), new_board.get("serial_number")):
@@ -136,21 +172,6 @@ def compare_internal(old: dict, new: dict) -> list[DeviceChange]:
     if old.get("bios_version") and new.get("bios_version") and old["bios_version"] != new["bios_version"]:
         changes.append(DeviceChange("bios", CHANGED, f"BIOS: {old['bios_version']} → {new['bios_version']}",
                                     {"version": new["bios_version"]}, {"version": old["bios_version"]}))
-    for category in ("memory", "disk", "gpu"):
-        before, after = _internal_items(old, category), _internal_items(new, category)
-        # Пустой список при непустом прошлом — сбой сбора (WMI не ответил), а не вынутая память
-        if before and not after:
-            continue
-        for key in before.keys() - after.keys():
-            changes.append(DeviceChange(category, REMOVED, _summary(category, REMOVED, before[key]), None, before[key]))
-        for key in after.keys() - before.keys():
-            changes.append(DeviceChange(category, ADDED, _summary(category, ADDED, after[key]), after[key]))
-        if category == "memory":
-            for key in before.keys() & after.keys():
-                if _memory_identity(before[key]) != _memory_identity(after[key]):
-                    changes.append(DeviceChange(category, CHANGED,
-                                                f"Память, слот {key}: {describe('memory', before[key])} → {describe('memory', after[key])}",
-                                                after[key], before[key]))
     return changes
 
 
@@ -179,20 +200,66 @@ def peripheral_items(components: dict) -> dict[str, tuple[str, dict]]:
         if (d.get("vid"), d.get("pid")) in inputs:
             continue
         add("usb", f"{d.get('vid')}:{d.get('pid')}:{d.get('serial') or ''}", d)
+    for d in components.get("physical_disks") or []:
+        if is_external_disk(d):
+            add("external_disk", _disk_key(d), d)
     return result
 
 
-def update_peripherals(state: dict | None, components: dict, now: datetime) -> tuple[dict, list[DeviceChange]]:
-    """Подтверждает появление и пропажу периферии, которые держатся не меньше DEBOUNCE.
-    Без прошлого состояния текущая периферия принимается как есть, без записей в журнал."""
-    observed = peripheral_items(components)
+def tracked_items(components: dict) -> dict[str, tuple[str, dict]]:
+    """Всё, что подтверждается по наличию: периферия, внешние диски, память, диски, видеокарты.
+    Модуль памяти узнаётся по слоту и самому модулю: другой модуль в том же слоте — замена."""
+    result = peripheral_items(components)
+    for category in TRACKED_INTERNAL:
+        for slot, item in _internal_items(components, category).items():
+            identity = f"{slot}:" + ":".join(str(v or "") for v in _memory_identity(item)) if category == "memory" else slot
+            result[f"{category}|{identity}"] = (category, item)
+    return result
+
+
+def _merge_memory_swaps(changes: list[DeviceChange]) -> list[DeviceChange]:
+    """Модуль вынули и вставили другой в тот же слот — одна запись «Память, слот …: A → B»."""
+    removed = {c.previous.get("slot"): c for c in changes
+               if c.category == "memory" and c.action == REMOVED and c.previous and c.previous.get("slot")}
+    merged: set[int] = set()
+    result = []
+    for change in changes:
+        old = removed.get((change.item or {}).get("slot")) if change.category == "memory" and change.action == ADDED else None
+        if old is None:
+            result.append(change)
+            continue
+        merged.add(id(old))
+        result.append(DeviceChange("memory", CHANGED,
+                                   f"Память, слот {change.item['slot']}: {describe('memory', old.previous)} → {describe('memory', change.item)}",
+                                   change.item, old.previous, change.details))
+    return [c for c in result if id(c) not in merged]
+
+
+def update_peripherals(state: dict | None, components: dict, now: datetime, seed: dict | None = None) -> tuple[dict, list[DeviceChange]]:
+    """Подтверждает появление и пропажу устройств, которые держатся не меньше wait_for(категория).
+    Без прошлого состояния текущий состав принимается как есть, без записей в журнал.
+    seed — прошлый снимок: категории, которых в состоянии ещё нет (оно велось до того, как их
+    стали так отслеживать), принимаются из него как подтверждённые, без записей в журнал."""
+    observed = tracked_items(components)
     if state is None:
         return {key: {"category": c, "item": item, "present": True, "since": None} for key, (c, item) in observed.items()}, []
+
+    state = dict(state)
+    if seed is not None:
+        known = {e.get("category") for e in state.values()}
+        for key, (category, item) in tracked_items(seed).items():
+            if category not in known and key not in state:
+                state[key] = {"category": category, "item": item, "present": True, "since": None}
+    # Пустой список памяти, дисков или видеокарт — сбой сбора (WMI не ответил), а не вынутое железо
+    blind = {c for c in TRACKED_INTERNAL if not _internal_items(components, c)}
 
     changes: list[DeviceChange] = []
     next_state: dict = {}
     for key in state.keys() | observed.keys():
         entry = dict(state.get(key) or {"category": observed[key][0], "item": observed[key][1], "present": False, "since": None})
+        if entry["category"] in blind:
+            next_state[key] = entry
+            continue
         seen = key in observed
         if seen:
             entry["item"] = observed[key][1]
@@ -202,7 +269,7 @@ def update_peripherals(state: dict | None, components: dict, now: datetime) -> t
             since = datetime.fromisoformat(entry["since"]) if entry.get("since") else None
             if since is None:
                 entry["since"] = now.isoformat()
-            elif now - since >= DEBOUNCE:
+            elif now - since >= wait_for(entry["category"]):
                 action = ADDED if seen else REMOVED
                 changes.append(DeviceChange(entry["category"], action, _summary(entry["category"], action, entry["item"]),
                                             entry["item"] if seen else None, None if seen else entry["item"],
@@ -211,7 +278,7 @@ def update_peripherals(state: dict | None, components: dict, now: datetime) -> t
         # Пропажа подтверждена, или появившееся не продержалось — запись больше не нужна
         if entry["present"] or entry["since"]:
             next_state[key] = entry
-    return next_state, changes
+    return next_state, _merge_memory_swaps(sorted(changes, key=lambda c: (c.category, c.action != REMOVED)))
 
 
 def apply_components(host, components: dict | None, now: datetime, same_agent_version: bool) -> list[DeviceChange]:
@@ -225,17 +292,19 @@ def apply_components(host, components: dict | None, now: datetime, same_agent_ve
     baseline = previous is None or not same_agent_version
     if not baseline:
         changes.extend(compare_internal(previous, components))
-    state, peripheral_changes = update_peripherals(None if baseline else host.hw_device_state, components, now)
-    changes.extend(peripheral_changes)
+    state, tracked_changes = update_peripherals(None if baseline else host.hw_device_state, components, now, seed=previous)
+    changes.extend(tracked_changes)
     host.hw_components = components
     host.hw_device_state = state
     return changes
 
 
 def pending_devices(state: dict | None) -> list[dict]:
-    """Изменения, ожидающие подтверждения: «мышь не видна 12 минут»."""
+    """Изменения, ожидающие подтверждения: «мышь не видна 12 минут»; wait_minutes — сколько
+    изменение должно продержаться, чтобы попасть в журнал."""
     return [
-        {"category": e["category"], "item": e["item"], "missing": e["present"], "since": e["since"]}
+        {"category": e["category"], "item": e["item"], "missing": e["present"], "since": e["since"],
+         "wait_minutes": int(wait_for(e["category"]).total_seconds() // 60)}
         for e in (state or {}).values()
         if e.get("since")
     ]

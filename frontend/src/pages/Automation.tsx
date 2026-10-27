@@ -5,7 +5,7 @@ import { GitBranch, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { apiClient } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { keys, useCredentials, useFleet, usePlaybookFiles, useRepos, useSchedules } from "../api/queries";
-import type { Schedule } from "../api/types";
+import type { Host, Schedule } from "../api/types";
 import PageHeader from "../components/ui/PageHeader";
 import Tabs from "../components/ui/Tabs";
 import Button from "../components/ui/Button";
@@ -15,6 +15,7 @@ import { Empty, ErrorText, Loading } from "../components/ui/States";
 import { useToast } from "../components/ui/Toast";
 import PlaybookRunForm from "../components/PlaybookRunForm";
 import HostPicker from "../components/HostPicker";
+import { TagTargets, tagHostIds, useTagById } from "../components/HostTags";
 import ExtraVarsEditor, { objectToVars, VarPair, varsToObject } from "../components/ExtraVarsEditor";
 import { playbookLabel } from "../components/PlaybookSelect";
 import { compactSelection, GroupTree } from "../lib/groupTree";
@@ -59,23 +60,28 @@ export default function Automation() {
   );
 }
 
-/** Хосты, на которые сейчас раскрывается расписание (группы — вместе с подгруппами). */
+/** Хосты дерева, выбранные в расписании (группы — вместе с подгруппами); теги — отдельно. */
 function scheduleHostIds(tree: GroupTree, schedule: Schedule) {
   const ids = new Set(schedule.host_ids);
   schedule.host_group_ids.forEach((g) => tree.byId.get(g)?.hostIds.forEach((id) => ids.add(id)));
   return ids;
 }
 
-function TargetsSummary({ tree, schedule }: { tree: GroupTree; schedule: Schedule }) {
-  const total = scheduleHostIds(tree, schedule).size;
-  const groups = schedule.host_group_ids.map((g) => tree.pathOf(g));
+function TargetsSummary({ tree, hosts, schedule }: { tree: GroupTree; hosts: Host[]; schedule: Schedule }) {
+  const tagById = useTagById();
+  const ids = scheduleHostIds(tree, schedule);
+  tagHostIds(hosts, schedule.host_tag_ids ?? []).forEach((id) => ids.add(id));
+  const groups = [
+    ...(schedule.host_tag_ids ?? []).map((t) => `тег «${tagById.get(t)?.name ?? "удалён"}»`),
+    ...schedule.host_group_ids.map((g) => tree.pathOf(g)),
+  ];
   return (
     <div className="min-w-0">
       <div className="truncate text-foreground" title={groups.join(", ")}>
         {groups.length > 0 ? groups.slice(0, 2).join(", ") + (groups.length > 2 ? ` и ещё ${groups.length - 2}` : "") : "Отдельные ПК"}
         {groups.length > 0 && schedule.host_ids.length > 0 && ` + ${pcCount(schedule.host_ids.length)}`}
       </div>
-      <div className="text-xs text-muted-foreground">сейчас {pcCount(total)}</div>
+      <div className="text-xs text-muted-foreground">сейчас {pcCount(ids.size)}</div>
     </div>
   );
 }
@@ -83,7 +89,7 @@ function TargetsSummary({ tree, schedule }: { tree: GroupTree; schedule: Schedul
 function SchedulesTab() {
   const queryClient = useQueryClient();
   const toast = useToast();
-  const { tree } = useFleet();
+  const { tree, hosts } = useFleet();
   const schedules = useSchedules();
   const repos = useRepos();
   const [editing, setEditing] = useState<Schedule | null>(null);
@@ -146,7 +152,7 @@ function SchedulesTab() {
                   </div>
                 </td>
                 <td className="max-w-[260px]">
-                  <TargetsSummary tree={tree} schedule={s} />
+                  <TargetsSummary tree={tree} hosts={hosts} schedule={s} />
                 </td>
                 <td>
                   <div className="text-foreground">{describeCron(s.cron_expression) ?? "по cron"}</div>
@@ -181,7 +187,9 @@ function ScheduleEditor({ schedule, tree, onClose }: { schedule: Schedule; tree:
   const queryClient = useQueryClient();
   const toast = useToast();
   const files = usePlaybookFiles(schedule.repo_id);
+  const { hosts } = useFleet();
   const [selection, setSelection] = useState(() => scheduleHostIds(tree, schedule));
+  const [tagIds, setTagIds] = useState(() => new Set(schedule.host_tag_ids ?? []));
   const [cron, setCron] = useState(schedule.cron_expression);
   const [vars, setVars] = useState<VarPair[]>(() => objectToVars(schedule.extra_vars));
   const [busy, setBusy] = useState(false);
@@ -197,6 +205,7 @@ function ScheduleEditor({ schedule, tree, onClose }: { schedule: Schedule; tree:
         cron_expression: cron,
         host_group_ids: groupIds,
         host_ids: hostIds,
+        host_tag_ids: [...tagIds],
         extra_vars: varsToObject(vars),
       });
       queryClient.invalidateQueries({ queryKey: keys.schedules });
@@ -219,7 +228,7 @@ function ScheduleEditor({ schedule, tree, onClose }: { schedule: Schedule; tree:
         <>
           <ErrorText>{error}</ErrorText>
           <Button variant="secondary" onClick={onClose}>Отмена</Button>
-          <Button onClick={save} loading={busy} disabled={selection.size === 0 || !isValidCron(cron)}>Сохранить</Button>
+          <Button onClick={save} loading={busy} disabled={(selection.size === 0 && tagIds.size === 0) || !isValidCron(cron)}>Сохранить</Button>
         </>
       }
     >
@@ -230,7 +239,10 @@ function ScheduleEditor({ schedule, tree, onClose }: { schedule: Schedule; tree:
         </div>
         <div>
           <label className="field-label">Хосты</label>
-          <HostPicker value={selection} onChange={setSelection} height={300} />
+          <div className="space-y-2">
+            <TagTargets value={tagIds} onChange={setTagIds} hosts={hosts} />
+            <HostPicker value={selection} onChange={setSelection} height={300} />
+          </div>
         </div>
         <div>
           <label className="field-label">Переменные</label>

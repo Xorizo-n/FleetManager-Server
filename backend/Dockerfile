@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         nsis \
         restic \
+        rsync \
         ca-certificates \
         curl \
     && rm -rf /var/lib/apt/lists/*
@@ -33,6 +34,9 @@ COPY ansible-collections.yml /tmp/ansible-collections.yml
 RUN ansible-galaxy collection install -r /tmp/ansible-collections.yml
 
 COPY . .
+
+# fm_fetch: плейбуки качают установщики с точки раздачи (services/distribution.py)
+ENV ANSIBLE_ACTION_PLUGINS=/app/ansible_plugins/action
 
 EXPOSE 8000
 

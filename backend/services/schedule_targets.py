@@ -16,6 +16,10 @@ def schedule_group_ids(schedule: PlaybookSchedule) -> list[str]:
     return list(dict.fromkeys(group_ids))
 
 
+def schedule_tag_ids(schedule: PlaybookSchedule) -> list[str]:
+    return list(dict.fromkeys(str(tag_id) for tag_id in (schedule.host_tag_ids or [])))
+
+
 def next_run_at(cron_expression: str, now: datetime | None = None) -> datetime | None:
     """Следующий запуск; cron — местное время (settings.schedule_timezone), как и в
     services.ansible_runner.schedule_is_due."""
@@ -31,6 +35,7 @@ def next_run_at(cron_expression: str, now: datetime | None = None) -> datetime |
 def schedule_out(schedule: PlaybookSchedule, now: datetime | None = None) -> PlaybookScheduleOut:
     out = PlaybookScheduleOut.model_validate(schedule)
     out.host_group_ids = schedule_group_ids(schedule)
+    out.host_tag_ids = schedule_tag_ids(schedule)
     out.next_run_at = next_run_at(schedule.cron_expression, now) if schedule.enabled else None
     meta = playbook_meta(schedule.repo.local_path if schedule.repo else None, schedule.playbook_name)
     out.playbook_title, out.playbook_description = meta.title, meta.description

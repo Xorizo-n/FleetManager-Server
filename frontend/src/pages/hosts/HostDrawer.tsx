@@ -24,6 +24,7 @@ import { DiskList } from "../../components/DiskUsage";
 import { ActivationSection } from "../../components/Activation";
 import { SshHealthSection } from "../../components/SshHealth";
 import { WorkplaceTab } from "../../components/Workplace";
+import { HostTagSelect } from "../../components/HostTags";
 import { sameCmidCount } from "../../lib/activation";
 import { effectiveCredential, EffectiveCredential, isSshAssignable } from "../../lib/credentials";
 
@@ -343,6 +344,9 @@ function Overview({ host }: { host: Host }) {
                 {next.source === "none" && " — SSH-подключение к ПК перестанет работать"}
               </span>
             )}
+          </div>
+          <div className="sm:col-span-2">
+            <HostTagSelect host={host} disabled={!canEdit} />
           </div>
           <div className="sm:col-span-2">
             <label className="field-label" htmlFor="host-comment">Комментарий</label>
