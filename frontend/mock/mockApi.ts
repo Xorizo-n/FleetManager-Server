@@ -1138,14 +1138,17 @@ route("GET", "/software/export.csv", () => "name,version\n");
 route("GET", "/software/export.pdf", () => "%PDF-mock");
 
 // rollouts — тот же контракт, что backend/routers/rollouts.py
-type RolloutItemMock = { id: string; software: string; rooms: string | null; status: string; note: string | null; task_run_id: string | null };
+type RolloutItemMock = {
+  id: string; software: string; rooms: string | null; status: string; note: string | null; host_group_ids: string[]; task_run_ids: string[];
+};
 type RolloutMock = {
   id: string; partner: string | null; course: string; rooms: string | null; schedule: string | null; requirements: string | null;
   status: string; assignee_id: string | null; due_date: string | null; notes: string | null; created_by: string | null;
   created_at: string; updated_at: string; items: RolloutItemMock[];
 };
 const rolloutItem = (i: Partial<RolloutItemMock> & { software: string }): RolloutItemMock =>
-  ({ id: uuid(), rooms: null, status: "todo", note: null, task_run_id: null, ...i });
+  ({ id: uuid(), rooms: null, status: "todo", note: null, host_group_ids: [], task_run_ids: [], ...i });
+const firstRoom = groups.find((g) => hosts.some((h) => h.group_id === g.id));
 const rollouts: RolloutMock[] = [
   {
     id: uuid(), partner: "Фирма «1С»", course: "Разработка на бизнес-ориентированных языках (часть 1)", rooms: "K-103", schedule: "Вторник, 3 пара",
@@ -1153,7 +1156,7 @@ const rollouts: RolloutMock[] = [
     assignee_id: users[1].id, due_date: "2026-10-27", notes: "Сервер ждёт 64-битный дистрибутив", created_by: users[1].id,
     created_at: new Date(Date.now() - 4 * 86_400_000).toISOString(), updated_at: new Date().toISOString(),
     items: [
-      rolloutItem({ software: "1С 8.3.27 клиент", status: "done" }),
+      rolloutItem({ software: "1С 8.3.27 клиент", status: "in_progress", host_group_ids: firstRoom ? [firstRoom.id] : [] }),
       rolloutItem({ software: "Git 2.55", status: "done" }),
       rolloutItem({ software: "Сервер 1С 8.3.27", rooms: "K-103-OP", status: "blocked", note: "нет windows64full_8_3_27_2342" }),
     ],
@@ -1169,16 +1172,39 @@ const userName = (id: string | null) => {
   const u = users.find((x) => x.id === id) as { username: string; display_name?: string } | undefined;
   return u ? u.display_name ?? u.username : null;
 };
+const RANK: Record<string, number> = { success: 6, running: 5, queued: 4, ready: 3, waiting: 3, pending: 3, failed: 2, cancelled: 1 };
+function rolloutProgress(item: RolloutItemMock) {
+  const runs = item.task_run_ids.map((id) => tasks.find((t) => t.id === id)).filter((t): t is Task => !!t);
+  const targets = item.host_group_ids.length ? hosts.filter((h) => h.group_id && item.host_group_ids.includes(h.group_id)).map((h) => h.id) : null;
+  if (!targets?.length && !runs.length) return null;
+  const best: Record<string, string> = {};
+  for (const t of runs) {
+    for (const h of t.host_ids) {
+      const state = t.host_states?.[h] ?? t.status;
+      if ((RANK[state] ?? 0) > (RANK[best[h]] ?? 0)) best[h] = state;
+    }
+  }
+  const all = targets?.length ? targets : Object.keys(best);
+  const p = { total: all.length, done: 0, active: 0, failed: 0, not_started: 0 };
+  for (const h of all) {
+    const state = best[h];
+    if (state === "success") p.done++;
+    else if (["running", "queued", "ready", "waiting", "pending"].includes(state)) p.active++;
+    else if (state === "failed") p.failed++;
+    else p.not_started++;
+  }
+  return p;
+}
 function rolloutOut(r: RolloutMock) {
-  return {
-    ...r, assignee_name: userName(r.assignee_id), created_by_name: userName(r.created_by),
-    items: r.items.map((i) => {
-      const t = i.task_run_id ? tasks.find((x) => x.id === i.task_run_id) : undefined;
-      const counts: Record<string, number> = {};
-      if (t) (t.host_states ? Object.values(t.host_states) : t.host_ids.map(() => t.status)).forEach((s) => { const k = s === "ready" ? "waiting" : s; counts[k] = (counts[k] ?? 0) + 1; });
-      return { ...i, task: t ? { status: t.status, playbook_name: t.playbook_name, created_at: t.created_at, host_states: counts } : null };
-    }),
-  };
+  const items = r.items.map((i) => ({
+    ...i,
+    runs: i.task_run_ids.map((id) => tasks.find((t) => t.id === id)).filter((t): t is Task => !!t)
+      .map((t) => ({ id: t.id, status: t.status, playbook_name: t.playbook_name, created_at: t.created_at, host_count: t.host_ids.length })),
+    progress: rolloutProgress(i),
+  }));
+  const total = { total: 0, done: 0, active: 0, failed: 0, not_started: 0 };
+  items.forEach((i) => i.progress && (Object.keys(total) as (keyof typeof total)[]).forEach((k) => (total[k] += i.progress![k])));
+  return { ...r, assignee_name: userName(r.assignee_id), created_by_name: userName(r.created_by), items, progress: total.total ? total : null };
 }
 function rolloutFields(body: any, base?: RolloutMock): RolloutMock {
   const text = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
@@ -1191,7 +1217,10 @@ function rolloutFields(body: any, base?: RolloutMock): RolloutMock {
     due_date: "due_date" in body ? body.due_date || null : base?.due_date ?? null, notes: pick("notes"),
     created_by: base?.created_by ?? null, created_at: base?.created_at ?? new Date().toISOString(), updated_at: new Date().toISOString(),
     items: Array.isArray(body.items)
-      ? body.items.filter((i: any) => text(i.software)).map((i: any) => rolloutItem({ software: text(i.software)!, rooms: text(i.rooms), status: i.status ?? "todo", note: text(i.note), task_run_id: i.task_run_id || null }))
+      ? body.items.filter((i: any) => text(i.software)).map((i: any) => rolloutItem({
+        software: text(i.software)!, rooms: text(i.rooms), status: i.status ?? "todo", note: text(i.note),
+        host_group_ids: [...new Set<string>(i.host_group_ids ?? [])], task_run_ids: [...new Set<string>(i.task_run_ids ?? [])],
+      }))
       : base?.items ?? [],
   };
 }

@@ -6,19 +6,22 @@ from sqlalchemy.orm import Session, selectinload
 
 from database import get_db
 from dependencies import require_roles
-from models.rollout import RolloutItem, RolloutRequest
+from models.host import HostGroup
+from models.rollout import RolloutItem, RolloutItemStatus, RolloutRequest, RolloutStatus
 from models.task import TaskRun
 from models.user import User, UserRole
 from schemas.rollout import (
+    Progress,
     RolloutAssignee,
     RolloutItemIn,
     RolloutItemOut,
     RolloutRequestCreate,
     RolloutRequestOut,
     RolloutRequestUpdate,
-    TaskProgress,
+    RunRef,
 )
 from services.audit import record_audit
+from services.inventory_generator import resolve_target_host_ids
 
 router = APIRouter(prefix="/rollouts", tags=["rollouts"])
 
@@ -26,39 +29,115 @@ router = APIRouter(prefix="/rollouts", tags=["rollouts"])
 STAFF = (UserRole.admin, UserRole.operator, UserRole.viewer)
 EDITOR_ROLES = (UserRole.admin, UserRole.operator)
 
+# Итог ПК по нескольким запускам — лучший из них: успех в любом запуске значит «готово»,
+# а отмена или ошибка в старом запуске не перекрывают ожидание в новом
+_RANK = {"success": 6, "running": 5, "queued": 4, "ready": 3, "waiting": 3, "pending": 3, "failed": 2, "cancelled": 1}
+_ACTIVE = {"running", "queued", "ready", "waiting", "pending"}
+_PROGRESS_FIELDS = ("total", "done", "active", "failed", "not_started")
+
 
 def _user_name(user: User) -> str:
     return user.display_name or user.username
 
 
-def task_progress(task: TaskRun) -> TaskProgress:
-    """Сколько ПК запуска в каждом состоянии; ready (появился, сейчас запустится) — это ещё ожидание."""
-    counts: dict[str, int] = {}
+def run_states(task: TaskRun) -> dict[str, str]:
+    """Состояние каждого ПК запуска; у задач без host_states — статус задачи целиком."""
     if task.host_states:
-        for state in task.host_states.values():
-            key = "waiting" if state == "ready" else state
-            counts[key] = counts.get(key, 0) + 1
-    elif task.host_ids:
-        counts[task.status.value] = len(task.host_ids)
-    return TaskProgress(status=task.status.value, playbook_name=task.playbook_name, created_at=task.created_at, host_states=counts)
+        return {str(host): str(state) for host, state in task.host_states.items()}
+    return {str(host): task.status.value for host in task.host_ids or []}
+
+
+def run_ref(task: TaskRun) -> RunRef:
+    return RunRef(id=task.id, status=task.status.value, playbook_name=task.playbook_name, created_at=task.created_at, host_count=len(task.host_ids or []))
+
+
+def item_progress(targets: list[str] | None, runs: list[TaskRun]) -> Progress | None:
+    """targets — ПК аудиторий программы; без аудиторий считаются все ПК её запусков. None — считать нечего."""
+    if not targets and not runs:
+        return None
+    best: dict[str, str] = {}
+    for task in runs:
+        for host, state in run_states(task).items():
+            if _RANK.get(state, 0) > _RANK.get(best.get(host, ""), 0):
+                best[host] = state
+    hosts = targets if targets else list(best)
+    progress = Progress(total=len(hosts))
+    for host in hosts:
+        state = best.get(host)
+        if state == "success":
+            progress.done += 1
+        elif state in _ACTIVE:
+            progress.active += 1
+        elif state == "failed":
+            progress.failed += 1
+        else:
+            progress.not_started += 1
+    return progress
+
+
+def auto_status(request: RolloutRequest, progress: dict[uuid.UUID, Progress | None]) -> bool:
+    """Статусы держатся сами по ПК: программа, готовая на всех ПК, — «готово», начатая — «в работе»;
+    заявка, где готово всё, — «выполнена», где что-то начато — «в работе». Блокер и отмену ставит человек."""
+    changed = False
+    for item in request.items:
+        p = progress.get(item.id)
+        if not p or not p.total or item.status == RolloutItemStatus.blocked:
+            continue
+        if p.done == p.total:
+            target = RolloutItemStatus.done
+        elif item.status == RolloutItemStatus.done or (item.status == RolloutItemStatus.todo and (p.done or p.active or p.failed)):
+            # «готово» снимается, когда в аудитории появились ПК без программы
+            target = RolloutItemStatus.in_progress
+        else:
+            target = item.status
+        if target != item.status:
+            item.status, changed = target, True
+    if request.items and request.status in (RolloutStatus.new, RolloutStatus.in_progress, RolloutStatus.done):
+        if all(i.status == RolloutItemStatus.done for i in request.items):
+            target = RolloutStatus.done
+        elif any(i.status != RolloutItemStatus.todo for i in request.items):
+            target = RolloutStatus.in_progress
+        else:
+            target = RolloutStatus.new
+        if target != request.status:
+            request.status, changed = target, True
+    return changed
 
 
 def requests_out(db: Session, requests: list[RolloutRequest]) -> list[RolloutRequestOut]:
     user_ids = {uid for r in requests for uid in (r.assignee_id, r.created_by) if uid}
     names = {u.id: _user_name(u) for u in db.execute(select(User).where(User.id.in_(user_ids))).scalars().all()} if user_ids else {}
-    task_ids = {item.task_run_id for r in requests for item in r.items if item.task_run_id}
+    task_ids = {uuid.UUID(str(t)) for r in requests for item in r.items for t in item.task_run_ids or []}
     tasks = {t.id: t for t in db.execute(select(TaskRun).where(TaskRun.id.in_(task_ids))).scalars().all()} if task_ids else {}
+
+    runs_of: dict[uuid.UUID, list[TaskRun]] = {}
+    progress: dict[uuid.UUID, Progress | None] = {}
+    for request in requests:
+        for item in request.items:
+            runs = [tasks[tid] for tid in (uuid.UUID(str(t)) for t in item.task_run_ids or []) if tid in tasks]
+            groups = [uuid.UUID(str(g)) for g in item.host_group_ids or []]
+            targets = resolve_target_host_ids(db, (), groups) if groups else None
+            runs_of[item.id] = sorted(runs, key=lambda t: str(t.created_at))
+            progress[item.id] = item_progress(targets, runs)
+    if any([auto_status(r, progress) for r in requests]):
+        db.commit()
+
     result = []
     for request in requests:
         out = RolloutRequestOut.model_validate(request)
         out.assignee_name = names.get(request.assignee_id)
         out.created_by_name = names.get(request.created_by)
         out.items = []
+        total = Progress()
         for item in request.items:
             item_out = RolloutItemOut.model_validate(item)
-            task = tasks.get(item.task_run_id)
-            item_out.task = task_progress(task) if task else None
+            item_out.runs = [run_ref(t) for t in runs_of[item.id]]
+            item_out.progress = progress[item.id]
+            if item_out.progress:
+                for field in _PROGRESS_FIELDS:
+                    setattr(total, field, getattr(total, field) + getattr(item_out.progress, field))
             out.items.append(item_out)
+        out.progress = total if total.total else None
         result.append(out)
     return result
 
@@ -74,12 +153,24 @@ def _check_refs(db: Session, assignee_id: uuid.UUID | None, items: list[RolloutI
     if assignee_id is not None and db.get(User, assignee_id) is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ответственный не найден")
     for item in items or []:
-        if item.task_run_id is not None and db.get(TaskRun, item.task_run_id) is None:
+        runs = set(item.task_run_ids)
+        if runs and len(db.execute(select(TaskRun.id).where(TaskRun.id.in_(runs))).all()) != len(runs):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Запуск для «{item.software}» не найден")
+        groups = set(item.host_group_ids)
+        if groups and len(db.execute(select(HostGroup.id).where(HostGroup.id.in_(groups))).all()) != len(groups):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Аудитория для «{item.software}» не найдена")
 
 
 def _set_items(rollout: RolloutRequest, items: list[RolloutItemIn]) -> None:
-    rollout.items = [RolloutItem(position=i, **item.model_dump()) for i, item in enumerate(items)]
+    rollout.items = [
+        RolloutItem(
+            position=i,
+            **item.model_dump(exclude={"host_group_ids", "task_run_ids"}),
+            host_group_ids=list(dict.fromkeys(str(g) for g in item.host_group_ids)),
+            task_run_ids=list(dict.fromkeys(str(t) for t in item.task_run_ids)),
+        )
+        for i, item in enumerate(items)
+    ]
 
 
 @router.get("", response_model=list[RolloutRequestOut])
