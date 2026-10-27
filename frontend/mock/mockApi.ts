@@ -1137,6 +1137,81 @@ route("POST", "/software/scan", (ctx) => { editor(ctx); return { task_run_id: st
 route("GET", "/software/export.csv", () => "name,version\n");
 route("GET", "/software/export.pdf", () => "%PDF-mock");
 
+// rollouts — тот же контракт, что backend/routers/rollouts.py
+type RolloutItemMock = { id: string; software: string; rooms: string | null; status: string; note: string | null; task_run_id: string | null };
+type RolloutMock = {
+  id: string; partner: string | null; course: string; rooms: string | null; schedule: string | null; requirements: string | null;
+  status: string; assignee_id: string | null; due_date: string | null; notes: string | null; created_by: string | null;
+  created_at: string; updated_at: string; items: RolloutItemMock[];
+};
+const rolloutItem = (i: Partial<RolloutItemMock> & { software: string }): RolloutItemMock =>
+  ({ id: uuid(), rooms: null, status: "todo", note: null, task_run_id: null, ...i });
+const rollouts: RolloutMock[] = [
+  {
+    id: uuid(), partner: "Фирма «1С»", course: "Разработка на бизнес-ориентированных языках (часть 1)", rooms: "K-103", schedule: "Вторник, 3 пара",
+    requirements: "Платформа 1С 8.3.27 (клиент, на ПК преподавателя — и сервер), Git 2.55, GitExtensions 7.2, 1C:EDT 2026.1", status: "blocked",
+    assignee_id: users[1].id, due_date: "2026-10-27", notes: "Сервер ждёт 64-битный дистрибутив", created_by: users[1].id,
+    created_at: new Date(Date.now() - 4 * 86_400_000).toISOString(), updated_at: new Date().toISOString(),
+    items: [
+      rolloutItem({ software: "1С 8.3.27 клиент", status: "done" }),
+      rolloutItem({ software: "Git 2.55", status: "done" }),
+      rolloutItem({ software: "Сервер 1С 8.3.27", rooms: "K-103-OP", status: "blocked", note: "нет windows64full_8_3_27_2342" }),
+    ],
+  },
+  {
+    id: uuid(), partner: "Контур", course: "Программирование (БВО)", rooms: "D108, K305, D102", schedule: "Четверг 16:00–19:10", requirements: ".NET SDK 10",
+    status: "done", assignee_id: users[3].id, due_date: null, notes: null, created_by: users[0].id,
+    created_at: new Date(Date.now() - 6 * 86_400_000).toISOString(), updated_at: new Date().toISOString(),
+    items: [rolloutItem({ software: ".NET SDK 10", status: "done" })],
+  },
+];
+const userName = (id: string | null) => {
+  const u = users.find((x) => x.id === id) as { username: string; display_name?: string } | undefined;
+  return u ? u.display_name ?? u.username : null;
+};
+function rolloutOut(r: RolloutMock) {
+  return {
+    ...r, assignee_name: userName(r.assignee_id), created_by_name: userName(r.created_by),
+    items: r.items.map((i) => {
+      const t = i.task_run_id ? tasks.find((x) => x.id === i.task_run_id) : undefined;
+      const counts: Record<string, number> = {};
+      if (t) (t.host_states ? Object.values(t.host_states) : t.host_ids.map(() => t.status)).forEach((s) => { const k = s === "ready" ? "waiting" : s; counts[k] = (counts[k] ?? 0) + 1; });
+      return { ...i, task: t ? { status: t.status, playbook_name: t.playbook_name, created_at: t.created_at, host_states: counts } : null };
+    }),
+  };
+}
+function rolloutFields(body: any, base?: RolloutMock): RolloutMock {
+  const text = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  const pick = (k: keyof RolloutMock) => (k in body ? text(body[k]) : base ? base[k] : null) as string | null;
+  const course = pick("course");
+  if (!course) throw new HttpError(422, "Укажите курс");
+  return {
+    id: base?.id ?? uuid(), partner: pick("partner"), course, rooms: pick("rooms"), schedule: pick("schedule"), requirements: pick("requirements"),
+    status: body.status ?? base?.status ?? "new", assignee_id: "assignee_id" in body ? body.assignee_id || null : base?.assignee_id ?? null,
+    due_date: "due_date" in body ? body.due_date || null : base?.due_date ?? null, notes: pick("notes"),
+    created_by: base?.created_by ?? null, created_at: base?.created_at ?? new Date().toISOString(), updated_at: new Date().toISOString(),
+    items: Array.isArray(body.items)
+      ? body.items.filter((i: any) => text(i.software)).map((i: any) => rolloutItem({ software: text(i.software)!, rooms: text(i.rooms), status: i.status ?? "todo", note: text(i.note), task_run_id: i.task_run_id || null }))
+      : base?.items ?? [],
+  };
+}
+route("GET", "/rollouts", () => rollouts.map(rolloutOut));
+route("GET", "/rollouts/assignees", () => users.filter((u) => u.role !== "viewer" && u.is_active).map((u) => ({ id: u.id, name: userName(u.id)! })));
+route("POST", "/rollouts", (ctx) => {
+  editor(ctx);
+  const r = { ...rolloutFields(ctx.body), created_by: ctx.user!.id };
+  rollouts.unshift(r);
+  return rolloutOut(r);
+});
+route("PATCH", "/rollouts/{id}", (ctx, p) => {
+  editor(ctx);
+  const old = find(rollouts, p.id, "Заявка");
+  const r = rolloutFields(ctx.body, old);
+  rollouts.splice(rollouts.indexOf(old), 1, r);
+  return rolloutOut(r);
+});
+route("DELETE", "/rollouts/{id}", (ctx, p) => { editor(ctx); rollouts.splice(rollouts.indexOf(find(rollouts, p.id, "Заявка")), 1); return null; });
+
 // tasks
 route("GET", "/tasks", ({ query, user }) => {
   const limit = Number(query.get("limit") ?? 200);

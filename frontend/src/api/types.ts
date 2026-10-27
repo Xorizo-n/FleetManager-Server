@@ -425,3 +425,40 @@ export interface SshState {
   host_keys?: string[];
   reported_at?: string;
 }
+
+/** Заявка на раскатку ПО (Задачи → Раскатка ПО), backend/routers/rollouts.py */
+export type RolloutStatus = "new" | "in_progress" | "blocked" | "done" | "cancelled";
+export type RolloutItemStatus = "todo" | "in_progress" | "blocked" | "done";
+
+export interface RolloutItem {
+  id?: string;
+  software: string;
+  /** Если программа нужна не во всех аудиториях заявки */
+  rooms: string | null;
+  status: RolloutItemStatus;
+  note: string | null;
+  /** Запуск плейбука, которым ставится программа */
+  task_run_id: string | null;
+  /** Итог этого запуска по ПК */
+  task?: { status: TaskStatus; playbook_name: string | null; created_at: string | null; host_states: Partial<Record<HostState, number>> } | null;
+}
+
+export interface RolloutRequest {
+  id: string;
+  partner: string | null;
+  course: string;
+  rooms: string | null;
+  /** Когда занятия, как в заявке */
+  schedule: string | null;
+  /** Требования к ПО, как прислал партнёр */
+  requirements: string | null;
+  status: RolloutStatus;
+  assignee_id: string | null;
+  assignee_name: string | null;
+  due_date: string | null;
+  notes: string | null;
+  created_by_name: string | null;
+  created_at: string;
+  updated_at: string;
+  items: RolloutItem[];
+}
