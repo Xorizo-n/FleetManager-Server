@@ -5,6 +5,7 @@ from config import settings
 
 from models.playbook import PlaybookSchedule
 from schemas.playbook import PlaybookScheduleOut
+from services.playbook_meta import playbook_meta
 
 
 def schedule_group_ids(schedule: PlaybookSchedule) -> list[str]:
@@ -36,6 +37,8 @@ def schedule_out(schedule: PlaybookSchedule, now: datetime | None = None) -> Pla
     out.host_group_ids = schedule_group_ids(schedule)
     out.host_tag_ids = schedule_tag_ids(schedule)
     out.next_run_at = next_run_at(schedule.cron_expression, now) if schedule.enabled else None
+    meta = playbook_meta(schedule.repo.local_path if schedule.repo else None, schedule.playbook_name)
+    out.playbook_title, out.playbook_description = meta.title, meta.description
     owner = schedule.owner
     if owner is not None:
         out.owner_name = owner.display_name or owner.username

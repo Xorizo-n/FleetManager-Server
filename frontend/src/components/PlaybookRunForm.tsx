@@ -7,7 +7,7 @@ import { useAuth } from "../context/AuthContext";
 import { keys, useFleet, usePlaybookCatalog } from "../api/queries";
 import HostPicker from "./HostPicker";
 import { TagTargets, tagHostIds, useTagById } from "./HostTags";
-import PlaybookSelect, { catalogKey, rememberPlaybook } from "./PlaybookSelect";
+import PlaybookSelect, { catalogKey, PlaybookDetails, playbookLabel, rememberPlaybook } from "./PlaybookSelect";
 import ExtraVarsEditor, { VarPair, varsToObject } from "./ExtraVarsEditor";
 import Button from "./ui/Button";
 import Switch from "./ui/Switch";
@@ -200,6 +200,13 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
             );
           })}
         </ol>
+        {chosen.length > 0 && (
+          <div className="space-y-2">
+            {chosen.map((f) => (
+              <PlaybookDetails key={f.key} file={f} heading={chosen.length > 1 ? playbookLabel(f) : undefined} />
+            ))}
+          </div>
+        )}
         {mode === "now" && chosen.length > 0 && selectedKeys.every(Boolean) && (
           <button
             type="button"

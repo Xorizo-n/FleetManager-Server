@@ -10,9 +10,11 @@ from sse_starlette.sse import EventSourceResponse
 from database import SessionLocal, get_db
 from dependencies import get_current_user, oauth2_scheme, require_roles
 from services.security import decode_token
+from models.playbook import PlaybookRepo
 from models.task import TaskRun, TaskStatus, TaskType
 from models.user import User, UserRole
 from schemas.task import ChainStep, TaskRunOut, TaskRunDetailOut
+from services.playbook_meta import playbook_meta
 from services.task_visibility import can_view_task_type
 from services.waiting_tasks import cancel_waiting_task
 
@@ -48,15 +50,25 @@ def list_tasks(
 
 
 def with_author_names(db: Session, tasks: list[TaskRun]) -> list[TaskRunOut]:
-    """Кто запустил задачу; у задач по расписанию автора нет."""
+    """Кто запустил задачу (у задач по расписанию автора нет) и понятное название плейбука."""
     author_ids = {task.created_by for task in tasks if task.created_by}
     names = dict(db.execute(select(User.id, User.username).where(User.id.in_(author_ids))).all()) if author_ids else {}
+    repo_paths = _repo_paths(db, tasks)
     result = []
     for task in tasks:
         out = TaskRunOut.model_validate(task)
         out.created_by_name = names.get(task.created_by)
+        meta = playbook_meta(repo_paths.get(task.repo_id), task.playbook_name)
+        out.playbook_title, out.playbook_description = meta.title, meta.description
         result.append(out)
     return result
+
+
+def _repo_paths(db: Session, tasks) -> dict:
+    repo_ids = {task.repo_id for task in tasks if task.repo_id}
+    if not repo_ids:
+        return {}
+    return dict(db.execute(select(PlaybookRepo.id, PlaybookRepo.local_path).where(PlaybookRepo.id.in_(repo_ids))).all())
 
 
 @router.get("/{task_id}", response_model=TaskRunDetailOut)
@@ -67,7 +79,9 @@ def get_task(task_id: uuid.UUID, db: Session = Depends(get_db), user: User = Dep
     if not can_view_task_type(user.role, task_run.task_type):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient permissions")
     out = TaskRunDetailOut.model_validate(task_run)
-    out.created_by_name = with_author_names(db, [task_run])[0].created_by_name
+    summary = with_author_names(db, [task_run])[0]
+    out.created_by_name = summary.created_by_name
+    out.playbook_title, out.playbook_description = summary.playbook_title, summary.playbook_description
     if task_run.grouped:
         # Без отменённых до старта (лишние ожидающие задачи старого формата, плейбук, снятый с цепочки)
         runs = db.execute(
@@ -76,7 +90,13 @@ def get_task(task_id: uuid.UUID, db: Session = Depends(get_db), user: User = Dep
             .order_by(TaskRun.created_at)
         ).scalars().all()
         out.runs = [TaskRunOut.model_validate(run) for run in runs]
-        out.chain = [ChainStep.model_validate(step, from_attributes=True) for step in _chain(db, task_run)]
+        steps = _chain(db, task_run)
+        paths = _repo_paths(db, steps)
+        out.chain = [
+            ChainStep.model_validate(step, from_attributes=True).model_copy(
+                update={"playbook_title": playbook_meta(paths.get(step.repo_id), step.playbook_name).title})
+            for step in steps
+        ]
     return out
 
 

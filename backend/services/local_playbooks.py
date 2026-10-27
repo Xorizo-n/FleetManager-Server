@@ -28,11 +28,16 @@ SYNTAX_CHECK_TIMEOUT = 60
 PATH_RE = re.compile(r"^(?:[A-Za-z0-9][A-Za-z0-9_-]{0,63}/)?[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\.ya?ml$")
 
 TEMPLATE = """---
+# name — понятное название в каталоге; fm_description — что делает плейбук (показывается при выборе
+# и запуске); fm_files — маски файлов из шары, которые он берёт (каталог проверяет, что они есть).
 - name: Новый плейбук
   hosts: Win_Hosts
   gather_facts: false
   ignore_unreachable: true
   vars:
+    fm_description: >-
+      Что делает плейбук — одним-двумя предложениями.
+    fm_files: []
     ansible_remote_tmp: 'C:\\Windows\\Temp'
   tasks:
     - name: Проверить связь с ПК

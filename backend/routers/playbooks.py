@@ -28,6 +28,7 @@ from schemas.playbook import (
 )
 from services import local_playbooks
 from services.local_playbooks import PlaybookError
+from services.playbook_meta import read_meta, share_files
 from services.audit import record_audit
 from services.crypto import encrypt_secret, decrypt_secret
 from services.git_ssh import build_git_ssh_command
@@ -53,18 +54,6 @@ def _require_tags(db: Session, tag_ids) -> None:
     found = set(db.execute(select(HostTag.id).where(HostTag.id.in_(list(tag_ids)))).scalars().all())
     if len(found) != len({str(t) for t in tag_ids}):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Тег не найден")
-
-
-def _read_play_name(path: Path) -> str | None:
-    try:
-        import yaml
-        with open(path, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        if isinstance(data, list) and data and isinstance(data[0], dict):
-            return data[0].get("name") or None
-    except Exception:  # noqa: BLE001
-        pass
-    return None
 
 
 router = APIRouter(prefix="/playbooks", tags=["playbooks"])
@@ -183,8 +172,14 @@ def list_playbook_files(repo_id: uuid.UUID, db: Session = Depends(get_db), _: Us
             # .git и служебные .check-* / .*.tmp редактора
             if any(part.startswith(".") for part in path.relative_to(base).parts):
                 continue
-            display_name = _read_play_name(path)
-            files.append(PlaybookFileOut(name=path.name, path=str(path.relative_to(base)).replace("\\", "/"), display_name=display_name))
+            meta = read_meta(path)
+            files.append(PlaybookFileOut(
+                name=path.name,
+                path=str(path.relative_to(base)).replace("\\", "/"),
+                display_name=meta.title,
+                description=meta.description,
+                files=share_files(meta.files),
+            ))
     return files
 
 

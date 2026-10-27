@@ -312,6 +312,9 @@ export interface TaskRun {
   after_task_id?: string | null;
   /** Ответ на запуск: сколько ПК ждут появления в сети */
   waiting_hosts?: number;
+  /** Понятное название и описание плейбука (fm_description); нет — показывается имя файла */
+  playbook_title?: string | null;
+  playbook_description?: string | null;
 }
 
 export interface RunAs {
@@ -329,7 +332,7 @@ export interface TaskRunDetail extends TaskRun {
   /** Выполняющие задачи запуска: сразу для ПК в сети и по одной на пачку появившихся */
   runs: TaskRun[];
   /** Плейбуки одной цепочки по порядку; у одиночного запуска пусто */
-  chain: { id: string; playbook_name: string | null; status: TaskStatus }[];
+  chain: { id: string; playbook_name: string | null; playbook_title?: string | null; status: TaskStatus }[];
 }
 
 export interface Repo {
@@ -342,10 +345,21 @@ export interface Repo {
   credential_id: string | null;
 }
 
+/** Файл из шары, который берёт плейбук (fm_files): есть ли он сейчас в шаре */
+export interface PlaybookShareFile {
+  pattern: string;
+  present: boolean;
+  /** Какой файл возьмёт плейбук (самый новый по имени) */
+  found?: string | null;
+}
+
 export interface PlaybookFile {
   name: string;
   path: string;
   display_name?: string | null;
+  /** fm_description из плейбука: что он делает */
+  description?: string | null;
+  files?: PlaybookShareFile[];
 }
 
 export interface Schedule {
@@ -365,6 +379,8 @@ export interface Schedule {
   owner_id?: string | null;
   owner_name?: string | null;
   owner_domain?: boolean;
+  playbook_title?: string | null;
+  playbook_description?: string | null;
 }
 
 export interface SoftwareItem {
