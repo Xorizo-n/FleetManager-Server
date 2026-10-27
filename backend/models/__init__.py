@@ -8,6 +8,7 @@ from models.agent import AgentEnrollmentToken, AgentAlert
 from models.wallpaper import Wallpaper, WallpaperAssignment, WallpaperSchedule, ObservedWallpaper
 from models.ldap_settings import LdapSettings
 from models.backup import BackupRun, BackupSettings
+from models.rollout import RolloutRequest, RolloutItem, RolloutStatus, RolloutItemStatus
 
 __all__ = [
     "BackupRun",
@@ -41,4 +42,8 @@ __all__ = [
     "WallpaperAssignment",
     "WallpaperSchedule",
     "ObservedWallpaper",
+    "RolloutRequest",
+    "RolloutItem",
+    "RolloutStatus",
+    "RolloutItemStatus",
 ]

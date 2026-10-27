@@ -18,6 +18,7 @@ import type {
   InstallerFile,
   PlaybookFile,
   Repo,
+  RolloutRequest,
   Schedule,
   SoftwareItem,
   SoftwarePackage,
@@ -53,6 +54,8 @@ export const keys = {
   packageHosts: (name: string) => ["package-hosts", name] as const,
   installers: ["installers"] as const,
   alerts: (hostId?: string) => ["alerts", hostId ?? "all"] as const,
+  rollouts: ["rollouts"] as const,
+  rolloutAssignees: ["rollouts", "assignees"] as const,
 };
 
 const get = <T,>(url: string, params?: Record<string, unknown>) => apiClient.get<T>(url, { params }).then((r) => r.data);
@@ -100,6 +103,10 @@ export function useFleet() {
 
 export const useTasks = (params: Record<string, unknown>, refetchInterval: number | false = 5000) =>
   useQuery({ queryKey: keys.tasks(params), queryFn: () => get<TaskRun[]>("/tasks", params), refetchInterval });
+
+export const useRollouts = () => useQuery({ queryKey: keys.rollouts, queryFn: () => get<RolloutRequest[]>("/rollouts"), refetchInterval: 30_000 });
+export const useRolloutAssignees = () =>
+  useQuery({ queryKey: keys.rolloutAssignees, queryFn: () => get<{ id: string; name: string }[]>("/rollouts/assignees"), staleTime: 300_000 });
 
 export const useTask = (id: string | null) =>
   useQuery({

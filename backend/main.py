@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
-from routers import auth, hosts, credentials, software, playbooks, tasks, dashboard, users, installers, agent, hardware, wallpapers, ldap_settings, backup, host_tags
+from routers import auth, hosts, credentials, software, playbooks, tasks, dashboard, users, installers, agent, hardware, wallpapers, ldap_settings, backup, host_tags, rollouts
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ app.include_router(credentials.router)
 app.include_router(software.router)
 app.include_router(playbooks.router)
 app.include_router(tasks.router)
+app.include_router(rollouts.router)
 app.include_router(dashboard.router)
 app.include_router(users.router)
 app.include_router(installers.router)
