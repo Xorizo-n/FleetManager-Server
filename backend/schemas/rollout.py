@@ -19,7 +19,8 @@ class RolloutItemIn(BaseModel):
     rooms: str | None = Field(default=None, max_length=255)
     status: RolloutItemStatus = RolloutItemStatus.todo
     note: str | None = None
-    task_run_id: uuid.UUID | None = None
+    host_group_ids: list[uuid.UUID] = Field(default_factory=list, max_length=50)
+    task_run_ids: list[uuid.UUID] = Field(default_factory=list, max_length=50)
 
     @field_validator("software", "rooms", "note", mode="before")
     @classmethod
@@ -53,13 +54,25 @@ class RolloutRequestUpdate(RolloutRequestCreate):
     items: list[RolloutItemIn] | None = Field(default=None, max_length=100)
 
 
-class TaskProgress(BaseModel):
-    """Итог связанного запуска: статус и сколько ПК в каждом состоянии."""
+class RunRef(BaseModel):
+    """Связанный запуск: чтобы показать его в заявке и открыть лог."""
 
+    id: uuid.UUID
     status: str
     playbook_name: str | None = None
     created_at: datetime | None = None
-    host_states: dict[str, int] = Field(default_factory=dict)
+    host_count: int = 0
+
+
+class Progress(BaseModel):
+    """Готовность по ПК: done — успешно хотя бы в одном запуске, active — ещё идёт или ждёт включения,
+    failed — только ошибки, not_started — ПК аудитории, до которых запуски не дошли (или отменены)."""
+
+    total: int = 0
+    done: int = 0
+    active: int = 0
+    failed: int = 0
+    not_started: int = 0
 
 
 class RolloutItemOut(BaseModel):
@@ -70,8 +83,11 @@ class RolloutItemOut(BaseModel):
     rooms: str | None = None
     status: RolloutItemStatus
     note: str | None = None
-    task_run_id: uuid.UUID | None = None
-    task: TaskProgress | None = None
+    host_group_ids: list[uuid.UUID] = Field(default_factory=list)
+    task_run_ids: list[uuid.UUID] = Field(default_factory=list)
+    runs: list[RunRef] = Field(default_factory=list)
+    # None — ни аудиторий, ни запусков: считать нечего, статус ведётся вручную
+    progress: Progress | None = None
 
 
 class RolloutRequestOut(BaseModel):
@@ -93,6 +109,8 @@ class RolloutRequestOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     items: list[RolloutItemOut] = Field(default_factory=list)
+    # Сумма по программам с подсчётом: «ПК-установок» готово из нужных
+    progress: Progress | None = None
 
 
 class RolloutAssignee(BaseModel):

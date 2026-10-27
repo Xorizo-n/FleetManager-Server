@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy import JSON, Date, DateTime, Enum, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -27,7 +27,7 @@ class RolloutItemStatus(str, enum.Enum):
 
 class RolloutRequest(Base):
     """Заявка на раскатку ПО: кто просит (партнёр, курс), где и к какому сроку, что поставить.
-    Позиции (RolloutItem) — отдельные программы со своим статусом и, если есть, запуском плейбука."""
+    Позиции (RolloutItem) — отдельные программы со своим статусом, аудиториями и запусками плейбуков."""
 
     __tablename__ = "rollout_requests"
 
@@ -63,7 +63,10 @@ class RolloutItem(Base):
     rooms: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[RolloutItemStatus] = mapped_column(Enum(RolloutItemStatus), default=RolloutItemStatus.todo, nullable=False)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Запуск плейбука, которым ставится программа: его итог по ПК показывается в заявке
-    task_run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("task_runs.id", ondelete="SET NULL"), nullable=True)
+    # Где программа должна стоять: группы аудиторий. По ним считается «готово N из M ПК»
+    host_group_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    # Запуски плейбуков, которыми ставилась программа (пилот, раскатка, догоняющие):
+    # для каждого ПК берётся лучший итог из всех (routers/rollouts.item_progress)
+    task_run_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
 
     request: Mapped[RolloutRequest] = relationship(back_populates="items")

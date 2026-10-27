@@ -430,17 +430,29 @@ export interface SshState {
 export type RolloutStatus = "new" | "in_progress" | "blocked" | "done" | "cancelled";
 export type RolloutItemStatus = "todo" | "in_progress" | "blocked" | "done";
 
+/** Готовность по ПК: done — стоит, active — идёт или ждёт включения, failed — только ошибки, not_started — не запускалось */
+export interface RolloutProgress {
+  total: number;
+  done: number;
+  active: number;
+  failed: number;
+  not_started: number;
+}
+
 export interface RolloutItem {
   id?: string;
   software: string;
-  /** Если программа нужна не во всех аудиториях заявки */
+  /** Подпись, если программа нужна не во всех аудиториях заявки */
   rooms: string | null;
   status: RolloutItemStatus;
   note: string | null;
-  /** Запуск плейбука, которым ставится программа */
-  task_run_id: string | null;
-  /** Итог этого запуска по ПК */
-  task?: { status: TaskStatus; playbook_name: string | null; created_at: string | null; host_states: Partial<Record<HostState, number>> } | null;
+  /** Группы аудиторий: по их ПК считается готовность */
+  host_group_ids: string[];
+  /** Запуски плейбуков, которыми ставилась программа */
+  task_run_ids: string[];
+  runs?: { id: string; status: TaskStatus; playbook_name: string | null; created_at: string | null; host_count: number }[];
+  /** null — ни аудиторий, ни запусков: статус ведётся вручную */
+  progress?: RolloutProgress | null;
 }
 
 export interface RolloutRequest {
@@ -461,4 +473,6 @@ export interface RolloutRequest {
   created_at: string;
   updated_at: string;
   items: RolloutItem[];
+  /** Сумма по программам с подсчётом */
+  progress: RolloutProgress | null;
 }
