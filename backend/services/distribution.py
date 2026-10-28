@@ -30,7 +30,7 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from celery_app import celery_app
 from config import settings
@@ -46,6 +46,20 @@ HEALTH_TIMEOUT = 5
 
 def enabled() -> bool:
     return bool(settings.dist_url and settings.dist_secret)
+
+
+def route_pins() -> list[dict]:
+    """Адреса, до которых агент закрепляет маршрут мимо VPN (в ответе на heartbeat, поле pin_routes).
+
+    Полнотуннельный VPN на ПК забирает и трафик к точке раздачи: nginx видит адрес из VPN-пула и
+    отвечает 403, поэтому установщик агента и файлы плейбуков шли через бэкенд (~30 Мбит/с).
+    Агент делает до точки раздачи такой же /32 через шлюз физической карты, как до сервера."""
+    if not enabled():
+        return []
+    parsed = urlsplit(settings.dist_url)
+    if not parsed.hostname:
+        return []
+    return [{"host": parsed.hostname, "port": parsed.port or (443 if parsed.scheme == "https" else 80)}]
 
 
 def _excluded(rel: str) -> bool:

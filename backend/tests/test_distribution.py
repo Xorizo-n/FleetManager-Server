@@ -182,5 +182,18 @@ class FetchPluginTests(_Share):
             self.assertIsNone(self.plugin.distribution_entry(path))
 
 
+class RoutePinTests(_Share):
+    def test_agent_pins_the_distribution_host_past_a_vpn(self):
+        self.assertEqual(distribution.route_pins(), [{"host": "10.152.240.10", "port": 8088}])
+
+    def test_default_port_of_the_scheme(self):
+        with mock.patch.object(settings, "dist_url", "https://dist.example"):
+            self.assertEqual(distribution.route_pins(), [{"host": "dist.example", "port": 443}])
+
+    def test_nothing_to_pin_without_a_distribution_point(self):
+        with mock.patch.object(settings, "dist_secret", ""):
+            self.assertEqual(distribution.route_pins(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
