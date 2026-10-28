@@ -82,6 +82,8 @@ export interface Host {
   ssh_problems?: string[];
   /** Версия, которую агент поставит сам, без SSH */
   agent_update_target?: string | null;
+  /** Питание по отчёту агента: загрузка, как закончилась прошлая работа, обновления Windows */
+  power_state?: PowerState | null;
   created_at: string;
   updated_at: string;
 }
@@ -436,9 +438,21 @@ export interface SshState {
   repaired?: string[];
   firewall_rule?: string | null;
   domain_trust?: string | null;
+  /** Локальный администратор для запасного входа: ok / missing / disabled / not_admin */
+  local_admin?: string | null;
   login_is_admin?: boolean | null;
   path_ok?: boolean | null;
   host_keys?: string[];
+  reported_at?: string;
+}
+
+export interface PowerState {
+  booted_at?: string | null;
+  /** clean, restart, power_loss, crash, unknown — backend/services/power_state.py */
+  previous_shutdown?: string | null;
+  previous_shutdown_at?: string | null;
+  updates_installing?: boolean | null;
+  reboot_pending?: boolean | null;
   reported_at?: string;
 }
 

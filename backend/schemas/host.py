@@ -193,6 +193,8 @@ class HostOut(BaseModel):
     # SSH по отчёту агента и найденные в нём причины, по которым сервер не попадёт на ПК
     ssh_state: dict | None = None
     ssh_problems: list[str] = []
+    # Питание по отчёту агента: booted_at, previous_shutdown(_at), updates_installing, reboot_pending
+    power_state: dict | None = None
     agent_update_target: str | None = None
     created_at: datetime
     updated_at: datetime

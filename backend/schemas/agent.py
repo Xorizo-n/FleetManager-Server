@@ -334,6 +334,8 @@ class AgentSshReport(BaseModel):
     path_ok: bool | None = None
     login_is_admin: bool | None = None
     domain_trust: str | None = Field(default=None, max_length=16)
+    # Локальный администратор для запасного входа: ok / missing / disabled / not_admin (services/local_admin.py)
+    local_admin: str | None = Field(default=None, max_length=16)
     host_keys: list[str] = Field(default_factory=list, max_length=8)
 
     @field_validator("repaired", "firewall_ignored_on", "firewall_blocking", "network_profiles", "host_keys", mode="before")
@@ -353,6 +355,19 @@ class AgentSshReport(BaseModel):
         return keys
 
 
+class AgentPowerReport(BaseModel):
+    """Питание ПК (services/power_state.py). previous_shutdown: clean — штатное выключение,
+    restart — перезагрузка, power_loss — выключили кнопкой или обесточили, crash — сбой Windows,
+    unknown — журнал ничего не сказал."""
+
+    booted_at: datetime | None = None
+    previous_shutdown: Literal["clean", "restart", "power_loss", "crash", "unknown"] | None = None
+    previous_shutdown_at: datetime | None = None
+    # Windows ставит обновления (TiWorker) — задачи по SSH подождут: установка перезагрузит ПК и оборвёт их
+    updates_installing: bool | None = None
+    reboot_pending: bool | None = None
+
+
 class AgentHeartbeatRequest(BaseModel):
     machine_id: uuid.UUID
     hostname: str | None = Field(default=None, max_length=255)
@@ -364,10 +379,14 @@ class AgentHeartbeatRequest(BaseModel):
     agent_version: str | None = Field(default=None, max_length=64)
     hardware: AgentHardware = Field(default_factory=AgentHardware)
     software: list[AgentSoftware] = Field(default_factory=list, max_length=10000)
+    # false — агент не успел собрать ПО (сбор завис или упал): список пуст не потому, что ПО нет,
+    # и сервер не трогает инвентаризацию ПО — иначе пустой список стёр бы её и записал «удалено» в историю
+    software_collected: bool = True
     # Старые агенты не присылают; новые — None, если собрать не удалось
     activation: AgentActivation | None = None
     wallpaper: AgentWallpaperReport | None = None
     ssh: AgentSshReport | None = None
+    power: AgentPowerReport | None = None
 
     @field_validator("ssh_login", "agent_version", mode="before")
     @classmethod
@@ -384,6 +403,12 @@ class AgentAlertRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     previous_fingerprint: str | None = Field(default=None, max_length=128)
     current_fingerprint: str | None = Field(default=None, max_length=128)
+
+
+class AgentPingRequest(BaseModel):
+    """Короткий знак жизни до сбора инвентаризации (POST /api/agent/ping)."""
+
+    machine_id: uuid.UUID
 
 
 class AgentOfflineRequest(BaseModel):

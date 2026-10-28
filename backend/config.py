@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     # установки агента (services/run_as.py). Сколько ПК пробовать входом одновременно.
     playbook_run_as_initiator: bool = True
     run_as_probe_parallelism: int = 50
+    # Запасной вход под локальным администратором тем же ключом, когда доменный не проходит
+    # (нарушено доверие, контроллер недоступен, учётка отключена) — services/local_admin.py.
+    # Учётку создаёт AutoDomain, пароль ставит set_local_admin_password.yml.
+    local_admin_fallback: bool = True
+    local_admin_login: str = "admin"
 
     # Ansible
     ansible_playbooks_repo_dir: str = "/app/ansible_data/playbooks_repo"

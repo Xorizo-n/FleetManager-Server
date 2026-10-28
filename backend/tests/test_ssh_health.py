@@ -60,8 +60,10 @@ class SshProblemsTests(unittest.TestCase):
             with self.subTest(changes=changes):
                 self.assertIsNotNone(ssh_blocked_reason(state(**changes), NOW))
 
-    def test_unreachable_domain_controller_is_not_a_problem(self):
-        self.assertEqual(ssh_problems(state(domain_trust="unreachable")), [])
+    def test_unreachable_domain_controller_is_shown_but_does_not_hold_tasks(self):
+        # Ноутбук вне сети университета — норма, но и вход доменной учёткой не пройдёт (SU5-J108-W02 с VPN)
+        self.assertEqual(ssh_problems(state(domain_trust="unreachable")), ["контроллер домена недоступен"])
+        self.assertIsNone(ssh_blocked_reason(state(domain_trust="unreachable"), NOW))
 
     def test_path_and_config_are_shown_but_do_not_hold_tasks(self):
         report = state(path_ok=False, config_valid=False, config_port=2222)

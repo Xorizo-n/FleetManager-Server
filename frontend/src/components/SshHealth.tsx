@@ -7,6 +7,16 @@ const REPAIRED: Record<string, string> = {
   restarted: "перезапустил зависший sshd",
   firewall_rule: "восстановил правило брандмауэра",
   path: "восстановил System32 в PATH",
+  default_shell: "вернул PowerShell оболочкой SSH",
+  domain_trust: "восстановил доверие с доменом (nltest /sc_reset)",
+};
+
+const SHUTDOWN: Record<string, string> = {
+  clean: "штатное выключение",
+  restart: "перезагрузка",
+  power_loss: "выключен кнопкой питания или обесточен",
+  crash: "сбой Windows",
+  unknown: "не определено",
 };
 
 const TRUST: Record<string, string> = {
@@ -14,6 +24,26 @@ const TRUST: Record<string, string> = {
   broken: "нарушено",
   unreachable: "нет связи с контроллером домена",
 };
+
+/** Загрузка и прошлое завершение работы: «выключили» отличается от «пропал на ходу» */
+function PowerLine({ host }: { host: Host }) {
+  const power = host.power_state;
+  if (!power?.booted_at) return null;
+  const previous = power.previous_shutdown ? SHUTDOWN[power.previous_shutdown] ?? power.previous_shutdown : null;
+  return (
+    <p className="text-xs text-subtle">
+      Загружен {relativeTime(power.booted_at)}
+      {previous && (
+        <>
+          ; до этого — {previous}
+          {power.previous_shutdown_at && <> ({relativeTime(power.previous_shutdown_at)})</>}
+        </>
+      )}
+      {power.updates_installing && <>. Ставит обновления Windows — задачи ждут</>}
+      {power.reboot_pending && !power.updates_installing && <>. Ждёт перезагрузки после обновлений</>}
+    </p>
+  );
+}
 
 /** SSH по отчёту агента: что мешает серверу зайти на ПК и что агент уже исправил сам */
 export function SshHealthSection({ host }: { host: Host }) {
@@ -41,6 +71,7 @@ export function SshHealthSection({ host }: { host: Host }) {
         Отчёт {relativeTime(state.reported_at ?? null)}
         {host.agent_update_target && <>. Ждёт самообновления до {host.agent_update_target}</>}
       </p>
+      <PowerLine host={host} />
     </div>
   );
 }

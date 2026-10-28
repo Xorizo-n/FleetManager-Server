@@ -86,7 +86,7 @@ class PlanTests(unittest.TestCase):
         db.query.return_value = query
         verdicts = {hosts[0].id: None, hosts[1].id: "ПК недоступен по SSH", hosts[2].id: None}
         with mock.patch.object(run_as, "initiator_login", return_value=("AT\\U", None)), \
-                mock.patch.object(run_as, "probe_host", side_effect=lambda h, login: verdicts[h.id]):
+                mock.patch.object(run_as, "_probe", side_effect=lambda h, login: (verdicts[h.id], False)):
             plan = run_as.plan(db, [str(h.id) for h in hosts], uuid.uuid4())
         self.assertEqual(plan.as_user, {str(hosts[0].id), str(hosts[2].id)})
         self.assertEqual(plan.fallback, {str(hosts[1].id): "ПК недоступен по SSH"})
@@ -102,6 +102,57 @@ class PlanTests(unittest.TestCase):
         probe.assert_not_called()
         self.assertEqual(plan.overrides(), {})
         self.assertEqual(run_as.log_lines(plan, {}), ["[Fleet Manager] Выполняется от учётки установки агента: у задачи нет инициатора."])
+
+
+
+class LocalAdminFallbackTests(unittest.TestCase):
+    """Вход отклонён под доменными учётками — плейбук идёт под локальным администратором (services/local_admin.py)."""
+
+    host = SimpleNamespace(id=uuid.uuid4(), hostname="SU5-I203-W03", ip_address="10.152.132.9", ssh_port=22, ssh_state={"local_admin": "ok"},
+                           credential=SimpleNamespace(login="at\\Sergey.Mirzagitov"))
+    RESET = ("вход не удался: Connection reset by 10.152.132.9 port 22", True)
+    TIMEOUT = ("ПК недоступен по SSH", False)
+
+    def decide(self, answers, login="AT\\Ivan.Petrov", **host_kw):
+        host = SimpleNamespace(**{**vars(self.host), **host_kw})
+        probe = mock.Mock(side_effect=lambda h, who: answers[who.lower()])
+        with mock.patch.object(run_as, "_probe", probe), mock.patch.multiple(settings, local_admin_fallback=True, local_admin_login="admin"):
+            return run_as._decide(host, login), [c.args[1] for c in probe.call_args_list]
+
+    def test_domain_down_goes_local(self):
+        verdict, tried = self.decide({"at\\ivan.petrov": self.RESET, "at\\sergey.mirzagitov": self.RESET, "admin": (None, False)})
+        self.assertEqual(verdict[0], "local")
+        self.assertEqual(tried, ["AT\\Ivan.Petrov", "at\\Sergey.Mirzagitov", "admin"])
+
+    def test_initiator_not_admin_keeps_the_install_account(self):
+        verdict, tried = self.decide({"at\\ivan.petrov": ("вход не принят", True), "at\\sergey.mirzagitov": (None, False)})
+        self.assertEqual(verdict[0], "fallback")
+        self.assertNotIn("admin", tried)
+
+    def test_network_failure_tries_nothing_else(self):
+        verdict, tried = self.decide({"at\\ivan.petrov": self.TIMEOUT})
+        self.assertEqual((verdict[0], tried), ("fallback", ["AT\\Ivan.Petrov"]))
+
+    def test_initiator_is_the_install_account(self):
+        verdict, tried = self.decide({"at\\sergey.mirzagitov": self.RESET, "admin": (None, False)}, login="at\\Sergey.Mirzagitov")
+        self.assertEqual((verdict[0], tried), ("local", ["at\\Sergey.Mirzagitov", "admin"]))
+
+    def test_agent_says_no_local_account(self):
+        verdict, tried = self.decide({"at\\ivan.petrov": self.RESET}, ssh_state={"local_admin": "disabled"})
+        self.assertEqual((verdict[0], tried), ("fallback", ["AT\\Ivan.Petrov"]))
+
+    def test_local_login_whoami_has_the_computer_name(self):
+        run = mock.Mock(return_value=SimpleNamespace(returncode=0, stdout="su5-i203-w03\\admin\r\n", stderr=""))
+        with mock.patch.object(run_as, "_ssh_key", return_value="/keys/k.pem"), mock.patch("subprocess.run", run):
+            self.assertIsNone(run_as.probe_host(self.host, "admin"))
+
+    def test_plan_overrides_and_log(self):
+        plan = run_as.RunAsPlan(login="AT\\U", as_user={"a"}, local={"b": "вход не удался: Connection reset"})
+        with mock.patch.multiple(settings, local_admin_fallback=True, local_admin_login="admin"):
+            self.assertEqual(plan.overrides(), {"a": "AT\\U", "b": "admin"})
+            lines = run_as.log_lines(plan, {"a": "PC-A", "b": "PC-B"})
+        self.assertIn("Под локальным администратором admin на 1 ПК", lines[1])
+        self.assertIn("PC-B: вход не удался", lines[2])
 
 
 if __name__ == "__main__":

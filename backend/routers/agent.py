@@ -31,6 +31,7 @@ from schemas.agent import (
     AgentHostSelection,
     AgentHostVersionOut,
     AgentOfflineRequest,
+    AgentPingRequest,
     AgentRegisterRequest,
     AgentRegisterResponse,
     AgentStatusOut,
@@ -56,6 +57,7 @@ from services.agent_version import (
 )
 from services.audit import record_audit
 from services.distribution import route_pins
+from services.power_state import store_power_report, updates_installing
 from services.hardware_change import hardware_changes, is_disk_list
 from services.workplace_devices import DeviceChange, apply_components
 from services.wallpapers import heartbeat_wallpaper, store_report, wallpaper_path
@@ -430,6 +432,7 @@ def heartbeat(
         host.agent_version = reported_version
         host.agent_version_checked_at = now
     store_ssh_report(host, payload.ssh, now)
+    store_power_report(host, payload.power, now)
     # Обновление без SSH: цель ставит services/agent_update.py, когда до ПК не достучаться
     try:
         update_offer = agent_update_offer(host, reported_version, needs_reinstall(host.ssh_state, now))
@@ -455,7 +458,7 @@ def heartbeat(
     # агент сам сообщает, что SSH закрыт: задачи сорвались бы и ПК выпал бы из ожидания.
     # Их заберёт проверка по SSH, когда SSH заработает. Ошибка здесь не должна сорвать heartbeat.
     try:
-        if ssh_blocked_reason(host.ssh_state, now) is None:
+        if ssh_blocked_reason(host.ssh_state, now) is None and not updates_installing(host.power_state, now):
             release_waiting_tasks(db, host.id)
     except Exception:  # noqa: BLE001
         db.rollback()
@@ -471,7 +474,8 @@ def heartbeat(
             item.name: (item.version, _install_method(item.source))
             for item in payload.software
         }
-        sync_host_software(db, host, discovered)
+        if payload.software_collected:
+            sync_host_software(db, host, discovered)
         stored = len(discovered)
     except Exception:  # noqa: BLE001
         db.rollback()
@@ -553,6 +557,26 @@ def list_alerts(
     if host_id:
         query = query.where(AgentAlert.host_id == host_id)
     return db.execute(query.order_by(AgentAlert.created_at.desc()).limit(max(1, min(limit, 500)))).scalars().all()
+
+
+@router.post("/ping")
+def ping(
+    payload: AgentPingRequest,
+    host: Host = Depends(_require_agent_host),
+    db: Session = Depends(get_db),
+):
+    """ПК жив — до того, как агент соберёт инвентаризацию для heartbeat.
+
+    Heartbeat уходит после сбора железа, ПО и проверок SSH: после загрузки это минута и больше,
+    а зависший сбор (WMI, PowerShell) не давал отправить его вовсе — ПК числился офлайн, хотя
+    агент работал. Ожидающие задачи здесь не выпускаются: для этого нужен отчёт о SSH из heartbeat."""
+    _check_machine(host, payload.machine_id)
+    now = _now()
+    host.status = HostStatus.online
+    host.last_seen_at = now
+    host.last_shutdown_at = None
+    db.commit()
+    return {"status": "online", "host_id": host.id}
 
 
 @router.post("/offline")
