@@ -55,6 +55,7 @@ from services.agent_version import (
     version_status,
 )
 from services.audit import record_audit
+from services.distribution import route_pins
 from services.hardware_change import hardware_changes, is_disk_list
 from services.workplace_devices import DeviceChange, apply_components
 from services.wallpapers import heartbeat_wallpaper, store_report, wallpaper_path
@@ -486,6 +487,9 @@ def heartbeat(
         response["wallpaper"] = wallpaper
     if update_offer is not None:
         response["agent_update"] = update_offer
+    pins = route_pins()
+    if pins:
+        response["pin_routes"] = pins
     return response
 
 
