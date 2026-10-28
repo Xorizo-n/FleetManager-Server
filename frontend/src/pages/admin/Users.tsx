@@ -1,14 +1,16 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff, KeyRound, UserPlus } from "lucide-react";
+import { Trash2, UserPlus } from "lucide-react";
 import { apiClient } from "../../api/client";
 import { CurrentUser, UserRole, useAuth } from "../../context/AuthContext";
 import PageHeader from "../../components/ui/PageHeader";
 import Badge from "../../components/ui/Badge";
 import Button from "../../components/ui/Button";
+import Modal from "../../components/ui/Modal";
+import PasswordInput from "../../components/ui/PasswordInput";
 import { Empty, Loading } from "../../components/ui/States";
 import { useToast } from "../../components/ui/Toast";
-import { apiError } from "../../lib/format";
+import { apiError, plural } from "../../lib/format";
 
 const ROLE_OPTIONS: { value: UserRole; label: string; hint: string }[] = [
   { value: "admin", label: "Администратор", hint: "всё, включая пользователей и учётные данные" },
@@ -19,44 +21,6 @@ const ROLE_OPTIONS: { value: UserRole; label: string; hint: string }[] = [
 
 const roleLabel = (role: UserRole) => ROLE_OPTIONS.find((r) => r.value === role)?.label ?? role;
 
-function PasswordInput({
-  id,
-  value,
-  onChange,
-  autoComplete,
-  minLength = 8,
-}: {
-  id: string;
-  value: string;
-  onChange: (value: string) => void;
-  autoComplete: string;
-  minLength?: number;
-}) {
-  const [show, setShow] = useState(false);
-  return (
-    <div className="relative">
-      <input
-        id={id}
-        type={show ? "text" : "password"}
-        autoComplete={autoComplete}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        required
-        minLength={minLength}
-        className="input-base pr-10"
-      />
-      <button
-        type="button"
-        onClick={() => setShow((v) => !v)}
-        className="absolute inset-y-0 right-0 flex items-center px-3 text-subtle transition-colors hover:text-foreground"
-        aria-label={show ? "Скрыть пароль" : "Показать пароль"}
-      >
-        {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-      </button>
-    </div>
-  );
-}
-
 export default function Users() {
   const { user: me } = useAuth();
   const queryClient = useQueryClient();
@@ -64,11 +28,9 @@ export default function Users() {
   const users = useQuery({ queryKey: ["users"], queryFn: () => apiClient.get<CurrentUser[]>("/users").then((r) => r.data) });
 
   const isAdmin = me?.role === "admin";
-  const domainSelf = me?.auth_source === "ldap";
-  const [createForm, setCreateForm] = useState({ username: "", email: "", password: "", role: "viewer" as UserRole });
-  const [creating, setCreating] = useState(false);
-  const [pwdForm, setPwdForm] = useState({ current_password: "", new_password: "" });
-  const [pwdSaving, setPwdSaving] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [deleting, setDeleting] = useState<CurrentUser | null>(null);
+  const activeAdmins = (users.data ?? []).filter((u) => u.role === "admin" && u.is_active).length;
 
   async function changeRole(target: CurrentUser, role: UserRole) {
     try {
@@ -91,33 +53,11 @@ export default function Users() {
     }
   }
 
-  async function createUser(e: FormEvent) {
-    e.preventDefault();
-    setCreating(true);
-    try {
-      await apiClient.post("/users", createForm);
-      queryClient.invalidateQueries({ queryKey: ["users"] });
-      toast({ tone: "success", message: `Пользователь «${createForm.username}» создан` });
-      setCreateForm({ username: "", email: "", password: "", role: "viewer" });
-    } catch (err) {
-      toast({ tone: "error", message: apiError(err, "Не удалось создать пользователя") });
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  async function changePassword(e: FormEvent) {
-    e.preventDefault();
-    setPwdSaving(true);
-    try {
-      await apiClient.post("/auth/change-password", pwdForm);
-      toast({ tone: "success", message: "Пароль изменён" });
-      setPwdForm({ current_password: "", new_password: "" });
-    } catch (err) {
-      toast({ tone: "error", message: apiError(err, "Не удалось изменить пароль") });
-    } finally {
-      setPwdSaving(false);
-    }
+  /** Почему эту запись нельзя удалить; null — можно */
+  function deleteBlocked(u: CurrentUser): string | null {
+    if (u.id === me?.id) return "Свою учётную запись удалить нельзя";
+    if (u.role === "admin" && u.is_active && activeAdmins <= 1) return "Последнего активного администратора удалить нельзя";
+    return null;
   }
 
   return (
@@ -125,6 +65,14 @@ export default function Users() {
       <PageHeader
         title="Пользователи"
         description="Роли и второй фактор. Свою роль изменить нельзя, последнего активного администратора понизить тоже нельзя. Доменные пользователи появляются при первом входе с ролью по группам AD; роль, назначенная здесь, важнее групп — чтобы вернуть роль по группам, выберите её снова."
+        actions={
+          isAdmin && (
+            <Button onClick={() => setCreateOpen(true)}>
+              <UserPlus className="h-4 w-4" />
+              Создать пользователя
+            </Button>
+          )
+        }
       />
       <div className="table-shell">
         <table className="table-base">
@@ -136,12 +84,14 @@ export default function Users() {
               <th>Роль</th>
               <th>TOTP</th>
               <th>Статус</th>
+              {isAdmin && <th className="w-12"><span className="sr-only">Действия</span></th>}
             </tr>
           </thead>
           <tbody>
             {(users.data ?? []).map((u) => {
               const self = u.id === me?.id;
               const domain = u.auth_source === "ldap";
+              const blocked = deleteBlocked(u);
               return (
                 <tr key={u.id}>
                   <td className="font-medium text-foreground">
@@ -187,6 +137,19 @@ export default function Users() {
                   <td>
                     <Badge status={u.is_active ? "success" : "disabled"}>{u.is_active ? "активен" : "заблокирован"}</Badge>
                   </td>
+                  {isAdmin && (
+                    <td className="text-right">
+                      <button
+                        onClick={() => setDeleting(u)}
+                        disabled={!!blocked}
+                        title={blocked ?? `Удалить ${u.username}`}
+                        aria-label={`Удалить ${u.username}`}
+                        className="action-danger disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
+                      >
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               );
             })}
@@ -196,67 +159,153 @@ export default function Users() {
         {users.data?.length === 0 && <Empty>Пользователей нет</Empty>}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        {isAdmin && (
-          <div className="surface-card p-5">
-            <div className="mb-4 flex items-center gap-2">
-              <UserPlus className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-              <h2 className="text-base font-semibold text-foreground">Создать пользователя</h2>
-            </div>
-            <form onSubmit={createUser} className="space-y-3">
-              <div>
-                <label htmlFor="new-username" className="field-label">Имя пользователя</label>
-                <input id="new-username" type="text" autoComplete="off" value={createForm.username} onChange={(e) => setCreateForm({ ...createForm, username: e.target.value })} required minLength={3} className="input-base" />
-              </div>
-              <div>
-                <label htmlFor="new-email" className="field-label">Email</label>
-                <input id="new-email" type="email" autoComplete="off" value={createForm.email} onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })} required className="input-base" />
-              </div>
-              <div>
-                <label htmlFor="new-password" className="field-label">Пароль</label>
-                <PasswordInput id="new-password" value={createForm.password} onChange={(v) => setCreateForm({ ...createForm, password: v })} autoComplete="new-password" />
-                <p className="mt-1 text-xs text-subtle">Минимум 8 символов</p>
-              </div>
-              <div>
-                <label htmlFor="new-role" className="field-label">Роль</label>
-                <select id="new-role" value={createForm.role} onChange={(e) => setCreateForm({ ...createForm, role: e.target.value as UserRole })} className="input-base">
-                  {ROLE_OPTIONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-                </select>
-              </div>
-              <Button type="submit" loading={creating} className="w-full">Создать пользователя</Button>
-            </form>
-          </div>
-        )}
-
-        {domainSelf ? (
-          <div className="surface-card p-5">
-            <div className="mb-2 flex items-center gap-2">
-              <KeyRound className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-              <h2 className="text-base font-semibold text-foreground">Пароль</h2>
-            </div>
-            <p className="text-sm text-muted-foreground">Вы вошли доменной учётной записью: пароль меняется в Windows (Ctrl+Alt+Del → «Изменить пароль»).</p>
-          </div>
-        ) : (
-        <div className="surface-card p-5">
-          <div className="mb-4 flex items-center gap-2">
-            <KeyRound className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-            <h2 className="text-base font-semibold text-foreground">Смена своего пароля</h2>
-          </div>
-          <form onSubmit={changePassword} className="space-y-3">
-            <div>
-              <label htmlFor="cur-password" className="field-label">Текущий пароль</label>
-              <PasswordInput id="cur-password" value={pwdForm.current_password} onChange={(v) => setPwdForm({ ...pwdForm, current_password: v })} autoComplete="current-password" minLength={1} />
-            </div>
-            <div>
-              <label htmlFor="chg-password" className="field-label">Новый пароль</label>
-              <PasswordInput id="chg-password" value={pwdForm.new_password} onChange={(v) => setPwdForm({ ...pwdForm, new_password: v })} autoComplete="new-password" />
-              <p className="mt-1 text-xs text-subtle">Минимум 8 символов</p>
-            </div>
-            <Button type="submit" loading={pwdSaving} className="w-full">Изменить пароль</Button>
-          </form>
-        </div>
-        )}
-      </div>
+      <CreateUserModal open={createOpen} onClose={() => setCreateOpen(false)} />
+      <DeleteUserModal target={deleting} onClose={() => setDeleting(null)} />
     </div>
+  );
+}
+
+const EMPTY_FORM = { username: "", email: "", password: "", role: "viewer" as UserRole };
+
+function CreateUserModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function close() {
+    setForm(EMPTY_FORM);
+    setError(null);
+    onClose();
+  }
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      await apiClient.post("/users", form);
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      toast({ tone: "success", message: `Пользователь «${form.username}» создан` });
+      close();
+    } catch (err) {
+      setError(apiError(err, "Не удалось создать пользователя"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={close}
+      title="Новый пользователь"
+      size="sm"
+      footer={
+        <>
+          <Button variant="secondary" onClick={close}>Отмена</Button>
+          <Button type="submit" form="create-user-form" loading={saving}>Создать</Button>
+        </>
+      }
+    >
+      <form id="create-user-form" onSubmit={submit} className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          Локальная учётная запись с паролем. Доменных пользователей создавать не нужно: они появляются сами при первом входе.
+        </p>
+        <div>
+          <label htmlFor="new-username" className="field-label">Имя пользователя</label>
+          <input id="new-username" type="text" autoComplete="off" autoFocus value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} required minLength={3} className="input-base" />
+        </div>
+        <div>
+          <label htmlFor="new-email" className="field-label">Email</label>
+          <input id="new-email" type="email" autoComplete="off" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required className="input-base" />
+        </div>
+        <div>
+          <label htmlFor="new-password" className="field-label">Пароль</label>
+          <PasswordInput id="new-password" value={form.password} onChange={(v) => setForm({ ...form, password: v })} autoComplete="new-password" />
+          <p className="mt-1 text-xs text-subtle">Минимум 8 символов</p>
+        </div>
+        <div>
+          <label htmlFor="new-role" className="field-label">Роль</label>
+          <select id="new-role" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as UserRole })} className="input-base">
+            {ROLE_OPTIONS.map((r) => <option key={r.value} value={r.value}>{r.label} — {r.hint}</option>)}
+          </select>
+        </div>
+        {error && <p className="text-sm text-rose-600 dark:text-rose-400" role="alert">{error}</p>}
+      </form>
+    </Modal>
+  );
+}
+
+function DeleteUserModal({ target, onClose }: { target: CurrentUser | null; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const [schedules, setSchedules] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSchedules(null);
+    setError(null);
+    if (!target) return;
+    apiClient
+      .get<{ schedules: number }>(`/users/${target.id}/usage`)
+      .then((r) => setSchedules(r.data.schedules))
+      .catch(() => setSchedules(null));
+  }, [target]);
+
+  async function remove() {
+    if (!target) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await apiClient.delete(`/users/${target.id}`);
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      toast({ tone: "success", message: `Пользователь «${target.username}» удалён` });
+      onClose();
+    } catch (err) {
+      setError(apiError(err, "Не удалось удалить пользователя"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      open={!!target}
+      onClose={onClose}
+      title="Удалить пользователя?"
+      size="sm"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Отмена</Button>
+          <Button variant="danger" onClick={remove} loading={saving}>Удалить</Button>
+        </>
+      }
+    >
+      {target && (
+        <div className="space-y-3 text-sm text-muted-foreground">
+          <p>
+            Учётная запись <span className="font-medium text-foreground">{target.username}</span>
+            {target.display_name ? ` (${target.display_name})` : ""} будет удалена, войти под ней будет нельзя.
+            Задачи и записи журнала, созданные этим пользователем, останутся, но без автора.
+          </p>
+          {!!schedules && (
+            <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-amber-700 dark:text-amber-300">
+              {plural(schedules, "расписание плейбука выполнялось", "расписания плейбуков выполнялись", "расписаний плейбуков выполнялись")} от имени этого
+              пользователя. Они продолжат работать, но от учётной записи установки агента.
+            </p>
+          )}
+          {target.auth_source === "ldap" && (
+            <p>
+              Это доменная запись: если пользователь всё ещё в группах AD, при следующем входе она создастся снова. Чтобы закрыть доступ насовсем,
+              уберите его из групп доступа в домене.
+            </p>
+          )}
+          {error && <p className="text-rose-600 dark:text-rose-400" role="alert">{error}</p>}
+        </div>
+      )}
+    </Modal>
   );
 }
