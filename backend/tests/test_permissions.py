@@ -5,6 +5,7 @@ from services.permissions import (
     can_access_playbooks,
     can_manage_users,
     validate_role_change,
+    validate_user_delete,
 )
 
 
@@ -33,6 +34,26 @@ class PermissionTests(unittest.TestCase):
 
     def test_inactive_admin_can_be_demoted_without_losing_active_admin(self):
         validate_role_change("admin", uuid.uuid4(), uuid.uuid4(), "admin", "viewer", 1, False)
+
+
+class UserDeleteTests(unittest.TestCase):
+    def test_admin_deletes_another_user(self):
+        validate_user_delete("admin", uuid.uuid4(), uuid.uuid4(), "operator", True, 1)
+        validate_user_delete("admin", uuid.uuid4(), uuid.uuid4(), "admin", True, 2)
+
+    def test_only_admin_deletes(self):
+        with self.assertRaisesRegex(ValueError, "Только администратор"):
+            validate_user_delete("operator", uuid.uuid4(), uuid.uuid4(), "viewer", True, 1)
+
+    def test_own_account_cannot_be_deleted(self):
+        me = uuid.uuid4()
+        with self.assertRaisesRegex(ValueError, "собственную"):
+            validate_user_delete("admin", me, me, "admin", True, 3)
+
+    def test_last_active_admin_cannot_be_deleted(self):
+        with self.assertRaisesRegex(ValueError, "последнего"):
+            validate_user_delete("admin", uuid.uuid4(), uuid.uuid4(), "admin", True, 1)
+        validate_user_delete("admin", uuid.uuid4(), uuid.uuid4(), "admin", False, 1)
 
 
 if __name__ == "__main__":

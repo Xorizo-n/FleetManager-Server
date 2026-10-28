@@ -42,6 +42,11 @@ class UserRoleUpdate(BaseModel):
     role: UserRole
 
 
+class UserUsage(BaseModel):
+    # Расписания плейбуков, которые выполняются от имени пользователя
+    schedules: int
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str

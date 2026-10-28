@@ -1,8 +1,8 @@
 import { Suspense, useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { ChevronDown, LogOut, Menu as MenuIcon, Server, Settings, X } from "lucide-react";
+import { ChevronDown, Menu as MenuIcon, Server, Settings, X } from "lucide-react";
 import { UserRole, useAuth } from "../context/AuthContext";
-import ThemeToggle from "./ui/ThemeToggle";
+import UserMenu, { ROLE_LABELS } from "./UserMenu";
 import Menu from "./ui/Menu";
 import { TaskPanelProvider } from "./TaskPanel";
 import { Loading } from "./ui/States";
@@ -33,15 +33,13 @@ export const ADMIN_ITEMS: { to: string; label: string; roles: UserRole[] }[] = [
   { to: "/admin/files", label: "Хранилище установщиков", roles: EDITORS },
 ];
 
-const ROLE_LABELS: Record<UserRole, string> = { admin: "админ", operator: "оператор", viewer: "наблюдатель", monitoring: "мониторинг" };
-
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   `whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-150 ${
     isActive ? "bg-blue-600 text-white" : "text-muted-foreground hover:bg-muted hover:text-foreground"
   }`;
 
 export default function Layout() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -55,11 +53,6 @@ export default function Layout() {
   // Мониторинг — настенный дисплей (ТВ): страница сама занимает всю высоту под
   // шапкой и управляет своим скроллом, поэтому убираем отступы и ограничение ширины.
   const wallboard = location.pathname === "/monitoring";
-
-  function handleLogout() {
-    logout();
-    navigate("/login");
-  }
 
   return (
     <TaskPanelProvider>
@@ -103,19 +96,7 @@ export default function Layout() {
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
-              {user && (
-                <span className="mr-1 hidden items-center gap-2 text-sm text-muted-foreground xl:flex" title={`${user.username} (${ROLE_LABELS[user.role]})`}>
-                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-muted text-xs font-medium text-foreground">
-                    {user.username.slice(0, 1).toUpperCase()}
-                  </span>
-                  <span className="max-w-[120px] truncate">{user.username}</span>
-                  <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs">{ROLE_LABELS[user.role]}</span>
-                </span>
-              )}
-              <ThemeToggle />
-              <button onClick={handleLogout} aria-label="Выйти" title="Выйти" className="btn-ghost btn-icon">
-                <LogOut className="h-4 w-4" />
-              </button>
+              <UserMenu />
               <button className="btn-ghost btn-icon lg:hidden" onClick={() => setMenuOpen((v) => !v)} aria-label="Меню" aria-expanded={menuOpen}>
                 {menuOpen ? <X className="h-5 w-5" /> : <MenuIcon className="h-5 w-5" />}
               </button>

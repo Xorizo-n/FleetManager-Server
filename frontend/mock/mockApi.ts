@@ -660,6 +660,27 @@ route("PATCH", "/users/{id}/role", (ctx, p) => {
   if (u.auth_source === "ldap") u.role_override = u.role === u.ldap_role ? null : u.role;
   return u;
 });
+route("POST", "/users", (ctx) => {
+  admin(ctx);
+  const b = ctx.body;
+  if (users.some((u) => u.username === b.username || u.email === b.email)) throw new HttpError(409, "Пользователь с таким именем или email уже существует");
+  const u = { id: uuid(), username: b.username, email: b.email, role: b.role, totp_enabled: false, is_active: true, auth_source: "local" };
+  users.push(u as any);
+  return u;
+});
+route("GET", "/users/{id}/usage", (ctx, p) => { admin(ctx); const u: any = find(users, p.id, "Пользователь"); return { schedules: u.auth_source === "ldap" ? 2 : 0 }; });
+route("DELETE", "/users/{id}", (ctx, p) => {
+  admin(ctx);
+  const u = find(users, p.id, "Пользователь");
+  if (u.id === ctx.user?.id) throw new HttpError(400, "Нельзя удалить собственную учётную запись");
+  if (u.role === "admin" && users.filter((x) => x.role === "admin" && x.is_active).length <= 1) throw new HttpError(400, "Нельзя удалить последнего активного администратора");
+  users.splice(users.indexOf(u), 1);
+  return null;
+});
+route("POST", "/auth/change-password", (ctx) => {
+  if (ctx.body.current_password !== "mock") throw new HttpError(400, "Текущий пароль неверный");
+  return { detail: "Пароль изменён" };
+});
 
 // hosts
 route("GET", "/hosts", () => hosts);

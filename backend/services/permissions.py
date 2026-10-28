@@ -15,6 +15,16 @@ def can_manage_users(role: Any) -> bool:
     return _role_value(role) == "admin"
 
 
+def validate_user_delete(actor_role: Any, actor_id: Any, target_id: Any, target_role: Any,
+                         target_is_active: bool, active_admin_count: int) -> None:
+    if not can_manage_users(actor_role):
+        raise ValueError("Только администратор может удалять учётные записи")
+    if actor_id == target_id:
+        raise ValueError("Нельзя удалить собственную учётную запись")
+    if _role_value(target_role) == "admin" and target_is_active and active_admin_count <= 1:
+        raise ValueError("Нельзя удалить последнего активного администратора")
+
+
 def validate_role_change(
     actor_role: Any,
     actor_id: Any,
