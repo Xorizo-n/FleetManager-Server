@@ -74,7 +74,8 @@ def _connection_problems(state: dict) -> list[str]:
         problems.append("оболочка SSH по умолчанию — не PowerShell: команды сервера не выполнятся (агент исправляет)")
     if state.get("login_is_admin") is False:
         problems.append("учётная запись входа по SSH не в локальных Администраторах — ключ сервера для неё не действует")
-    if state.get("domain_trust") == "broken":
+    if state.get("domain_trust") == "broken" and state.get("local_admin") != "ok":
+        # С рабочим локальным администратором сервер входит под ним (services/local_admin.py) — не помеха
         problems.append("нарушено доверие с доменом: вход доменной учёткой отклоняется (частая причина — второй ПК с тем же именем)")
     return problems
 
@@ -91,6 +92,13 @@ def ssh_problems(state: dict | None) -> list[str]:
         problems.append("sshd_config с ошибкой: после перезапуска sshd не запустится")
     if state.get("source_restricted") is False:
         problems.append("sshd_config не ограничивает вход адресом сервера: SSH настроен не установщиком агента (агент запросит переустановку)")
+    if state.get("domain_trust") == "broken" and state.get("local_admin") == "ok":
+        problems.append("нарушено доверие с доменом: сервер входит под локальным администратором")
+    elif state.get("domain_trust") == "unreachable":
+        problems.append("контроллер домена недоступен" + (": сервер входит под локальным администратором" if state.get("local_admin") == "ok" else ""))
+    if state.get("local_admin") in ("missing", "disabled", "not_admin"):
+        label = {"missing": "нет", "disabled": "отключена", "not_admin": "не в «Администраторах»"}[state["local_admin"]]
+        problems.append(f"локальная учётка для запасного входа: {label} — без домена на ПК не войти")
     if state.get("path_ok") is False:
         problems.append("в машинном PATH нет System32: Ansible не найдёт PowerShell")
     return problems

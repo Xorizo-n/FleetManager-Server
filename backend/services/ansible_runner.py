@@ -18,7 +18,7 @@ from services.crypto import decrypt_secret
 from services.ssh_health import host_keys
 from services.inventory_generator import build_inventory_dict, host_group_credential, resolve_target_host_ids
 from services.schedule_targets import schedule_group_ids, schedule_tag_ids
-from services import run_as
+from services import local_admin, run_as
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +149,11 @@ def build_full_inventory(db, host_ids: list[uuid.UUID] | None, login_overrides: 
         host_vars["ansible_ssh_common_args"] = (host_vars.get("ansible_ssh_common_args", "") + known_host_args(host)).strip()
         if login_overrides and str(host.id) in login_overrides and host_vars.get("ansible_ssh_private_key_file"):
             host_vars["ansible_user"] = login_overrides[str(host.id)]
+        elif host_vars.get("ansible_ssh_private_key_file"):
+            # Домен на ПК недоступен по отчёту агента — тем же ключом под локальным администратором
+            local = local_admin.preferred(host, host_vars.get("ansible_user"))
+            if local:
+                host_vars["ansible_user"] = local
 
     return inventory
 

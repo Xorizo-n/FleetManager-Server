@@ -129,6 +129,9 @@ class Host(Base):
     # Состояние SSH по отчёту агента (heartbeat, поле ssh) и время отчёта: sshd, брандмауэр,
     # PATH, права входа, ключи хоста (services/ssh_health.py)
     ssh_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Питание по отчёту агента (heartbeat, поле power): время загрузки, как закончилась прошлая
+    # работа (штатно, перезагрузка, обесточен, сбой), идёт ли установка обновлений — services/power_state.py
+    power_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Версия, которую агент ставит сам, без SSH: сервер предлагает её в ответе на heartbeat,
     # когда обновить по SSH не удалось (services/agent_update.py). None — ничего не предлагается
     agent_update_target: Mapped[str | None] = mapped_column(String(64), nullable=True)
