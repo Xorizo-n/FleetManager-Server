@@ -1,6 +1,6 @@
 import { FormEvent, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Pencil, Plus, Printer as PrinterIcon, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronDown, ExternalLink, Pencil, Plus, Printer as PrinterIcon, RefreshCw, Trash2 } from "lucide-react";
 import { apiClient } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import PageHeader from "../components/ui/PageHeader";
@@ -45,7 +45,7 @@ export default function Printers() {
     {query.isLoading ? <Loading /> : query.isError ? <ErrorText>Не удалось загрузить принтеры</ErrorText> : !query.data?.length ? <div className="table-shell"><Empty>Принтеры ещё не добавлены</Empty></div> :
       <div className="overflow-hidden rounded-xl border border-border bg-surface">
         <div className="hidden grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] gap-4 border-b border-border bg-muted/40 px-4 py-2 text-xs font-medium text-subtle lg:grid">
-          <span>Принтер</span><span>Расположение</span><span>Связь и состояние</span><span>Расходники</span><span className="w-28 text-right">Действия</span>
+          <span>Принтер</span><span>Расположение</span><span>Связь и состояние</span><span>Расходники</span><span className="w-36 text-right">Действия</span>
         </div>
         {query.data.map((p) => {
           const expanded = expandedId === p.id;
@@ -59,7 +59,10 @@ export default function Printers() {
               <p className="text-sm text-muted-foreground">{p.location || "Расположение не указано"}</p>
               <div className="text-sm"><span className={`font-medium ${p.status === "online" ? "text-emerald-600 dark:text-emerald-400" : p.status === "unreachable" ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"}`}>{p.status === "online" ? "SNMP отвечает" : p.status === "unreachable" ? "Нет ответа SNMP" : "Не проверен"}</span><span className="block text-xs text-subtle">{p.data?.printer_state ? states[p.data.printer_state] || "Неизвестно" : "Состояние неизвестно"}{p.status === "unreachable" && p.data ? " · старые данные" : ""}{!!p.data?.problems.length && ` · ${p.data.problems.join(", ")}`}</span></div>
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">{p.data?.supplies.length ? p.data.supplies.map((s, i) => <span key={i} title={s.name}>{s.name}: <strong className={s.percent !== null && s.percent <= 10 ? "text-rose-600" : "text-foreground"}>{s.percent === null ? "—" : `${s.percent}%`}</strong></span>) : <span className="text-subtle">Нет данных</span>}</div>
-              {editable && <div className="flex w-28 items-center justify-end gap-1"><><button className="btn-ghost btn-icon" onClick={() => poll(p)} title="Опросить" aria-label={`Опросить ${p.name}`}><RefreshCw className="h-4 w-4" /></button><button className="btn-ghost btn-icon" onClick={() => setEditing(p)} title="Изменить" aria-label={`Изменить ${p.name}`}><Pencil className="h-4 w-4" /></button><button className="btn-ghost btn-icon" onClick={() => remove(p)} title="Удалить" aria-label={`Удалить ${p.name}`}><Trash2 className="h-4 w-4" /></button></></div>}
+              <div className="flex w-36 items-center justify-end gap-1">
+                <a className="btn-ghost btn-icon" href={`http://${p.address}/`} target="_blank" rel="noopener noreferrer" title="Открыть веб-интерфейс" aria-label={`Открыть веб-интерфейс ${p.name}`}><ExternalLink className="h-4 w-4" /></a>
+                {editable && <><button className="btn-ghost btn-icon" onClick={() => poll(p)} title="Опросить" aria-label={`Опросить ${p.name}`}><RefreshCw className="h-4 w-4" /></button><button className="btn-ghost btn-icon" onClick={() => setEditing(p)} title="Изменить" aria-label={`Изменить ${p.name}`}><Pencil className="h-4 w-4" /></button><button className="btn-ghost btn-icon" onClick={() => remove(p)} title="Удалить" aria-label={`Удалить ${p.name}`}><Trash2 className="h-4 w-4" /></button></>}
+              </div>
             </div>
             {expanded && <div className="space-y-2 border-t border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
               <p>Счётчик: {p.data?.pages ?? "—"}{p.data?.sys_name && ` · Имя SNMP: ${p.data.sys_name}`}</p>
