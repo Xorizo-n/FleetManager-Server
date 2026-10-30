@@ -21,6 +21,8 @@ celery_app = Celery(
         "services.wallpapers",
         "services.offsite_backup",
         "services.distribution",
+        "services.printer_monitor",
+        "services.printer_discovery",
     ],
 )
 
@@ -35,6 +37,14 @@ celery_app.conf.update(
         "dispatch-scheduled-playbooks": {
             "task": "services.ansible_runner.dispatch_scheduled_playbooks",
             "schedule": 60.0,
+        },
+        "discover-printers": {
+            "task": "services.printer_discovery.schedule_discovery",
+            "schedule": crontab(minute=30, hour="4,10"),  # 09:30 и 15:30 по Екатеринбургу
+        },
+        "poll-printers": {
+            "task": "services.printer_monitor.schedule_printers",
+            "schedule": 300.0,
         },
         "ping-hosts": {
             "task": "services.host_health.ping_hosts",

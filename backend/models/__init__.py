@@ -47,3 +47,5 @@ __all__ = [
     "RolloutStatus",
     "RolloutItemStatus",
 ]
+
+from models.printer import Printer  # register metadata for Alembic
