@@ -68,9 +68,12 @@ export default function Layout() {
               </NavLink>
               <nav className="hidden items-center gap-0.5 lg:flex">
                 {navItems.map((item) => (
-                  <NavLink key={item.to} to={item.to} end={item.end} className={linkClass}>
-                    {item.label}
-                  </NavLink>
+                  item.to === "/hosts" ? <Menu key={item.to} align="left" trigger={({ open, toggle }) => (
+                    <button onClick={toggle} aria-haspopup="menu" aria-expanded={open} className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors ${location.pathname.startsWith("/hosts") ? "bg-blue-600 text-white" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
+                      Хосты <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
+                    </button>
+                  )} items={[{ label: "ПК", onClick: () => navigate("/hosts") }, { label: "Принтеры", onClick: () => navigate("/hosts/printers") }]} /> :
+                  <NavLink key={item.to} to={item.to} end={item.end} className={linkClass}>{item.label}</NavLink>
                 ))}
                 {adminItems.length > 0 && (
                   <Menu
@@ -106,9 +109,11 @@ export default function Layout() {
           {menuOpen && (
             <nav className="flex flex-col gap-1 border-t border-border px-4 py-2 lg:hidden">
               {navItems.map((item) => (
-                <NavLink key={item.to} to={item.to} end={item.end} className={linkClass}>
-                  {item.label}
-                </NavLink>
+                item.to === "/hosts" ? <div key={item.to} className="flex flex-col gap-1">
+                  <p className="px-3 pt-2 text-xs font-medium uppercase tracking-wide text-subtle">Хосты</p>
+                  <NavLink to="/hosts" end className={linkClass}>ПК</NavLink>
+                  <NavLink to="/hosts/printers" className={linkClass}>Принтеры</NavLink>
+                </div> : <NavLink key={item.to} to={item.to} end={item.end} className={linkClass}>{item.label}</NavLink>
               ))}
               {adminItems.length > 0 && <p className="px-3 pt-2 text-xs font-medium uppercase tracking-wide text-subtle">Администрирование</p>}
               {adminItems.map((item) => (

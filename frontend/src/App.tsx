@@ -11,6 +11,7 @@ import Login from "./pages/Login";
 
 // Страницы грузятся по мере перехода: графики дашборда и админка не тянутся в первый бандл
 const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Printers = lazy(() => import("./pages/Printers"));
 const HostsPage = lazy(() => import("./pages/hosts/HostsPage"));
 const Software = lazy(() => import("./pages/Software"));
 const Automation = lazy(() => import("./pages/Automation"));
@@ -59,6 +60,7 @@ export default function App() {
                   <Route path="/" element={<Home />} />
                   <Route path="/monitoring" element={guard(["monitoring", "admin"], <Monitoring />)} />
                   <Route path="/hosts" element={guard(STAFF, <HostsPage />)} />
+                  <Route path="/hosts/printers" element={guard(STAFF, <Printers />)} />
                   <Route path="/software" element={guard(STAFF, <Software />)} />
                   <Route path="/automation" element={guard(EDITORS, <Automation />)} />
                   <Route path="/automation/editor" element={guard(["admin"], <PlaybookEditor />)} />

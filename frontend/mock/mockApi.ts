@@ -682,6 +682,17 @@ route("POST", "/auth/change-password", (ctx) => {
   return { detail: "Пароль изменён" };
 });
 
+// Принтеры для проверки реестра без доступа к устройствам.
+const mockPrinters: any[] = [{ id: uuid(), name: "SU5-F210-P01", address: "10.152.128.200", location: "СУ5, F210", status: "online", last_checked_at: minutesAgo(1), last_seen_at: minutesAgo(1), data: { sys_name: "SU5-F210-P01", model: "HP LaserJet MFP M430", printer_state: 1, pages: 918, problems: [], alerts: [{ severity: "1", message: "Режим ожидания включен" }], supplies: [{ name: "Чёрный картридж HP 59A", percent: 63 }] } }];
+let printerDiscovery: any = { status: "never" };
+route("GET", "/printers/discovery/status", () => printerDiscovery);
+route("POST", "/printers/discovery", (ctx) => { editor(ctx); printerDiscovery = { status: "completed", finished_at: new Date().toISOString(), rooms_total: 2, rooms_scanned: 2, found: 1, added: 0, failed_rooms: [] }; return { queued: true }; });
+route("GET", "/printers", () => mockPrinters);
+route("POST", "/printers", (ctx) => { editor(ctx); const { community, ...input } = ctx.body; const printer = { ...input, id: uuid(), status: "unknown", last_checked_at: null, last_seen_at: null, data: null }; mockPrinters.push(printer); return printer; });
+route("PUT", "/printers/{id}", (ctx, p) => { editor(ctx); const printer = find(mockPrinters, p.id, "Принтер"); const { community, ...input } = ctx.body; Object.assign(printer, input); return printer; });
+route("DELETE", "/printers/{id}", (ctx, p) => { editor(ctx); mockPrinters.splice(mockPrinters.indexOf(find(mockPrinters, p.id, "Принтер")), 1); return null; });
+route("POST", "/printers/{id}/poll", (ctx, p) => { editor(ctx); find(mockPrinters, p.id, "Принтер"); return { queued: true }; });
+
 // hosts
 route("GET", "/hosts", () => hosts);
 route("GET", "/hosts/groups", () => groups);
