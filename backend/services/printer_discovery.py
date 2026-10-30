@@ -1,5 +1,4 @@
 """Discover printers through one online Windows PC per named room."""
-import base64
 import ipaddress
 import json
 import logging
@@ -60,23 +59,29 @@ def enqueue_discovery():
 
 
 def script_command():
-    script = Path(__file__).with_name("printer_discovery.ps1").read_text(encoding="utf-8-sig")
-    return "powershell.exe -NoProfile -NonInteractive -EncodedCommand " + base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    # Ansible's PowerShell shell encodes raw commands itself. Avoid encoding twice:
+    # the nested command would exceed Windows' command-line length limit.
+    return Path(__file__).with_name("printer_discovery.ps1").read_text(encoding="utf-8-sig")
 
 
 def select_hosts(hosts):
-    """Prefer the freshest online PC in each room; deterministic ties avoid duplicate scans."""
+    """Order all room PCs, preferring online hosts with usable SSH credentials.
+
+    Rooms without an online host are omitted, as in the scheduled discovery contract.
+    A stale offline/unknown status must not prevent trying a fallback in an eligible room.
+    """
     rooms = {}
     for host in hosts:
         parts = parse_host_name(host.hostname)
         if parts is None: continue
-        room = parts.room_group
-        rooms.setdefault(room, []).append(host)
+        rooms.setdefault(parts.room_group, []).append(host)
     return {room: sorted(candidates, key=lambda h: (
+                getattr(h, "status", HostStatus.online) != HostStatus.online,
                 bool(ssh_blocked_reason(getattr(h, "ssh_state", None))),
                 not bool(getattr(h, "credential_id", None) or (host_group_credential(h) if getattr(h, "group_id", None) else None)),
-                -(h.last_seen_at.timestamp() if h.last_seen_at else 0), str(h.id)))[0]
-            for room, candidates in rooms.items()}
+                -(h.last_seen_at.timestamp() if h.last_seen_at else 0), str(h.id)))
+            for room, candidates in rooms.items()
+            if any(getattr(h, "status", HostStatus.online) == HostStatus.online for h in candidates)}
 
 
 def parse_result(stdout):
@@ -133,35 +138,48 @@ def discover_printers(token):
     save_status(client, status)
     try:
         with SessionLocal() as db:
-            hosts = db.query(Host).filter(Host.status == HostStatus.online).all()
-            selected = select_hosts(hosts)
-            room_by_host = {str(host.id): room for room, host in selected.items()}
-            inventory = build_full_inventory(db, [host.id for host in selected.values()]) if selected else None
+            rooms = select_hosts(db.query(Host).all())
+            # Store IDs only: do not hold database connections while scanning the network.
+            remaining = {room: [host.id for host in hosts] for room, hosts in rooms.items()}
         findings = {}
         successful = set()
-        errors = []
-        if inventory:
-            result = run_ansible(module="ansible.builtin.raw", module_args=script_command(), host_pattern="all",
-                                 inventory=inventory, quiet=True, timeout=3600, envvars={"ANSIBLE_FORKS": "4"})
-            for event in result.events:
-                info = event.get("event_data", {}); host_id = info.get("host")
-                if host_id not in room_by_host: continue
-                if event.get("event") == "runner_on_ok" and (info.get("res") or {}).get("rc", 1) == 0:
-                    try:
-                        _, printers = parse_result((info.get("res") or {}).get("stdout") or "")
-                        successful.add(host_id)
-                        for printer in printers: findings.setdefault(printer["address"], []).append((room_by_host[host_id], printer))
-                    except (ValueError, TypeError, KeyError):
-                        errors.append(room_by_host[host_id])
-                elif event.get("event") in ("runner_on_unreachable", "runner_on_failed"):
-                    errors.append(room_by_host[host_id])
+        command = script_command()
+        while remaining:
+            # Run at most one PC per room in each round; failed rooms advance to the next PC.
+            attempts = {room: ids.pop(0) for room, ids in remaining.items()}
+            room_by_host = {str(host_id): room for room, host_id in attempts.items()}
+            with SessionLocal() as db:
+                inventory = build_full_inventory(db, list(attempts.values()))
+            completed = set()
+            try:
+                result = run_ansible(module="ansible.builtin.raw", module_args=command, host_pattern="all",
+                                     inventory=inventory, quiet=True, timeout=3600, envvars={"ANSIBLE_FORKS": "4"})
+                for event in result.events:
+                    info = event.get("event_data", {}); host_id = info.get("host")
+                    if host_id not in room_by_host: continue
+                    if event.get("event") == "runner_on_ok" and (info.get("res") or {}).get("rc", 1) == 0:
+                        try:
+                            _, printers = parse_result((info.get("res") or {}).get("stdout") or "")
+                            room = room_by_host[host_id]
+                            completed.add(room)
+                            for printer in printers: findings.setdefault(printer["address"], []).append((room, printer))
+                        except (ValueError, TypeError, KeyError):
+                            logger.warning("Printer discovery returned invalid output from %s", host_id)
+            except Exception:
+                logger.exception("Printer discovery round failed; trying remaining PCs")
+            successful.update(completed)
+            remaining = {room: ids for room, ids in remaining.items() if room not in completed and ids}
+            # Long retries must keep their lock; never overwrite another discovery's lock.
+            if not client.eval("if redis.call('get',KEYS[1]) == ARGV[1] then return redis.call('expire',KEYS[1],ARGV[2]) else return 0 end", 1, LOCK_KEY, token, TTL):
+                logger.warning("Printer discovery lock lost; aborting")
+                return
         with SessionLocal() as db: added = add_results(db, findings)
         for printer_id in added:
             try: poll_printer.delay(printer_id)
             except Exception: logger.exception("Could not queue printer poll: %s", printer_id)
         status.update(status="completed", finished_at=datetime.now(timezone.utc).isoformat(),
-                      rooms_total=len(selected), rooms_scanned=len(successful), found=len(findings), added=len(added),
-                      failed_rooms=sorted(set(room_by_host.values()) - {room_by_host[x] for x in successful}))
+                      rooms_total=len(rooms), rooms_scanned=len(successful), found=len(findings), added=len(added),
+                      failed_rooms=sorted(set(rooms) - successful))
     except Exception:
         logger.exception("Printer discovery failed")
         status.update(status="failed", finished_at=datetime.now(timezone.utc).isoformat(), message="Ошибка поиска; подробности в журнале Celery")

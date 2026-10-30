@@ -22,8 +22,8 @@ class PrinterDiscoveryTests(unittest.TestCase):
         another = host("SU5-D203-W01", None)
         selection = select_hosts([older, newer, another, host("unknown", None)])
         self.assertEqual(set(selection), {"SU5-D206", "SU5-D203"})
-        self.assertIs(selection["SU5-D206"], newer)
-        self.assertIs(selection["SU5-D203"], another)
+        self.assertEqual(selection["SU5-D206"], [newer, older])
+        self.assertEqual(selection["SU5-D203"], [another])
 
     def test_parse_validates_subnet_and_printer_addresses(self):
         payload = {"subnet": "10.152.128.64/26", "printers": [{"address": "10.152.128.80", "name": "su5-d203-p01", "model": "HP"}, {"address": "10.152.128.200"}]}
@@ -66,7 +66,7 @@ class PrinterDiscoveryTests(unittest.TestCase):
         client = store.return_value; client.get.return_value = "token"
         host = SimpleNamespace(id=uuid.uuid4(), hostname="SU5-D206-TEMP", last_seen_at=None)
         db = sessions.return_value.__enter__.return_value
-        db.query.return_value.filter.return_value.all.return_value = [host]
+        db.query.return_value.all.return_value = [host]
         result = {"subnet": "10.152.128.64/26", "printers": [{"address": "10.152.128.80", "name": "SU5-D203-P01", "model": "M430"}]}
         run.return_value.events = [{"event": "runner_on_ok", "event_data": {"host": str(host.id), "res": {"rc": 0, "stdout": "FM_PRINTER_DISCOVERY=" + json.dumps(result)}}}]
         discover_printers.run("token")
@@ -75,7 +75,37 @@ class PrinterDiscoveryTests(unittest.TestCase):
         poll.assert_called_once_with("printer-id")
         final = json.loads(client.set.call_args.args[1])
         self.assertEqual((final["status"], final["rooms_scanned"], final["added"]), ("completed", 1, 1))
-        client.eval.assert_called_once()
+        self.assertEqual(client.eval.call_count, 2)
+
+    @patch("services.printer_discovery.poll_printer.delay")
+    @patch("services.printer_discovery.add_results", return_value=[])
+    @patch("services.printer_discovery.run_ansible")
+    @patch("services.printer_discovery.build_full_inventory", return_value={"all": {}})
+    @patch("services.printer_discovery.SessionLocal")
+    @patch("services.printer_discovery.store")
+    def test_retries_all_pcs_until_room_succeeds(self, store, sessions, inventory, run, add, poll):
+        from models.host import HostStatus
+        client = store.return_value; client.get.return_value = "token"
+        def host(name, status, day):
+            return SimpleNamespace(id=uuid.uuid4(), hostname=name, status=status, last_seen_at=datetime(2026, 1, day, tzinfo=timezone.utc))
+        first = host("SU5-D206-W01", HostStatus.online, 3)
+        second = host("SU5-D206-W02", HostStatus.online, 2)
+        last = host("SU5-D206-W03", HostStatus.offline, 1)
+        other = host("SU5-D203-W01", HostStatus.online, 1)
+        db = sessions.return_value.__enter__.return_value
+        db.query.return_value.all.return_value = [first, second, last, other]
+        good = "FM_PRINTER_DISCOVERY=" + json.dumps({"subnet": "10.152.128.64/26", "printers": []})
+        def event(h, name, out=""):
+            return {"event": name, "event_data": {"host": str(h.id), "res": {"rc": 0, "stdout": out}}}
+        run.side_effect = [SimpleNamespace(events=[event(first, "runner_on_unreachable"), event(other, "runner_on_ok", good)]),
+                           SimpleNamespace(events=[event(second, "runner_on_ok", "bad output")]),
+                           SimpleNamespace(events=[event(last, "runner_on_ok", good)])]
+        discover_printers.run("token")
+        self.assertEqual([set(call.args[1]) for call in inventory.call_args_list], [{first.id, other.id}, {second.id}, {last.id}])
+        final = json.loads(client.set.call_args.args[1])
+        self.assertEqual(final["rooms_scanned"], 2)
+        self.assertEqual(final["failed_rooms"], [])
+        self.assertEqual(run.call_count, 3)
 
     @patch("services.printer_discovery.discover_printers.delay")
     @patch("services.printer_discovery.store")

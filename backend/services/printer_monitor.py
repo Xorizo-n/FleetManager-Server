@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 import redis
 from pysnmp.hlapi.v3arch.asyncio import (CommunityData, ContextData, ObjectIdentity, ObjectType,
-    SnmpEngine, UdpTransportTarget, get_cmd, walk_cmd)
+    SnmpEngine, UdpTransportTarget, get_cmd, next_cmd, walk_cmd)
 from celery_app import celery_app
 from config import settings
 from database import SessionLocal
@@ -49,6 +49,18 @@ async def read_printer(address, community):
             value = values[0][1]
             if value.__class__.__name__ in ("NoSuchObject", "NoSuchInstance", "EndOfMibView"): return None
             return value
+        async def first_under(root):
+            """Find the first table row without assuming a vendor's device index."""
+            err, status, _, values = await next_cmd(engine, auth, target, ContextData(), ObjectType(ObjectIdentity(root)))
+            if err or status or not values: return None, None
+            oid, value = values[0]
+            prefix = tuple(int(x) for x in root.split('.'))
+            parts = oid.getOid().asTuple()
+            if parts[:len(prefix)] != prefix or len(parts) != len(prefix) + 1:
+                return None, None
+            if value.__class__.__name__ in ("NoSuchObject", "NoSuchInstance", "EndOfMibView"):
+                return None, None
+            return parts[-1], value
         async def walk(root, limit=120):
             result = {}
             async for err, status, _, values in walk_cmd(engine, auth, target, ContextData(), ObjectType(ObjectIdentity(root)), lexicographicMode=False):
@@ -62,10 +74,10 @@ async def read_printer(address, community):
             return result
         name = await get("1.3.6.1.2.1.1.5.0", required=True)
         if name is None: raise RuntimeError("Нет ответа SNMP")
-        model = await get("1.3.6.1.2.1.25.3.2.1.3.1")
-        state = await get("1.3.6.1.2.1.25.3.5.1.1.1")
-        errors = await get("1.3.6.1.2.1.25.3.5.1.2.1")
-        pages = await get("1.3.6.1.2.1.43.10.2.1.4.1.1")
+        device_index, state = await first_under("1.3.6.1.2.1.25.3.5.1.1")
+        model = await get(f"1.3.6.1.2.1.25.3.2.1.3.{device_index}") if device_index else None
+        errors = await get(f"1.3.6.1.2.1.25.3.5.1.2.{device_index}") if device_index else None
+        _, pages = await first_under(f"1.3.6.1.2.1.43.10.2.1.4.{device_index}") if device_index else (None, None)
         supplies = await walk("1.3.6.1.2.1.43.11.1.1")
         alerts = await walk("1.3.6.1.2.1.43.18.1.1")
         try: count = int(pages) if pages is not None and int(pages) >= 0 else None

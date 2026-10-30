@@ -1,8 +1,8 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock, MagicMock
 import uuid
-from services.printer_monitor import supply_items, poll_printer
+from services.printer_monitor import supply_items, poll_printer, read_printer
 from routers.printers import PrinterInput, PrinterOut, router, readers, editors
 from database import Base, get_db
 from dependencies import get_current_user
@@ -53,6 +53,30 @@ class PrinterMonitorTests(unittest.TestCase):
     def test_response_never_exposes_community(self):
         self.assertNotIn("community", PrinterOut.model_fields)
         self.assertNotIn("community_encrypted", PrinterOut.model_fields)
+
+
+class PrinterIndexTests(unittest.IsolatedAsyncioTestCase):
+    async def test_non_default_printer_and_marker_indexes(self):
+        from pysnmp.proto.rfc1902 import Integer, OctetString
+        def oid(parts):
+            return SimpleNamespace(getOid=lambda: SimpleNamespace(asTuple=lambda: tuple(parts)))
+        status_oid = oid([1, 3, 6, 1, 2, 1, 25, 3, 5, 1, 1, 7])
+        marker_oid = oid([1, 3, 6, 1, 2, 1, 43, 10, 2, 1, 4, 7, 2])
+        get = AsyncMock(side_effect=[(None, 0, 0, [(None, OctetString("Printer"))]),
+                                     (None, 0, 0, [(None, OctetString("Kyocera"))]),
+                                     (None, 0, 0, [(None, OctetString(bytes([0])) )])])
+        next_value = AsyncMock(side_effect=[(None, 0, 0, [(status_oid, Integer(3))]),
+                                            (None, 0, 0, [(marker_oid, Integer(1234))])])
+        async def empty_walk(*args, **kwargs):
+            if False: yield None
+        with patch("services.printer_monitor.get_cmd", get), patch("services.printer_monitor.next_cmd", next_value), \
+             patch("services.printer_monitor.walk_cmd", empty_walk), \
+             patch("services.printer_monitor.SnmpEngine", return_value=MagicMock()), \
+             patch("services.printer_monitor.UdpTransportTarget.create", AsyncMock(return_value=object())):
+            data = await read_printer("10.0.0.1", "public")
+        self.assertEqual((data["model"], data["printer_state"], data["pages"]), ("Kyocera", 3, 1234))
+        self.assertIn("25.3.2.1.3.7", repr(get.call_args_list[1].args[4]))
+        self.assertIn("25.3.5.1.2.7", repr(get.call_args_list[2].args[4]))
 
 
 class PrinterApiTests(unittest.TestCase):

@@ -1,6 +1,6 @@
 import { FormEvent, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronDown, Pencil, Plus, Printer as PrinterIcon, RefreshCw, Trash2 } from "lucide-react";
 import { apiClient } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import PageHeader from "../components/ui/PageHeader";
@@ -19,6 +19,7 @@ export default function Printers() {
   const { user } = useAuth(); const editable = user?.role === "admin" || user?.role === "operator";
   const toast = useToast(); const client = useQueryClient();
   const [editing, setEditing] = useState<Printer | "new" | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const query = useQuery({ queryKey: ["printers"], queryFn: async () => (await apiClient.get<Printer[]>("/printers")).data, refetchInterval: 15000 });
   const refresh = () => client.invalidateQueries({ queryKey: ["printers"] });
   const discovery = useQuery({ queryKey: ["printer-discovery"], queryFn: async () => (await apiClient.get<Discovery>("/printers/discovery/status")).data, refetchInterval: 5000 });
@@ -42,14 +43,33 @@ export default function Printers() {
       {discovery.data.status === "queued" ? "Поиск ожидает запуска" : discovery.data.status === "running" ? "Идёт поиск через ПК в аудиториях…" : discovery.data.status === "completed" ? <>Последний поиск: {date(discovery.data.finished_at ?? null)} · аудиторий проверено {discovery.data.rooms_scanned} из {discovery.data.rooms_total} · найдено {discovery.data.found} · добавлено {discovery.data.added}{!!discovery.data.failed_rooms?.length && <span title={discovery.data.failed_rooms.join(", ")}> · не проверены: {discovery.data.failed_rooms.join(", ")}</span>}</> : discovery.data.message || "Поиск прерван; запустите повторно"}
     </div>}
     {query.isLoading ? <Loading /> : query.isError ? <ErrorText>Не удалось загрузить принтеры</ErrorText> : !query.data?.length ? <div className="table-shell"><Empty>Принтеры ещё не добавлены</Empty></div> :
-      <div className="grid gap-4 xl:grid-cols-2">{query.data.map((p) => <article key={p.id} className="rounded-xl border border-border bg-surface p-5 space-y-4">
-        <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-semibold">{p.name}</h2><p className="text-sm text-muted-foreground">{p.data?.model || "Модель неизвестна"} · {p.address}{p.location ? ` · ${p.location}` : ""}</p>{p.data?.sys_name && <p className="text-xs text-subtle">{p.data.sys_name}</p>}</div><span className={`rounded-full px-2.5 py-1 text-xs font-medium ${p.status === "online" ? "bg-emerald-500/10 text-emerald-600" : p.status === "unreachable" ? "bg-rose-500/10 text-rose-600" : "bg-muted text-muted-foreground"}`}>{p.status === "online" ? "SNMP отвечает" : p.status === "unreachable" ? "Нет ответа SNMP" : "Не проверен"}</span></div>
-        <div className="grid grid-cols-2 gap-3 text-sm"><div><span className="text-subtle">Состояние: </span>{p.data?.printer_state ? states[p.data.printer_state] || "Неизвестно" : "Неизвестно"}</div><div><span className="text-subtle">Счётчик: </span>{p.data?.pages ?? "—"}</div></div>
-        {!!p.data?.problems.length && <p className="text-sm text-rose-600">{p.data.problems.join(" · ")}</p>}
-        {!!p.data?.alerts.length && <div className="text-sm text-muted-foreground">{p.data.alerts.map((a, i) => <div key={i}>{a.message}</div>)}</div>}
-        <div className="space-y-2">{p.data?.supplies.length ? p.data.supplies.map((s, i) => <div key={i} className="text-sm"><div className="flex justify-between gap-3"><span>{s.name}</span><span className="tabular-nums">{s.percent === null ? "Неизвестно" : `${s.percent}%`}</span></div>{s.percent !== null && <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted"><div className={`h-full rounded-full ${s.percent <= 10 ? "bg-rose-500" : "bg-blue-500"}`} style={{ width: `${s.percent}%` }} /></div>}</div>) : <p className="text-sm text-subtle">Нет данных о расходниках</p>}</div>
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3"><p className="text-xs text-subtle">Проверен: {date(p.last_checked_at)} · Последний ответ: {date(p.last_seen_at)}{p.status === "unreachable" && p.data ? " · показаны последние полученные данные" : ""}</p>{editable && <div className="flex gap-1"><button className="btn-ghost btn-icon" onClick={() => poll(p)} title="Опросить" aria-label={`Опросить ${p.name}`}><RefreshCw className="h-4 w-4" /></button><button className="btn-ghost btn-icon" onClick={() => setEditing(p)} title="Изменить" aria-label={`Изменить ${p.name}`}><Pencil className="h-4 w-4" /></button><button className="btn-ghost btn-icon" onClick={() => remove(p)} title="Удалить" aria-label={`Удалить ${p.name}`}><Trash2 className="h-4 w-4" /></button></div>}</div>
-      </article>)}</div>}
+      <div className="overflow-hidden rounded-xl border border-border bg-surface">
+        <div className="hidden grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] gap-4 border-b border-border bg-muted/40 px-4 py-2 text-xs font-medium text-subtle lg:grid">
+          <span>Принтер</span><span>Расположение</span><span>Связь и состояние</span><span>Расходники</span><span className="w-28 text-right">Действия</span>
+        </div>
+        {query.data.map((p) => {
+          const expanded = expandedId === p.id;
+          return <article key={p.id} className="border-b border-border last:border-b-0">
+            <div className="grid gap-2 px-4 py-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] lg:items-center lg:gap-4">
+              <button type="button" onClick={() => setExpandedId(expanded ? null : p.id)} aria-expanded={expanded} aria-label={`${expanded ? "Скрыть" : "Показать"} сведения о ${p.name}`} className="flex min-w-0 items-start gap-2 text-left hover:text-blue-600">
+                <PrinterIcon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0"><span className="block truncate text-sm font-medium" title={p.name}>{p.name}</span><span className="block truncate text-xs text-muted-foreground" title={`${p.data?.model || "Модель неизвестна"} · ${p.address}`}>{p.data?.model || "Модель неизвестна"} · {p.address}</span></span>
+                <ChevronDown className={`ml-auto mt-0.5 h-4 w-4 shrink-0 text-subtle transition-transform ${expanded ? "rotate-180" : ""}`} />
+              </button>
+              <p className="text-sm text-muted-foreground">{p.location || "Расположение не указано"}</p>
+              <div className="text-sm"><span className={`font-medium ${p.status === "online" ? "text-emerald-600 dark:text-emerald-400" : p.status === "unreachable" ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"}`}>{p.status === "online" ? "SNMP отвечает" : p.status === "unreachable" ? "Нет ответа SNMP" : "Не проверен"}</span><span className="block text-xs text-subtle">{p.data?.printer_state ? states[p.data.printer_state] || "Неизвестно" : "Состояние неизвестно"}{p.status === "unreachable" && p.data ? " · старые данные" : ""}{!!p.data?.problems.length && ` · ${p.data.problems.join(", ")}`}</span></div>
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">{p.data?.supplies.length ? p.data.supplies.map((s, i) => <span key={i} title={s.name}>{s.name}: <strong className={s.percent !== null && s.percent <= 10 ? "text-rose-600" : "text-foreground"}>{s.percent === null ? "—" : `${s.percent}%`}</strong></span>) : <span className="text-subtle">Нет данных</span>}</div>
+              {editable && <div className="flex w-28 items-center justify-end gap-1"><><button className="btn-ghost btn-icon" onClick={() => poll(p)} title="Опросить" aria-label={`Опросить ${p.name}`}><RefreshCw className="h-4 w-4" /></button><button className="btn-ghost btn-icon" onClick={() => setEditing(p)} title="Изменить" aria-label={`Изменить ${p.name}`}><Pencil className="h-4 w-4" /></button><button className="btn-ghost btn-icon" onClick={() => remove(p)} title="Удалить" aria-label={`Удалить ${p.name}`}><Trash2 className="h-4 w-4" /></button></></div>}
+            </div>
+            {expanded && <div className="space-y-2 border-t border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+              <p>Счётчик: {p.data?.pages ?? "—"}{p.data?.sys_name && ` · Имя SNMP: ${p.data.sys_name}`}</p>
+              {!!p.data?.problems.length && <p className="text-rose-600 dark:text-rose-400">{p.data.problems.join(" · ")}</p>}
+              {!!p.data?.alerts.length && <div>{p.data.alerts.map((a, i) => <p key={i}>{a.message}</p>)}</div>}
+              <p className="text-xs text-subtle">Проверен: {date(p.last_checked_at)} · Последний ответ: {date(p.last_seen_at)}{p.status === "unreachable" && p.data ? " · показаны последние полученные данные" : ""}</p>
+            </div>}
+          </article>;
+        })}
+      </div>}
     {editing && <PrinterForm printer={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={refresh} />}
   </div>;
 }
