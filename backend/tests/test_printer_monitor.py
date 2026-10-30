@@ -50,6 +50,48 @@ class PrinterMonitorTests(unittest.TestCase):
         self.assertEqual(printer.last_seen_at, "earlier")
         db.commit.assert_called_once()
 
+    @patch("services.printer_monitor.asyncio.run")
+    @patch("services.printer_monitor.asyncio.wait_for", new=lambda coro, timeout: coro)
+    @patch("services.printer_monitor.decrypt_secret", return_value="public")
+    @patch("services.printer_monitor.redis.Redis.from_url")
+    @patch("services.printer_monitor.SessionLocal")
+    def test_poll_updates_name_only_for_nonempty_sysname(self, session, redis_factory, decrypt, run):
+        redis_factory.return_value.lock.return_value.acquire.return_value = True
+        db = session.return_value.__enter__.return_value
+        for sys_name, expected in [("  SU5-D203-P01  ", "SU5-D203-P01"),
+                                   ("  \x00 ", "Previous"), (None, "Previous"),
+                                   ("X" * 140, "X" * 128)]:
+            with self.subTest(sys_name=sys_name):
+                printer = SimpleNamespace(address="10.0.0.1", community_encrypted="secret", name="Previous", data=None, last_seen_at=None, status="unknown", last_checked_at=None)
+                db.get.return_value = printer
+                def success(coro):
+                    coro.close()
+                    return {"sys_name": sys_name}
+                run.side_effect = success
+                poll_printer.run(str(uuid.uuid4()))
+                self.assertEqual(printer.name, expected)
+                self.assertEqual(printer.status, "online")
+                self.assertEqual(printer.data, {"sys_name": sys_name})
+
+    @patch("services.printer_monitor.asyncio.run")
+    @patch("services.printer_monitor.asyncio.wait_for", new=lambda coro, timeout: coro)
+    @patch("services.printer_monitor.decrypt_secret", return_value="public")
+    @patch("services.printer_monitor.redis.Redis.from_url")
+    @patch("services.printer_monitor.SessionLocal")
+    def test_poll_does_not_rename_if_address_changed_during_poll(self, session, redis_factory, decrypt, run):
+        redis_factory.return_value.lock.return_value.acquire.return_value = True
+        db = session.return_value.__enter__.return_value
+        original = SimpleNamespace(address="10.0.0.1", community_encrypted="secret")
+        changed = SimpleNamespace(address="10.0.0.2", community_encrypted="secret", name="Kept")
+        db.get.side_effect = [original, changed]
+        def success(coro):
+            coro.close()
+            return {"sys_name": "Old device"}
+        run.side_effect = success
+        poll_printer.run(str(uuid.uuid4()))
+        self.assertEqual(changed.name, "Kept")
+        db.commit.assert_not_called()
+
     def test_response_never_exposes_community(self):
         self.assertNotIn("community", PrinterOut.model_fields)
         self.assertNotIn("community_encrypted", PrinterOut.model_fields)

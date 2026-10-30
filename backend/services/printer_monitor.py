@@ -118,7 +118,15 @@ def poll_printer(printer_id):
             printer.status = "online" if ok else "unreachable"
             printer.last_checked_at = now
             if ok:
-                printer.last_seen_at = now; printer.data = data
+                printer.last_seen_at = now
+                printer.data = data
+                # sysName is the printer's own name; empty responses must not erase a
+                # useful existing name. The column is limited to 128 characters.
+                sys_name = data.get("sys_name")
+                if isinstance(sys_name, str):
+                    sys_name = sys_name.replace("\x00", "").strip()
+                    if sys_name:
+                        printer.name = sys_name[:128]
             db.commit()
     finally:
         try: lock.release()
