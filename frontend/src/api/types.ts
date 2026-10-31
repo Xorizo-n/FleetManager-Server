@@ -282,7 +282,7 @@ export interface Credential {
   repo_count?: number;
 }
 
-export type TaskType = "playbook" | "software_scan" | "host_diagnostic" | "agent_version_scan" | "agent_update" | "access_change" | "host_wake";
+export type TaskType = "playbook" | "software_scan" | "host_diagnostic" | "agent_version_scan" | "agent_update" | "access_change" | "host_wake" | "host_restart";
 // Статус запуска — сводка по его ПК: waiting — кто-то ждёт включения, pending — следующий плейбук
 // цепочки ждёт предыдущий (after_task_id). released — у старых ожидающих задач (до запусков)
 export type TaskStatus = "queued" | "running" | "success" | "failed" | "waiting" | "cancelled" | "pending" | "released";

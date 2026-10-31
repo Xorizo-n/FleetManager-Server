@@ -213,3 +213,7 @@ class CsvImportResult(BaseModel):
 
 class HostWakeRequest(BaseModel):
     host_ids: list[uuid.UUID] = Field(min_length=1, max_length=1000)
+
+
+class HostRestartRequest(BaseModel):
+    host_ids: list[uuid.UUID] = Field(min_length=1, max_length=1000)

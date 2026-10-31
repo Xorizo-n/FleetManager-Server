@@ -104,6 +104,12 @@ class RunForHostsTests(unittest.TestCase):
         self.assertTrue(failed)  # the unreachable hosts still make the task unsuccessful
         self.assertEqual(next(outcomes, "done"), "done")  # everyone else was updated
 
+    def test_missing_host_can_be_reported_as_failure(self):
+        del self.hosts[self.ids[0]]
+        self.assertTrue(self.run_hosts(lambda _db, _host: HostOutcome.ok, missing_outcome=HostOutcome.failed))
+        self.assertEqual(self.stored["outcomes"][self.ids[0]], HostOutcome.failed)
+        self.assertTrue(any("ПК удалён" in line for line in self.logs))
+
     def test_worker_exception_is_logged_against_the_host(self):
         def worker(_db, host):
             if host.hostname.endswith("03"):

@@ -56,6 +56,7 @@ def run_for_hosts(
     *,
     canary: bool = False,
     parallelism: int | None = None,
+    missing_outcome: HostOutcome = HostOutcome.ok,
     session_factory: Callable[[], object] = SessionLocal,
 ) -> bool:
     """Вызывает worker(db, host) для каждого хоста; True — хотя бы один не ок.
@@ -73,7 +74,9 @@ def run_for_hosts(
         try:
             host = db.get(Host, host_id)
             if host is None:
-                return HostOutcome.ok
+                if missing_outcome != HostOutcome.ok:
+                    append_task_log(db, task_id, f"[{host_id}] ПК удалён из реестра: команда не отправлена")
+                return missing_outcome
             try:
                 return worker(db, host)
             except Exception as exc:  # noqa: BLE001
