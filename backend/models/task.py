@@ -17,6 +17,7 @@ class TaskType(str, enum.Enum):
     agent_update = "agent_update"
     access_change = "access_change"
     host_wake = "host_wake"
+    host_restart = "host_restart"
 
 
 class TaskStatus(str, enum.Enum):

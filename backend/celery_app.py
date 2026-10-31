@@ -18,6 +18,7 @@ celery_app = Celery(
         "services.access_change",
         "services.waiting_tasks",
         "services.wake_on_lan",
+        "services.host_restart",
         "services.wallpapers",
         "services.offsite_backup",
         "services.distribution",

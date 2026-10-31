@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowUpCircle, KeyRound, Monitor, Play, Power, Trash2 } from "lucide-react";
+import { Activity, ArrowUpCircle, KeyRound, Monitor, Play, Power, RotateCw, Trash2 } from "lucide-react";
 import { apiClient } from "../../api/client";
 import { keys, useAlerts, useCanEdit, useCredentials, useFleet, useHostSoftware, useTasks } from "../../api/queries";
 import type { AgentAlert, Host, NetworkAdapter, TaskRun } from "../../api/types";
@@ -60,6 +60,16 @@ export default function HostDrawer({ host, onClose, onRunPlaybook }: Props) {
       openTask(data.id);
     } catch (err) {
       toast({ tone: "error", message: apiError(err, "Не удалось запустить пробуждение") });
+    }
+  }
+
+  async function restart() {
+    if (!window.confirm(`Перезагрузить ${hostLabel(host)}? Пользователь может потерять несохранённые данные.`)) return;
+    try {
+      const { data } = await apiClient.post<TaskRun>("/hosts/restart", { host_ids: [host.id] });
+      openTask(data.id);
+    } catch (err) {
+      toast({ tone: "error", message: apiError(err, "Не удалось запустить перезагрузку") });
     }
   }
 
@@ -127,6 +137,10 @@ export default function HostDrawer({ host, onClose, onRunPlaybook }: Props) {
                 Разбудить
               </Button>
             )}
+            <Button size="sm" variant="secondary" onClick={restart} disabled={host.status !== "online"} title={host.status === "online" ? "Перезагрузить этот ПК" : "Перезагрузка доступна только для ПК в сети"}>
+              <RotateCw className="h-3.5 w-3.5" />
+              Перезагрузить
+            </Button>
             {host.has_agent && (
               <Button size="sm" variant="secondary" onClick={updateAgent}>
                 <ArrowUpCircle className="h-3.5 w-3.5" />

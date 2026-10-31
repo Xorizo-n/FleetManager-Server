@@ -14,7 +14,7 @@ from database import get_db
 from dependencies import get_current_user, require_roles
 from models.agent import HardwareEvent
 from models.credential import Credential
-from models.host import Host, HostGroup, HostOS
+from models.host import Host, HostGroup, HostOS, HostStatus
 from models.task import TaskRun, TaskStatus, TaskType
 from models.user import User, UserRole
 from schemas.host import (
@@ -31,6 +31,7 @@ from schemas.host import (
     AccessChangeResult,
     CsvImportResult,
     HostWakeRequest,
+    HostRestartRequest,
 )
 from schemas.agent import HardwareEventOut
 from schemas.task import TaskRunOut
@@ -40,6 +41,7 @@ from services.inventory_generator import build_inventory_ini
 from services.host_target import normalize_host_address, resolve_host_target
 from services.host_diagnostics import run_host_diagnostic
 from services.wake_on_lan import run_host_wake
+from services.host_restart import run_host_restart
 from services.host_grouping import cleanup_auto_groups, find_group_by_name
 from services.credential_rules import ssh_credential_error
 from services import access_change
@@ -130,6 +132,26 @@ def wake_hosts(
     db.refresh(task)
     run_host_wake.delay(str(task.id))
     record_audit(db, user.id, "host.wake", f"hosts={len(hosts)}", request)
+    return task
+
+
+@router.post("/restart", response_model=TaskRunOut, status_code=status.HTTP_202_ACCEPTED)
+def restart_hosts(
+    payload: HostRestartRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*EDITOR_ROLES)),
+):
+    """Request an immediate Windows restart for the selected online PCs."""
+    hosts = db.execute(select(Host).where(Host.id.in_(payload.host_ids))).scalars().all()
+    if len(hosts) != len(set(payload.host_ids)):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Один или несколько хостов не найдены")
+    if any(host.status != HostStatus.online for host in hosts):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Перезагрузка доступна только для ПК в сети")
+    task = TaskRun(task_type=TaskType.host_restart, host_ids=[str(h.id) for h in hosts], status=TaskStatus.queued, created_by=user.id)
+    db.add(task); db.commit(); db.refresh(task)
+    run_host_restart.delay(str(task.id))
+    record_audit(db, user.id, "host.restart", f"hosts={len(hosts)}", request)
     return task
 
 

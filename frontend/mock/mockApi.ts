@@ -886,6 +886,13 @@ route("POST", "/hosts/wake", (ctx) => {
   if (!ids.length) throw new HttpError(404, "Хосты не найдены");
   return taskOut(startTask("host_wake", ids, ctx.user!.id));
 });
+route("POST", "/hosts/restart", (ctx) => {
+  editor(ctx);
+  const ids: string[] = ctx.body.host_ids ?? [];
+  if (!ids.length || ids.some((id) => !hostById(id))) throw new HttpError(404, "Хосты не найдены");
+  if (ids.some((id) => hostById(id)?.status !== "online")) throw new HttpError(409, "Перезагрузка доступна только для ПК в сети");
+  return taskOut(startTask("host_restart", ids, ctx.user!.id));
+});
 route("GET", "/hosts/export.csv", () =>
   "\ufeffИмя;IP;MAC;Статус\r\n" + hosts.map((h) => [h.hostname, h.ip_address, h.hw_mac_address ?? "", h.status].join(";")).join("\r\n"));
 route("POST", "/hosts/{id}/diagnostics", (ctx, p) => { editor(ctx); find(hosts, p.id, "Хост"); return taskOut(startTask("host_diagnostic", [p.id], ctx.user!.id)); });

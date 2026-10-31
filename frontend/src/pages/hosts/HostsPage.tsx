@@ -14,6 +14,7 @@ import {
   Plus,
   Power,
   RefreshCw,
+  RotateCw,
   ScanLine,
   Tag,
   Trash2,
@@ -82,6 +83,7 @@ export default function HostsPage() {
   const withAgent = selectedHosts.filter((h) => h.has_agent).map((h) => h.id);
   // Будить имеет смысл выключенные ПК, чей MAC сообщил агент
   const wakeable = selectedHosts.filter((h) => h.status !== "online" && h.hw_mac_address).map((h) => h.id);
+  const restartable = selectedHosts.filter((h) => h.status === "online").map((h) => h.id);
 
   function updateView(next: Partial<typeof view>) {
     const merged = { ...view, ...next };
@@ -317,6 +319,14 @@ export default function HostsPage() {
                   disabled: wakeable.length === 0,
                   hint: "Только выключенные ПК с известным MAC-адресом",
                   onClick: () => startTask(apiClient.post("/hosts/wake", { host_ids: wakeable }), "Не удалось запустить пробуждение"),
+                },
+                {
+                  label: `Перезагрузить (${restartable.length})`,
+                  icon: <RotateCw className="h-4 w-4" />,
+                  disabled: restartable.length === 0,
+                  hint: "Только выбранные ПК в сети",
+                  onClick: () => window.confirm(`Перезагрузить ${pcCount(restartable.length)}? Пользователи могут потерять несохранённые данные.`) &&
+                    startTask(apiClient.post("/hosts/restart", { host_ids: restartable }), "Не удалось запустить перезагрузку"),
                 },
                 {
                   label: `Проверить версию агента (${withAgent.length})`,
