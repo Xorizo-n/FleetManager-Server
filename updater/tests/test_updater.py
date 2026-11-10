@@ -167,6 +167,15 @@ class RunnerTests(unittest.TestCase):
             self.updater.worker(restore=True)
         self.assertEqual(self.updater.data["operation"]["status"], "recovery_required")
 
+    def test_damaged_backup_is_rejected_before_any_database_command(self):
+        directory = self.root / "backup"; directory.mkdir()
+        self.operation(previous_compose="old", backup=str(directory), migration_started=True,
+                       backup_hashes={"database.dump": "0" * 64})
+        with patch.object(self.updater, "dc") as dc, patch.object(self.updater, "cmd") as cmd:
+            with self.assertRaisesRegex(RuntimeError, "повреждена"):
+                self.updater.restore()
+        dc.assert_not_called(); cmd.assert_not_called()
+
     @unittest.skipUnless(os.name == "posix", "Unix socket service runs on Linux")
     def test_socket_service_status_and_invalid_operation(self):
         import threading

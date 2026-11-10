@@ -1,5 +1,6 @@
 """Runs outside the application containers; never executes release-supplied scripts."""
 import json
+import hashlib
 import os
 import shutil
 import subprocess
@@ -19,6 +20,11 @@ TERMINAL = {"succeeded", "failed", "rolled_back", "recovery_required"}
 
 def now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def checksum(path):
+    with Path(path).open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
 
 
 def atomic(path, data):
@@ -197,6 +203,8 @@ class Updater:
                   "a.add(p,arcname='local_playbooks') if p.exists() else None; a.close()")
         self.dc("run", "--rm", "--no-deps", "-v", f"{directory}:/snapshot", "--entrypoint", "python",
                 "backend", "-c", script, timeout=300)
+        self.data["operation"]["backup_hashes"] = {name: checksum(directory / name)
+                                                    for name in ("database.dump", "config.tar.gz", "playbooks.tar.gz")}
 
     def health(self, compose):
         deadline = time.monotonic() + 180
@@ -225,6 +233,12 @@ class Updater:
         op = self.data["operation"]
         previous = Path(op["previous_compose"])
         directory = Path(op["backup"])
+        if op.get("migration_started"):
+            expected = op.get("backup_hashes", {})
+            if set(expected) != {"database.dump", "config.tar.gz", "playbooks.tar.gz"} or any(
+                checksum(directory / name) != digest for name, digest in expected.items()
+            ):
+                raise RuntimeError("Резервная копия повреждена. Рабочая БД не изменена")
         if op.get("migration_container"):
             container = op["migration_container"]
             found = self.cmd(["docker", "ps", "-aq", "--filter", f"name=^/{container}$"]).decode().strip()
