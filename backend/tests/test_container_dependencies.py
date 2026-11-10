@@ -3,6 +3,14 @@ from pathlib import Path
 
 
 class ContainerDependencyTests(unittest.TestCase):
+    def test_celery_redis_transport_loads_with_installed_dependencies(self):
+        # Kombu checks redis-py when obtaining the client, not on module import.
+        # This exercises that check without requiring a running Redis server.
+        from types import SimpleNamespace
+        from kombu.transport.redis import Channel
+
+        self.assertIsNotNone(Channel._get_client(SimpleNamespace(global_keyprefix="")))
+
     def test_backend_image_installs_sshpass_for_password_credentials(self):
         dockerfile = Path(__file__).parents[1] / "Dockerfile"
         self.assertIn("sshpass", dockerfile.read_text(encoding="utf-8"))

@@ -12,6 +12,8 @@ pyotp==2.9.0
 qrcode[pil]==7.4.2
 cryptography==42.0.7
 celery==5.4.0
+# Kombu 5.7 requires a newer redis-py than Celery 5.4 permits.
+kombu==5.6.2
 redis==5.0.4
 celery[redis]==5.4.0
 ansible-core==2.16.6
