@@ -1,0 +1,22 @@
+[Unit]
+Description=FleetManager platform updater
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/fleet-updater
+ExecStart=/usr/bin/python3 -m updater.service
+Restart=on-failure
+RestartSec=5
+RuntimeDirectory=fleet-updater
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+StateDirectory=fleet-updater
+StateDirectoryMode=0700
+UMask=0077
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
