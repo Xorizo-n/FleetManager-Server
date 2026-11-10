@@ -258,12 +258,22 @@ def _sync_running() -> bool:
         return False
 
 
+def syncs_here() -> bool:
+    """Синхронизирует ли точку раздачи этот сервер; иначе — другой на той же шаре."""
+    return enabled() and bool(settings.dist_rsync_target)
+
+
 def status() -> dict:
     state = _read_json(settings.dist_state_path)
+    here = syncs_here()
     return {
         "enabled": enabled(),
         "url": settings.dist_url or None,
-        "running": _sync_running(),
+        "syncs_here": here,
+        "synced_by": None if here else (settings.dist_synced_by or None),
+        # Блокировку держит синхронизирующий сервер у себя; flock через NFS её не видит —
+        # второму серверу остаётся флаг из общего файла состояния.
+        "running": _sync_running() if here else bool(state.get("running")),
         "healthy": state.get("healthy"),
         "checked_at": state.get("checked_at"),
         "last_attempt": state.get("last_attempt"),

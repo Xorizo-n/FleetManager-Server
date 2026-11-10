@@ -26,6 +26,8 @@ class AgentInstallerSyncResult(BaseModel):
 class DistributionStatus(BaseModel):
     enabled: bool
     url: str | None = None
+    syncs_here: bool = False
+    synced_by: str | None = None
     running: bool = False
     healthy: bool | None = None
     checked_at: datetime | None = None

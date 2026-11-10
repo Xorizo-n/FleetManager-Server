@@ -106,12 +106,24 @@ class ManifestTests(_Share):
             self.assertIn("--exclude=.*", run.call_args.args[0])
             self.assertEqual(sorted(distribution.load_manifest()), ["app.exe"])
 
-            with mock.patch.object(settings, "dist_rsync_target", ""):
+            self.assertTrue(distribution.status()["syncs_here"])
+            with mock.patch.object(settings, "dist_rsync_target", ""), \
+                 mock.patch.object(settings, "dist_synced_by", "10.40.240.154"):
                 before = open(manifest, encoding="utf-8").read()
                 self.assertIn("skipped", distribution.sync())
                 self.assertEqual(open(manifest, encoding="utf-8").read(), before)
                 self.assertEqual(distribution.link_for(path)[1], hashlib.sha256(b"app").hexdigest())
-                self.assertIsNotNone(distribution.status()["last_success"])
+                status = distribution.status()
+                self.assertIsNotNone(status["last_success"])
+                self.assertFalse(status["syncs_here"])
+                self.assertEqual(status["synced_by"], "10.40.240.154")
+                self.assertFalse(status["running"])
+                with open(state, encoding="utf-8") as f:
+                    data = json.load(f)
+                data["running"] = True  # идёт синхронизация на первом сервере
+                with open(state, "w", encoding="utf-8") as f:
+                    json.dump(data, f)
+                self.assertTrue(distribution.status()["running"])
 
     def test_unchanged_files_are_not_hashed_again(self):
         self.put("big.ova", b"x" * 10)

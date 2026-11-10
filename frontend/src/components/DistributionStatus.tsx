@@ -7,6 +7,9 @@ import Button from "./ui/Button";
 export interface Distribution {
   enabled: boolean;
   url: string | null;
+  /** false — точку раздачи синхронизирует другой сервер на той же шаре (synced_by) */
+  syncs_here: boolean;
+  synced_by: string | null;
   running: boolean;
   healthy: boolean | null;
   last_success: string | null;
@@ -101,14 +104,17 @@ export default function DistributionStatus({ canManage, onSynced }: { canManage:
           )}
           {state.enabled && (
             <p className="text-xs text-subtle">
-              ПК скачивают установщики оттуда по HTTP; файл, которого там ещё нет, копируется с сервера по SSH. Синхронизация — после загрузки файла и каждые 15 минут.
+              ПК скачивают установщики оттуда по HTTP; файл, которого там ещё нет, копируется с сервера по SSH.{" "}
+              {state.syncs_here
+                ? "Синхронизация — после загрузки файла и каждые 15 минут."
+                : `Синхронизирует ${state.synced_by ? `сервер ${state.synced_by}` : "другой сервер Fleet Manager"} с той же шарой — каждые 15 минут; файл, загруженный здесь, попадёт на точку раздачи при ближайшей синхронизации.`}
             </p>
           )}
           {state.error && !state.running && <p className="text-sm text-rose-600 dark:text-rose-400">{state.error}</p>}
           {error && <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>}
         </div>
       </div>
-      {canManage && state.enabled && (
+      {canManage && state.enabled && state.syncs_here && (
         <Button variant="secondary" onClick={sync} loading={starting} disabled={state.running}>
           <RefreshCw className={`h-4 w-4 ${state.running ? "animate-spin" : ""}`} aria-hidden="true" />
           {state.running ? "Синхронизируется…" : "Синхронизировать"}

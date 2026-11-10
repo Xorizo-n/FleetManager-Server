@@ -82,6 +82,9 @@ class Settings(BaseSettings):
     dist_url: str = ""
     dist_secret: str = ""
     dist_rsync_target: str = ""  # fleetdist@10.152.240.10
+    # Второй сервер на той же шаре: rsync не делает (DIST_RSYNC_TARGET пуст), манифест читает
+    # у синхронизирующего. Здесь — его имя для интерфейса (например, 10.40.240.154).
+    dist_synced_by: str = ""
     dist_ssh_dir: str = "/mnt/dist-ssh"  # id_ed25519 + known_hosts (secrets/dist)
     dist_manifest_path: str = "/app/ansible_data/dist-manifest.json"
     dist_state_path: str = "/app/ansible_data/dist-state.json"

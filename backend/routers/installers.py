@@ -132,6 +132,9 @@ def distribution_sync(
 ):
     if not distribution.enabled():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Точка раздачи не настроена (DIST_URL в .env)")
+    if not distribution.syncs_here():
+        by = settings.dist_synced_by or "другой сервер Fleet Manager на той же шаре"
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Точку раздачи синхронизирует {by}")
     distribution.sync_distribution.delay()
     record_audit(db, user.id, "distribution_sync", "", request)
     return distribution.status()
