@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { ChevronDown, Menu as MenuIcon, Server, Settings, X } from "lucide-react";
+import { ChevronDown, LayoutDashboard, Menu as MenuIcon, Monitor, Server, Settings, Workflow, X } from "lucide-react";
 import { UserRole, useAuth } from "../context/AuthContext";
 import UserMenu, { ROLE_LABELS } from "./UserMenu";
 import Menu from "./ui/Menu";
@@ -12,14 +12,22 @@ const EDITORS: UserRole[] = ["admin", "operator"];
 // задаём роли, в которые monitoring не входит
 const STAFF: UserRole[] = ["admin", "operator", "viewer"];
 
-export const NAV_ITEMS: { to: string; label: string; end?: boolean; roles?: UserRole[] }[] = [
-  { to: "/", label: "Обзор", end: true, roles: STAFF },
-  { to: "/monitoring", label: "Мониторинг", roles: ["monitoring", "admin"] },
-  { to: "/hosts", label: "Хосты", roles: STAFF },
-  { to: "/software", label: "ПО", roles: STAFF },
-  { to: "/automation", label: "Автоматизация", roles: EDITORS },
-  { to: "/wallpapers", label: "Обои", roles: STAFF },
-  { to: "/tasks", label: "Задачи", roles: STAFF },
+type NavItem = { to: string; label: string; end?: boolean; roles: UserRole[] };
+const NAV_GROUPS: { label: string; icon: typeof LayoutDashboard; items: NavItem[] }[] = [
+  { label: "Обзор", icon: LayoutDashboard, items: [
+    { to: "/", label: "Обзор", end: true, roles: STAFF },
+    { to: "/monitoring", label: "Мониторинг", roles: ["monitoring", "admin"] },
+  ] },
+  { label: "Хосты", icon: Monitor, items: [
+    { to: "/hosts", label: "ПК", end: true, roles: STAFF },
+    { to: "/hosts/printers", label: "Принтеры", roles: STAFF },
+  ] },
+  { label: "Автоматизация", icon: Workflow, items: [
+    { to: "/automation", label: "Плейбуки", roles: EDITORS },
+    { to: "/software", label: "ПО", roles: STAFF },
+    { to: "/wallpapers", label: "Обои", roles: STAFF },
+    { to: "/tasks", label: "Задачи", roles: STAFF },
+  ] },
 ];
 
 export const ADMIN_ITEMS: { to: string; label: string; roles: UserRole[] }[] = [
@@ -48,7 +56,10 @@ export default function Layout() {
   useEffect(() => setMenuOpen(false), [location.pathname]);
 
   const allowed = (roles?: UserRole[]) => !roles || (user && roles.includes(user.role));
-  const navItems = NAV_ITEMS.filter((i) => allowed(i.roles));
+  const navGroups = NAV_GROUPS.map((group) => ({ ...group, items: group.items.filter((item) => allowed(item.roles)) }))
+    .filter((group) => group.items.length > 0);
+  const groupActive = (group: typeof navGroups[number]) => group.items.some((item) =>
+    item.to === "/" ? location.pathname === "/" : location.pathname === item.to || location.pathname.startsWith(`${item.to}/`));
   const adminItems = ADMIN_ITEMS.filter((i) => allowed(i.roles));
   const adminActive = location.pathname.startsWith("/admin");
   // Мониторинг — настенный дисплей (ТВ): страница сама занимает всю высоту под
@@ -68,13 +79,13 @@ export default function Layout() {
                 <span className="hidden sm:inline">Fleet Manager</span>
               </NavLink>
               <nav className="hidden items-center gap-0.5 lg:flex">
-                {navItems.map((item) => (
-                  item.to === "/hosts" ? <Menu key={item.to} align="left" trigger={({ open, toggle }) => (
-                    <button onClick={toggle} aria-haspopup="menu" aria-expanded={open} className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors ${location.pathname.startsWith("/hosts") ? "bg-blue-600 text-white" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
-                      Хосты <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
+                {navGroups.map((group) => (
+                  <Menu key={group.label} align="left" trigger={({ open, toggle }) => (
+                    <button onClick={toggle} aria-haspopup="menu" aria-expanded={open} className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors ${groupActive(group) ? "bg-blue-600 text-white" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
+                      <group.icon className="h-3.5 w-3.5" aria-hidden="true" />
+                      {group.label} <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
                     </button>
-                  )} items={[{ label: "ПК", onClick: () => navigate("/hosts") }, { label: "Принтеры", onClick: () => navigate("/hosts/printers") }]} /> :
-                  <NavLink key={item.to} to={item.to} end={item.end} className={linkClass}>{item.label}</NavLink>
+                  )} items={group.items.map((item) => ({ label: item.label, onClick: () => navigate(item.to) }))} />
                 ))}
                 {adminItems.length > 0 && (
                   <Menu
@@ -109,12 +120,13 @@ export default function Layout() {
 
           {menuOpen && (
             <nav className="flex flex-col gap-1 border-t border-border px-4 py-2 lg:hidden">
-              {navItems.map((item) => (
-                item.to === "/hosts" ? <div key={item.to} className="flex flex-col gap-1">
-                  <p className="px-3 pt-2 text-xs font-medium uppercase tracking-wide text-subtle">Хосты</p>
-                  <NavLink to="/hosts" end className={linkClass}>ПК</NavLink>
-                  <NavLink to="/hosts/printers" className={linkClass}>Принтеры</NavLink>
-                </div> : <NavLink key={item.to} to={item.to} end={item.end} className={linkClass}>{item.label}</NavLink>
+              {navGroups.map((group) => (
+                <div key={group.label} className="flex flex-col gap-1">
+                  <p className="flex items-center gap-1.5 px-3 pt-2 text-xs font-medium uppercase tracking-wide text-subtle">
+                    <group.icon className="h-3.5 w-3.5" aria-hidden="true" />{group.label}
+                  </p>
+                  {group.items.map((item) => <NavLink key={item.to} to={item.to} end={item.end} className={linkClass}>{item.label}</NavLink>)}
+                </div>
               ))}
               {adminItems.length > 0 && <p className="px-3 pt-2 text-xs font-medium uppercase tracking-wide text-subtle">Администрирование</p>}
               {adminItems.map((item) => (
