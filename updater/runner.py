@@ -131,18 +131,18 @@ class Updater:
             self.lock.release()
             raise
 
-    def cmd(self, args, timeout=120, input=None):
-        result = subprocess.run(args, cwd=self.root, input=input, stdout=subprocess.PIPE,
+    def cmd(self, args, timeout=120, input=None, stdin=None):
+        result = subprocess.run(args, cwd=self.root, input=input, stdin=stdin, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, timeout=timeout)
         if result.returncode:
             # Do not expose environment/configuration or command output containing credentials.
             raise RuntimeError(f"Команда {args[0]} завершилась с кодом {result.returncode}")
         return result.stdout
 
-    def dc(self, *args, compose=None, timeout=120, input=None):
+    def dc(self, *args, compose=None, timeout=120, input=None, stdin=None):
         file = compose or self.compose
         return self.cmd(["docker", "compose", "--project-directory", str(self.root), "--env-file", str(self.root / ".env"),
-                         "-p", self.project, "-f", str(file), *args], timeout=timeout, input=input)
+                         "-p", self.project, "-f", str(file), *args], timeout=timeout, input=input, stdin=stdin)
 
     def inspect_tasks(self):
         script = ("import json; from celery_app import celery_app; "
@@ -188,11 +188,8 @@ class Updater:
                 'pg_dump -Fc -U "$POSTGRES_USER" "$POSTGRES_DB"']
         with dump.open("wb") as out:
             subprocess.run(args, cwd=self.root, stdout=out, stderr=subprocess.PIPE, check=True, timeout=600)
-        self.dc("cp", str(dump), "postgres:/tmp/fleet-pre-update.dump")
-        try:
-            self.dc("exec", "-T", "postgres", "pg_restore", "--list", "/tmp/fleet-pre-update.dump", timeout=600)
-        finally:
-            self.dc("exec", "-T", "postgres", "rm", "-f", "/tmp/fleet-pre-update.dump")
+        with dump.open("rb") as source:
+            self.dc("exec", "-T", "postgres", "pg_restore", "--list", stdin=source, timeout=600)
         with tarfile.open(directory / "config.tar.gz", "w:gz") as archive:
             for name in (".env", "certs", "secrets", "docker-compose.yml", "postgres-entrypoint.sh"):
                 path = self.root / name
@@ -254,13 +251,10 @@ class Updater:
             self.event("rolled_back", "Предыдущая версия запущена; миграция и восстановление БД не требовались")
             return
         # This intentionally discards changes since the pre-update snapshot; the API requires confirmation.
-        self.dc("cp", str(directory / "database.dump"), "postgres:/tmp/fleet-pre-update.dump", compose=previous)
-        try:
+        with (directory / "database.dump").open("rb") as source:
             self.dc("exec", "-T", "postgres", "sh", "-c",
-                    'dropdb --force -U "$POSTGRES_USER" "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" "$POSTGRES_DB" && pg_restore --exit-on-error -U "$POSTGRES_USER" -d "$POSTGRES_DB" /tmp/fleet-pre-update.dump',
-                    timeout=600, compose=previous)
-        finally:
-            self.dc("exec", "-T", "postgres", "rm", "-f", "/tmp/fleet-pre-update.dump", compose=previous)
+                    'dropdb --force -U "$POSTGRES_USER" "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" "$POSTGRES_DB" && pg_restore --exit-on-error -U "$POSTGRES_USER" -d "$POSTGRES_DB"',
+                    stdin=source, timeout=600, compose=previous)
         with tarfile.open(directory / "config.tar.gz") as archive:
             archive.extractall(self.root, filter="data")
         script = ("import tarfile,shutil; from pathlib import Path; p=Path('/app/ansible_data/local_playbooks'); "
@@ -295,11 +289,11 @@ class Updater:
         self.dc("config", "--quiet", compose=compose)
         self.event("downloading", "Загрузка образов новой версии")
         self.dc("pull", *SERVICES, compose=compose, timeout=1800)
-        # Two dump copies coexist during verification/restore. Restoring into an empty
-        # database releases the old database first; reserve 4 GiB for temporary files.
+        # Dump verification/restoration streams from disk without a second copy.
+        # Restoring releases the old database first; reserve 4 GiB for temporary files.
         db_bytes = int(self.dc("exec", "-T", "postgres", "sh", "-c",
                               'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT pg_database_size(current_database())"'))
-        if shutil.disk_usage(self.state_dir).free < 4 * 1024**3 + 2 * db_bytes:
+        if shutil.disk_usage(self.state_dir).free < 4 * 1024**3 + db_bytes:
             raise RuntimeError("Недостаточно места для резервной копии и восстановления БД")
         # Capture exact running images, even for the initial unversioned installation.
         old = json.loads(self.dc("config", "--format", "json"))
