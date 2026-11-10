@@ -80,7 +80,8 @@ def main():
     parser.add_argument("--runtime", default="/run/fleet-updater")
     parser.add_argument("--project", default="fleet-manager")
     parser.add_argument("--wait-seconds", type=int, default=900)
-    parser.add_argument("--request", choices=["status", "check", "restore"])
+    parser.add_argument("--request", choices=["status", "check", "install", "restore"])
+    parser.add_argument("--version")
     parser.add_argument("--confirm-data-loss", action="store_true")
     args = parser.parse_args()
     path = args.runtime + "/updater.sock"
@@ -88,8 +89,10 @@ def main():
         connection = UnixConnection(path)
         if args.request == "restore" and not args.confirm_data_loss:
             parser.error("Восстановление заменит БД копией: требуется --confirm-data-loss")
+        if args.request == "install" and not args.version:
+            parser.error("Для установки укажите --version vX.Y.Z")
         connection.request("GET" if args.request == "status" else "POST", "/" + args.request,
-                           json.dumps({"actor": "server-console", "confirm_data_loss": args.confirm_data_loss}))
+                           json.dumps({"actor": "server-console", "version": args.version, "confirm_data_loss": args.confirm_data_loss}))
         response = connection.getresponse()
         print(response.read().decode())
         raise SystemExit(0 if response.status == 200 else 1)
