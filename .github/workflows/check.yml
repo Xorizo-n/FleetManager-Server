@@ -44,4 +44,4 @@ jobs:
         working-directory: frontend
       - run: docker build -t fleet-platform-check-backend backend
       - run: docker build --build-arg VITE_API_BASE_URL=/api -t fleet-platform-check-frontend frontend
-      - run: python -m updater.tests.integration_updates
+      - run: sudo "$(command -v python)" -m updater.tests.integration_updates
