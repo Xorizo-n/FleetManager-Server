@@ -90,6 +90,29 @@ class ManifestTests(_Share):
         self.put("app.exe", b"new and longer")
         self.assertIsNone(distribution.link_for(path))
 
+    def test_manifest_in_share_is_shared_with_a_server_without_rsync(self):
+        # Два сервера на одной шаре: синхронизирует один, второй (без DIST_RSYNC_TARGET)
+        # только читает манифест из .fleet-dist — служебная папка сама не раздаётся.
+        shared = os.path.join(self.share, ".fleet-dist")
+        os.makedirs(shared)
+        manifest, state = os.path.join(shared, "manifest.json"), os.path.join(shared, "state.json")
+        path = self.put("app.exe", b"app")
+        ok = subprocess.CompletedProcess([], 0, "", "")
+        with mock.patch.object(settings, "dist_manifest_path", manifest), \
+             mock.patch.object(settings, "dist_state_path", state), \
+             mock.patch.object(distribution.subprocess, "run", return_value=ok) as run, \
+             mock.patch.object(distribution, "check_health", return_value=True):
+            distribution.sync()
+            self.assertIn("--exclude=.*", run.call_args.args[0])
+            self.assertEqual(sorted(distribution.load_manifest()), ["app.exe"])
+
+            with mock.patch.object(settings, "dist_rsync_target", ""):
+                before = open(manifest, encoding="utf-8").read()
+                self.assertIn("skipped", distribution.sync())
+                self.assertEqual(open(manifest, encoding="utf-8").read(), before)
+                self.assertEqual(distribution.link_for(path)[1], hashlib.sha256(b"app").hexdigest())
+                self.assertIsNotNone(distribution.status()["last_success"])
+
     def test_unchanged_files_are_not_hashed_again(self):
         self.put("big.ova", b"x" * 10)
         ok = subprocess.CompletedProcess([], 0, "", "")
