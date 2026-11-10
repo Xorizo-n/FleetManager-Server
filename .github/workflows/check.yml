@@ -42,5 +42,6 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci && npm run build
         working-directory: frontend
-      - run: docker build -t fleet-backend-check backend
-      - run: docker build --build-arg VITE_API_BASE_URL=/api -t fleet-frontend-check frontend
+      - run: docker build -t fleet-platform-check-backend backend
+      - run: docker build --build-arg VITE_API_BASE_URL=/api -t fleet-platform-check-frontend frontend
+      - run: python -m updater.tests.integration_updates

@@ -21,7 +21,7 @@ def version(tag):
 
 def get(url, limit=1024 * 1024):
     request = urllib.request.Request(url, headers={"User-Agent": "FleetManager-Updater", "Accept": "application/vnd.github+json"})
-    with urllib.request.urlopen(request, timeout=30) as response:
+    with urllib.request.urlopen(request, timeout=15) as response:
         data = response.read(limit + 1)
     if len(data) > limit:
         raise ValueError("Превышен размер файла релиза")

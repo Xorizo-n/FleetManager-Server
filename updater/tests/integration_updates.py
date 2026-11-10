@@ -43,7 +43,7 @@ def main():
         "postgres": {"image": "postgres:15", "environment": {"POSTGRES_USER": "fleet", "POSTGRES_PASSWORD": "test", "POSTGRES_DB": "fleet"},
                      "volumes": ["db:/var/lib/postgresql/data"], "healthcheck": {"test": ["CMD", "pg_isready", "-U", "fleet"], "interval": "2s", "timeout": "2s", "retries": 30}},
         "redis": {"image": "redis:7"},
-        "backend": {**app, "ports": ["127.0.0.1:18000:8000"], "command": ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"]},
+        "backend": {**app, "ports": ["127.0.0.1:18000:8000"], "command": ["sh", "-c", "alembic upgrade head && exec uvicorn main:app --host 0.0.0.0 --port 8000"]},
         "celery": {**app, "command": "celery -A celery_app.celery_app worker --loglevel=warning --concurrency=1"},
         "celery-beat": {**app, "command": "celery -A celery_app.celery_app beat --loglevel=warning"},
         "frontend": {"image": frontend, "ports": ["127.0.0.1:18443:443"], "volumes": [str(root / "certs") + ":/etc/nginx/certs"], "depends_on": ["backend"]},
