@@ -351,7 +351,7 @@ class Updater:
                     else:
                         # Waiting timed out: don't recreate containers with active playbooks.
                         self.dc("exec", "-T", "celery", "python", "-c",
-                                "from celery_app import celery_app; celery_app.control.add_consumer('celery',reply=True,timeout=10)")
+                                "from celery_app import celery_app; r=celery_app.control.add_consumer('celery',reply=True,timeout=10); assert r and all('ok' in v for item in r for v in item.values())")
                         self.dc("start", "backend", "celery", "celery-beat")
                     self.runtime.joinpath("maintenance").unlink(missing_ok=True)
                     self.event("failed", f"{exc}. Предыдущая версия продолжает работу")
