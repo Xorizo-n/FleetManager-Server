@@ -41,7 +41,7 @@ from schemas.agent import (
 from schemas.task import TaskRunOut
 from services.agent_auth import hash_agent_token, is_machine_id_clone, issue_agent_token
 from services.software_sync import sync_host_software
-from services.agent_ssh import generate_agent_keypair
+from services.agent_ssh import generate_agent_keypair, preferred_ssh_login
 from services.ssh_health import needs_reinstall, ssh_blocked_reason, store_ssh_report
 from services.host_dedup import absorb_stale_twins, adoptable_host, reset_for_new_install
 from services.agent_version import (
@@ -258,7 +258,8 @@ def register_agent(payload: AgentRegisterRequest, request: Request, db: Session 
         adopted = host = adoptable_host(db, payload.hostname, now)
     raw_agent_token = issue_agent_token()
     ssh_public_key: str | None = None
-    ssh_login: str | None = payload.ssh_login or "Administrator"
+    reported_login = preferred_ssh_login(payload.ssh_login, settings.agent_ssh_login)
+    ssh_login: str | None = reported_login or "Administrator"
     if host is None:
         host = Host(
             agent_id=payload.machine_id,
@@ -314,8 +315,8 @@ def register_agent(payload: AgentRegisterRequest, request: Request, db: Session 
         db.flush()
         host.credential_id = credential.id
     elif credential.is_agent_managed:
-        if payload.ssh_login:
-            credential.login = payload.ssh_login
+        if reported_login:
+            credential.login = reported_login
         ssh_public_key = credential.public_key
         ssh_login = credential.login
     db.commit()
@@ -423,10 +424,11 @@ def heartbeat(
         store_report(db, host, payload.wallpaper, now)
     if payload.ssh_port:
         host.ssh_port = payload.ssh_port
-    if payload.ssh_login and host.credential_id:
+    reported_login = preferred_ssh_login(payload.ssh_login, settings.agent_ssh_login)
+    if reported_login and host.credential_id:
         credential = db.get(Credential, host.credential_id)
         if credential is not None and credential.is_agent_managed:
-            credential.login = payload.ssh_login
+            credential.login = reported_login
 
     if reported_version:
         host.agent_version = reported_version
