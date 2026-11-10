@@ -28,6 +28,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r backend/requirements.txt
+      - run: ansible-galaxy collection install -r backend/ansible-collections.yml
       - run: python -m unittest discover -s updater/tests -v
       - run: python -m unittest discover -s backend/tests
         env:
