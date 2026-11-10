@@ -15,6 +15,16 @@ type Status = {
   operation?: Operation; history: Operation[];
 };
 
+function isNewer(available: string, current: string) {
+  if (current === "unversioned") return true;
+  const next = available.slice(1).split(".").map(Number);
+  const installed = current.slice(1).split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (next[i] !== installed[i]) return next[i] > installed[i];
+  }
+  return false;
+}
+
 export default function PlatformUpdate() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,7 +58,7 @@ export default function PlatformUpdate() {
     {disconnected ? <p role="status" className="rounded-xl border border-border p-4">Компоненты платформы перезапускаются. Связь восстановится автоматически; не запускайте установку повторно.</p> : status.error && <ErrorText>{apiError(status.error, "Служба обновлений недоступна")}</ErrorText>}
     {status.isLoading && <Loading />}
     {data && <>
-      <section className="surface p-5 space-y-4">
+      <section className="surface-card p-5 space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div><h2 className="text-lg font-semibold">Установленная версия</h2>
             <p>{data.current.version === "unversioned" ? "Установка до перехода на релизы" : data.current.version}</p>
@@ -63,15 +73,15 @@ export default function PlatformUpdate() {
           <p className="text-sm text-subtle">{formatDateTime(data.available.published_at)}</p>
           <p className="whitespace-pre-wrap text-sm">{data.available.notes || "Описание изменений отсутствует."}</p>
           <a className="text-primary underline" href={data.available.url} target="_blank" rel="noopener noreferrer">Открыть релиз на GitHub</a>
-          {data.available.version !== data.current.version && <div><Button disabled={active || data.maintenance} onClick={() => setConfirmation("install")}>Установить {data.available.version}</Button></div>}
+          {isNewer(data.available.version, data.current.version) ? <div><Button disabled={active || data.maintenance} onClick={() => setConfirmation("install")}>Установить {data.available.version}</Button></div> : <p>Установлена актуальная или более новая версия.</p>}
         </div> : <p className="text-sm text-subtle">Готовых релизов пока нет либо проверка не завершилась.</p>}
       </section>
-      {confirmation && <section role="alertdialog" aria-label="Подтверждение операции" className="surface p-5 space-y-4">
+      {confirmation && <section role="alertdialog" aria-label="Подтверждение операции" className="surface-card p-5 space-y-4">
         <h2 className="font-semibold">{confirmation === "install" ? "Установить обновление?" : "Восстановить предыдущую версию?"}</h2>
         <p>{confirmation === "install" ? "Система дождётся завершения задач и создаст резервную копию. Во время установки интерфейс и связь с агентами будут временно недоступны." : "Текущая база данных будет заменена копией перед обновлением. Изменения после создания копии будут потеряны."}</p>
         <div className="flex gap-3"><Button variant={confirmation === "restore" ? "danger" : "primary"} disabled={active} onClick={() => action(confirmation)}>Подтвердить</Button><Button variant="secondary" onClick={() => setConfirmation(null)}>Отмена</Button></div>
       </section>}
-      {op && <section className="surface p-5 space-y-3" aria-live="polite">
+      {op && <section className="surface-card p-5 space-y-3" aria-live="polite">
         <h2 className="text-lg font-semibold">Обновление до {op.version}</h2>
         <p>{op.message}</p>
         {op.status === "recovery_required" && <>
@@ -80,7 +90,7 @@ export default function PlatformUpdate() {
         </>}
         <ol className="space-y-2 text-sm">{op.events.map((e, i) => <li key={i}><span className="text-subtle">{formatDateTime(e.at)}</span> — {e.message}</li>)}</ol>
       </section>}
-      {!!data.history.length && <section className="surface p-5 space-y-3"><h2 className="text-lg font-semibold">История обновлений</h2>{data.history.map(run => <div key={run.id} className="border-t border-border pt-3"><p>{run.version} · {formatDateTime(run.started_at)}</p><p className="text-sm text-muted-foreground">{run.message}</p></div>)}</section>}
+      {!!data.history.length && <section className="surface-card p-5 space-y-3"><h2 className="text-lg font-semibold">История обновлений</h2>{data.history.map(run => <div key={run.id} className="border-t border-border pt-3"><p>{run.version} · {formatDateTime(run.started_at)}</p><p className="text-sm text-muted-foreground">{run.message}</p></div>)}</section>}
     </>}
   </div>;
 }
