@@ -69,7 +69,7 @@ def main():
         real_dc = updater.dc
         def dc(*args, **kwargs):
             result = real_dc(*args, **kwargs)
-            if fail_migration and args[:5] == ("run", "--rm", "--no-deps", "backend", "alembic"):
+            if fail_migration and args[0] == "run" and "alembic" in args:
                 sql("CREATE TABLE updater_new_schema (id int)")
                 raise RuntimeError("Simulated failure after a migration committed")
             return result

@@ -24,8 +24,17 @@ def now():
 def atomic(path, data):
     path = Path(path)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    with tmp.open("w", encoding="utf-8") as output:
+        json.dump(data, output, ensure_ascii=False, indent=2)
+        output.flush()
+        os.fsync(output.fileno())
     os.replace(tmp, path)
+    if os.name == "posix":
+        descriptor = os.open(path.parent, os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
 
 class Updater:
@@ -215,6 +224,12 @@ class Updater:
         op = self.data["operation"]
         previous = Path(op["previous_compose"])
         directory = Path(op["backup"])
+        if op.get("migration_container"):
+            container = op["migration_container"]
+            found = self.cmd(["docker", "ps", "-aq", "--filter", f"name=^/{container}$"]).decode().strip()
+            if found:
+                # A Docker one-off may outlive the updater process that launched it.
+                self.cmd(["docker", "rm", "-f", container])
         self.dc("stop", "-t", "120", "backend", "celery", "celery-beat", compose=Path(op["target_compose"]), timeout=180)
         if not op.get("migration_started"):
             self.resume(previous)
@@ -291,8 +306,9 @@ class Updater:
         op["backup_complete"] = True
         self.event("migrating", "Применение миграций БД")
         op["migration_started"] = True
+        op["migration_container"] = f"{self.project}-migration-{op['id']}"
         self.save()
-        self.dc("run", "--rm", "--no-deps", "backend", "alembic", "upgrade", "head", compose=compose, timeout=600)
+        self.dc("run", "--rm", "--no-deps", "--name", op["migration_container"], "backend", "alembic", "upgrade", "head", compose=compose, timeout=600)
         revision = self.db_revision()
         if revision != target["schema_revision"]:
             raise RuntimeError("Версия схемы БД не совпадает с релизом")
@@ -312,8 +328,7 @@ class Updater:
             if restore or (op.get("migration_started") and not op.get("schema_unchanged")):
                 self.runtime.joinpath("maintenance").touch()
                 self.event("recovery_required", f"{exc}. Требуется восстановление из копии")
-                # Bring the new backend back for the recovery UI only when its schema is usable.
-                # If it cannot start, the independent CLI remains available on the server.
+                # If the backend cannot start, the independent CLI remains available.
             elif op.get("previous_compose"):
                 try:
                     if op.get("quiesced"):
