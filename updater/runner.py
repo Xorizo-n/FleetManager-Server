@@ -295,10 +295,11 @@ class Updater:
         self.dc("config", "--quiet", compose=compose)
         self.event("downloading", "Загрузка образов новой версии")
         self.dc("pull", *SERVICES, compose=compose, timeout=1800)
-        # Require enough space for the dump, verification copy, configuration, and old images.
+        # Two dump copies coexist during verification/restore. Restoring into an empty
+        # database releases the old database first; reserve 4 GiB for temporary files.
         db_bytes = int(self.dc("exec", "-T", "postgres", "sh", "-c",
                               'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT pg_database_size(current_database())"'))
-        if shutil.disk_usage(self.root).free < 4 * 1024**3 + 3 * db_bytes:
+        if shutil.disk_usage(self.state_dir).free < 4 * 1024**3 + 2 * db_bytes:
             raise RuntimeError("Недостаточно места для резервной копии и восстановления БД")
         # Capture exact running images, even for the initial unversioned installation.
         old = json.loads(self.dc("config", "--format", "json"))
