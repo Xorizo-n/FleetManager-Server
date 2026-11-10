@@ -4,6 +4,7 @@ import json
 import tarfile
 import tempfile
 import unittest
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -165,6 +166,29 @@ class RunnerTests(unittest.TestCase):
         with patch.object(self.updater, "restore", side_effect=RuntimeError("restore failed")):
             self.updater.worker(restore=True)
         self.assertEqual(self.updater.data["operation"]["status"], "recovery_required")
+
+    @unittest.skipUnless(os.name == "posix", "Unix socket service runs on Linux")
+    def test_socket_service_status_and_invalid_operation(self):
+        import threading
+        from updater.service import Server, UnixConnection, handler
+        path = str(self.root / "socket")
+        with Server(path, handler(self.updater)) as server:
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            try:
+                connection = UnixConnection(path)
+                connection.request("GET", "/status")
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                self.assertEqual(json.loads(response.read())["current"]["version"], "unversioned")
+                connection.close()
+                connection = UnixConnection(path)
+                connection.request("POST", "/arbitrary-command", "{}")
+                response = connection.getresponse()
+                self.assertEqual(response.status, 409)
+                response.read(); connection.close()
+            finally:
+                server.shutdown()
 
 
 if __name__ == "__main__":

@@ -59,7 +59,7 @@ class Updater:
 
     def read(self, name, default):
         path = self.state_dir / name
-        return json.loads(path.read_text()) if path.exists() else default
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
 
     def save(self):
         atomic(self.state_dir / "state.json", self.data)
@@ -105,6 +105,7 @@ class Updater:
                 op = self.data.get("operation", {})
                 if op.get("status") != "recovery_required" or not op.get("previous_compose") or (op.get("migration_started") and not op.get("backup_complete")):
                     raise ValueError("Нет готовой копии для восстановления")
+                op["recovery_actor"] = actor
                 self.event("restoring", "Восстановление предыдущей версии и БД")
             else:
                 version(tag)
@@ -269,7 +270,7 @@ class Updater:
         bundle = get(f"https://github.com/{REPO}/releases/download/{target['version']}/platform.tar.gz", MAX_BUNDLE)
         unpack(bundle, directory, target["bundle_sha256"])
         compose = directory / "compose.json"
-        config = json.loads(compose.read_text())
+        config = json.loads(compose.read_text(encoding="utf-8"))
         # Pin release inputs again on the host; the bundle cannot choose another image.
         for name in SERVICES:
             config["services"][name]["image"] = target["images"]["frontend" if name == "frontend" else "backend"]
