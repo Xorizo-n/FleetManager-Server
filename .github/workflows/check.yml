@@ -1,0 +1,45 @@
+name: Platform checks
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: fleet
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: fleet_test
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      JWT_SECRET_KEY: test
+      CREDENTIAL_ENCRYPTION_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+      DATABASE_URL: postgresql+psycopg://fleet:test@localhost:5432/fleet_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - run: python -m unittest discover -s updater/tests -v
+      - run: python -m unittest discover -s backend/tests
+        env:
+          PYTHONPATH: backend
+      - run: alembic upgrade head
+        working-directory: backend
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci && npm run build
+        working-directory: frontend
+      - run: docker build -t fleet-backend-check backend
+      - run: docker build --build-arg VITE_API_BASE_URL=/api -t fleet-frontend-check frontend

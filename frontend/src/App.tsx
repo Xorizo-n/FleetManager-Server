@@ -24,6 +24,7 @@ const Agent = lazy(() => import("./pages/admin/Agent"));
 const Files = lazy(() => import("./pages/admin/Files"));
 const Ldap = lazy(() => import("./pages/admin/Ldap"));
 const Backup = lazy(() => import("./pages/admin/Backup"));
+const PlatformUpdate = lazy(() => import("./pages/admin/PlatformUpdate"));
 const PlaybookEditor = lazy(() => import("./pages/PlaybookEditor"));
 const Wallpapers = lazy(() => import("./pages/Wallpapers"));
 const Monitoring = lazy(() => import("./pages/Monitoring"));
@@ -69,6 +70,7 @@ export default function App() {
                   <Route path="/admin/users" element={guard(["admin"], <Users />)} />
                   <Route path="/admin/ldap" element={guard(["admin"], <Ldap />)} />
                   <Route path="/admin/backup" element={guard(["admin"], <Backup />)} />
+                  <Route path="/admin/platform" element={guard(["admin"], <PlatformUpdate />)} />
                   <Route path="/admin/credentials" element={guard(EDITORS, <Credentials />)} />
                   <Route path="/admin/groups" element={guard(EDITORS, <Groups />)} />
                   <Route path="/admin/tags" element={guard(EDITORS, <Tags />)} />

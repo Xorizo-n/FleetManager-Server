@@ -75,6 +75,7 @@ services:
       # Ежедневные бэкапы БД (backup-db.sh): только чтение — дашборд мониторинга
       # показывает время и размер последнего бэкапа и итог последнего запуска
       - ./_backup/daily:/mnt/db-backups:ro
+      - /run/fleet-updater:/run/fleet-updater:ro
     ports:
       - "127.0.0.1:8000:8000"
     command: >

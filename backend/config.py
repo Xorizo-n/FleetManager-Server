@@ -5,6 +5,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # Database
+    platform_updater_socket: str = "/run/fleet-updater/updater.sock"
+    platform_maintenance_file: str = "/run/fleet-updater/maintenance"
+
     database_url: str = "postgresql+psycopg://fleet:fleet@localhost:5432/fleet_manager"
 
     # Redis / Celery

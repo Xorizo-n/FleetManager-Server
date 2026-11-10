@@ -5,6 +5,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
+from routers import platform_update
+from services.platform_maintenance import maintenance
 from routers import auth, hosts, credentials, software, playbooks, tasks, dashboard, users, installers, agent, hardware, wallpapers, ldap_settings, backup, host_tags, rollouts, printers
 
 logger = logging.getLogger(__name__)
@@ -15,6 +17,8 @@ logger = logging.getLogger(__name__)
 DB_THREADPOOL_TOKENS = 40
 
 app = FastAPI(title="Fleet Manager API", version="1.0.0")
+app.middleware("http")(maintenance)
+app.include_router(platform_update.router)
 
 
 @app.on_event("startup")

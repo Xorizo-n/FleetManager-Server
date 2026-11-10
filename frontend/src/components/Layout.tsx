@@ -26,6 +26,7 @@ export const ADMIN_ITEMS: { to: string; label: string; roles: UserRole[] }[] = [
   { to: "/admin/users", label: "Пользователи", roles: ["admin"] },
   { to: "/admin/ldap", label: "Вход через домен", roles: ["admin"] },
   { to: "/admin/backup", label: "Резервные копии", roles: ["admin"] },
+  { to: "/admin/platform", label: "Обновление платформы", roles: ["admin"] },
   { to: "/admin/credentials", label: "Учётные данные", roles: EDITORS },
   { to: "/admin/groups", label: "Группы хостов", roles: EDITORS },
   { to: "/admin/tags", label: "Теги хостов", roles: EDITORS },
