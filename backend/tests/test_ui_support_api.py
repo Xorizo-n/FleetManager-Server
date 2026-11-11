@@ -46,6 +46,11 @@ class GroupTargetTests(unittest.TestCase):
     def test_building_includes_floors_and_rooms(self):
         self.assertEqual(group_with_descendants(_QueuedDb(GROUP_ROWS), [BUILDING]), {BUILDING, FLOOR, ROOM})
 
+    def test_schedule_string_groups_include_descendants(self):
+        schedule = PlaybookSchedule(host_group_ids=[str(BUILDING)])
+        self.assertEqual(group_with_descendants(_QueuedDb(GROUP_ROWS), schedule_group_ids(schedule)),
+                         {BUILDING, FLOOR, ROOM})
+
     def test_room_is_only_itself(self):
         self.assertEqual(group_with_descendants(_QueuedDb(GROUP_ROWS), [ROOM]), {ROOM})
 

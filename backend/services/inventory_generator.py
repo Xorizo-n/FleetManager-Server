@@ -126,7 +126,7 @@ def build_inventory_ini(db: Session) -> str:
 
 def group_with_descendants(db: Session, group_ids) -> set:
     """The groups and every group below them: a building includes its floors and rooms."""
-    pending = {group_id for group_id in group_ids if group_id}
+    pending = {uuid.UUID(str(group_id)) for group_id in group_ids if group_id}
     if not pending:
         return set()
     children: dict = {}
