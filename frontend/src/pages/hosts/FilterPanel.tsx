@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useTags } from "../../api/queries";
 import { ChevronDown, SlidersHorizontal, X } from "lucide-react";
 import type { Host, VersionStatus } from "../../api/types";
@@ -76,26 +76,28 @@ interface FilterPanelProps {
  */
 export default function FilterPanel({ hosts, filters, setFilter, reset, tree, versionOf, alertCounts, open, onToggle }: FilterPanelProps) {
   const tags = useTags();
+  const [category, setCategory] = useState<string | null>(null);
   const SECTIONS = useMemo(
     () => sections([...(tags.data ?? []).map((t) => ({ value: t.id, label: t.name })), { value: "none", label: "Без тега" }, { value: "manual", label: "Поставлен вручную" }]),
     [tags.data],
   );
   const ALL_FILTERS = useMemo(() => SECTIONS.flatMap((s) => s.filters), [SECTIONS]);
+  const quickStatus = ALL_FILTERS.find((f) => f.key === "status")!;
   const active = ALL_FILTERS.filter((f) => filters[f.key]);
   const activeCount = active.length + (filters.wallpaper ? 1 : 0);
 
   // Счётчики считаются, только пока панель открыта: ~35 вариантов × все ПК
   const counts = useMemo(() => {
-    if (!open) return null;
+    if (!open || !category) return null;
     const result = new Map<string, number>();
     // Алерты не считаются: сводка алертов загружена за один выбранный период
-    for (const f of ALL_FILTERS.filter((x) => x.key !== "alerts")) {
+    for (const f of (SECTIONS.find((section) => section.title === category)?.filters ?? []).filter((x) => x.key !== "alerts" && x.key !== "status")) {
       for (const o of f.options) {
         result.set(`${f.key}:${o.value}`, filterHosts(hosts, { ...filters, [f.key]: o.value }, tree, versionOf, alertCounts).length);
       }
     }
     return result;
-  }, [open, hosts, filters, tree, versionOf, alertCounts, ALL_FILTERS]);
+  }, [open, category, hosts, filters, tree, versionOf, alertCounts, SECTIONS]);
 
   const optionLabel = (f: FilterDef) => f.options.find((o) => o.value === filters[f.key])?.label ?? filters[f.key];
 
@@ -123,12 +125,29 @@ export default function FilterPanel({ hosts, filters, setFilter, reset, tree, ve
         </button>
       </div>
 
+      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Доступность">
+        <span className="mr-1 text-sm text-muted-foreground">Доступность</span>
+        {[{ value: "", label: "Все" }, ...quickStatus.options].map((option) => (
+          <button key={option.value} type="button" aria-pressed={filters.status === option.value}
+            className={filters.status === option.value ? "chip-on" : "chip-off"}
+            onClick={() => setFilter("status", option.value)}>{option.label}</button>
+        ))}
+      </div>
+
       {open && (
-        <div id="host-filter-panel" className="surface-panel grid gap-x-8 gap-y-5 md:grid-cols-3">
-          {SECTIONS.map((section) => (
-            <section key={section.title} className="min-w-0 space-y-3">
-              <h3 className="border-b border-border pb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{section.title}</h3>
-              {section.filters.map((f) => (
+        <div id="host-filter-panel" className="space-y-2 rounded-lg border border-border px-3 py-2">
+          <div className="flex flex-wrap gap-2">
+            {SECTIONS.map((section, index) => (
+              <button key={section.title} type="button" className={category === section.title ? "chip-on" : "chip-off"}
+                aria-expanded={category === section.title}
+                aria-controls={category === section.title ? `host-filter-category-${index}` : undefined}
+                onClick={() => setCategory(category === section.title ? null : section.title)}>{section.title}</button>
+            ))}
+          </div>
+          {SECTIONS.map((section, index) => category === section.title && (
+            <section key={section.title} id={`host-filter-category-${index}`} aria-label={section.title}
+              className="grid max-h-44 gap-3 overflow-y-auto border-t border-border pt-2 md:grid-cols-3">
+              {section.filters.filter((f) => f.key !== "status").map((f) => (
                 <fieldset key={f.key} className="min-w-0">
                   <legend className="mb-1.5 text-xs font-medium text-foreground">{f.label}</legend>
                   <div className="flex flex-wrap gap-1.5">
