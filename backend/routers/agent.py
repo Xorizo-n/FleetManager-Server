@@ -456,12 +456,12 @@ def heartbeat(
     # Группа по имени: после переименования ПК переходит в группу своей аудитории.
     apply_auto_group(db, host)
 
-    # ПК в сети — задачи, которые ждали его включения, уходят в очередь. Но не тогда, когда
-    # агент сам сообщает, что SSH закрыт: задачи сорвались бы и ПК выпал бы из ожидания.
-    # Их заберёт проверка по SSH, когда SSH заработает. Ошибка здесь не должна сорвать heartbeat.
+    # При закрытом SSH выпускаем только обновление агента: его обработчик может
+    # передать установку самому агенту. Остальные задачи ждут восстановления SSH.
     try:
-        if ssh_blocked_reason(host.ssh_state, now) is None and not updates_installing(host.power_state, now):
-            release_waiting_tasks(db, host.id)
+        if not updates_installing(host.power_state, now):
+            ssh_blocked = ssh_blocked_reason(host.ssh_state, now) is not None
+            release_waiting_tasks(db, host.id, agent_updates_only=ssh_blocked)
     except Exception:  # noqa: BLE001
         db.rollback()
         logger.exception("Failed to release waiting tasks for host %s", host.id)

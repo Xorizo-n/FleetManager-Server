@@ -31,6 +31,21 @@ db.commit()
 h = [str(x.id) for x in hosts]
 on = str(online.id)
 
+# A live heartbeat with blocked SSH releases only the agent update.
+vpn, _ = wt.create_task_runs(db, task_type=TaskType.playbook, host_ids=[h[0]],
+                            created_by=None, playbook_name="it-ssh-blocked.yml")
+repair, _ = wt.create_task_runs(db, task_type=TaskType.agent_update, host_ids=[h[0]],
+                               created_by=None, playbook_name="it-agent-repair.yml")
+assert wt.release_waiting_tasks(db, hosts[0].id, agent_updates_only=True) == 1
+db.refresh(vpn)
+db.refresh(repair)
+assert vpn.host_states[h[0]] == wt.WAITING
+assert repair.host_states[h[0]] == wt.READY
+db.delete(repair)
+db.delete(vpn)
+db.commit()
+flushes.clear()
+
 
 def get(task_id):
     db.expire_all()
