@@ -31,7 +31,7 @@ const TONE_STYLES: Record<BadgeTone, string> = {
 const DOT_STYLES: Record<BadgeTone, string> = {
   success: "bg-emerald-500 dark:bg-emerald-400",
   danger: "bg-rose-500 dark:bg-rose-400",
-  info: "bg-sky-500 dark:bg-sky-400 motion-safe:animate-pulse",
+  info: "bg-sky-500 dark:bg-sky-400",
   warning: "bg-amber-500 dark:bg-amber-400",
   neutral: "bg-slate-400",
   waiting: "bg-transparent ring-1 ring-inset ring-violet-500 dark:ring-violet-400",
@@ -42,15 +42,16 @@ interface BadgeProps {
   tone?: BadgeTone;
   children?: React.ReactNode;
   className?: string;
+  staticIndicator?: boolean;
 }
 
-export default function Badge({ status, tone, children, className = "" }: BadgeProps) {
+export default function Badge({ status, tone, children, className = "", staticIndicator = false }: BadgeProps) {
   const resolvedTone = tone ?? STATUS_TONE[status] ?? "neutral";
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${TONE_STYLES[resolvedTone]} ${className}`}
     >
-      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT_STYLES[resolvedTone]}`} />
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT_STYLES[resolvedTone]}${!staticIndicator && resolvedTone === "info" ? " motion-safe:animate-pulse" : ""}`} />
       {children ?? status}
     </span>
   );

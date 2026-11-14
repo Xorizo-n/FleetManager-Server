@@ -90,10 +90,8 @@ export default function Login() {
     <div className="relative flex min-h-screen items-center justify-center bg-background px-4">
       <ThemeToggle className="absolute right-4 top-4" />
       <div className="surface-card w-full max-w-sm animate-slide-up p-6 shadow-panel-lg">
-        <div className="mb-6 flex flex-col items-center gap-2 text-center">
-          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600 text-white">
-            <Server className="h-5 w-5" />
-          </span>
+        <div className="mb-6 flex items-center justify-center gap-2.5">
+          <Server className="h-5 w-5 shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" />
           <h1 className="text-xl font-semibold">Fleet Manager</h1>
         </div>
 
@@ -113,7 +111,7 @@ export default function Login() {
                 className="input-base"
               />
               {mode === "login" && ldapDomain && (
-                <p className="mt-1 text-xs text-subtle">Учётная запись домена {ldapDomain}: логин Windows или почта @urfu.ru</p>
+                <p className="mt-1 text-xs text-muted-foreground">Учётная запись домена {ldapDomain}: логин Windows или почта @urfu.ru</p>
               )}
             </div>
             {mode === "register" && (
@@ -150,7 +148,7 @@ export default function Login() {
                 <button
                   type="button"
                   onClick={() => setShowPassword((v) => !v)}
-                  className="absolute inset-y-0 right-0 flex items-center px-3 text-subtle transition-colors hover:text-foreground"
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground transition-colors hover:text-foreground"
                   aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"}
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}

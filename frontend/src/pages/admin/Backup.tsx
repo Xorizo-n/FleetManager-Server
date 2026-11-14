@@ -260,7 +260,7 @@ export default function Backup() {
             {repoMismatch && repoConfirm && <p className="text-xs text-rose-600 dark:text-rose-400">Пароли не совпадают</p>}
           </div>
         </div>
-        <p className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+        <p className="flex items-start gap-2 border-t border-border pt-3 text-sm text-amber-700 dark:text-amber-300">
           <KeyRound className="mt-0.5 h-4 w-4 shrink-0" />
           Сохраните пароль шифрования копий и пароль SFTP вне этого сервера — в менеджере паролей или в сейфе. При потере ВМ только они открывают копии: здесь они пропадут вместе с ВМ.
         </p>

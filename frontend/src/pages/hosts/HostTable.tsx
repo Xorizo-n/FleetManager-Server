@@ -241,7 +241,10 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
               </div>
               <div className="min-w-0">
                 <div className="flex min-w-0 items-center gap-1.5">
-                  <span className="truncate font-medium text-foreground">{hostLabel(h)}</span>
+                  <button type="button" className="truncate text-left font-medium text-foreground hover:underline focus-visible:underline" onClick={(event) => {
+                    event.stopPropagation();
+                    onOpen(h);
+                  }}>{hostLabel(h)}</button>
                   {!mobile && h.tag_id && <TagBadge tag={tagById.get(h.tag_id)} manual={h.tag_manual} />}
                   {!!alertCounts?.get(h.id) && (
                     <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-amber-500/15 px-1 text-[11px] font-medium text-amber-700 dark:text-amber-300" title="Алерты агента — подробности в карточке, вкладка «Алерты»">

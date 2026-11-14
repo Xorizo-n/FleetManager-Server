@@ -21,6 +21,7 @@ import { apiError, pcCount, waitingNotice } from "../lib/format";
 
 interface Props {
   initialHostIds?: string[];
+  fixedHostTargets?: boolean;
   /** Вызывается после запуска или создания расписания (закрыть модалку) */
   onDone?: () => void;
   pickerHeight?: number;
@@ -32,7 +33,7 @@ interface Props {
 
 /** Запуск плейбука: что (каталог) → где (дерево хостов) → параметры → сейчас или по расписанию.
  *  Сейчас можно запустить несколько плейбуков: каждый — отдельная задача, по очереди. */
-export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHeight = 340, initialMode = "now", initialRepoId, initialPlaybook }: Props) {
+export default function PlaybookRunForm({ initialHostIds = [], fixedHostTargets = false, onDone, pickerHeight = 340, initialMode = "now", initialRepoId, initialPlaybook }: Props) {
   const queryClient = useQueryClient();
   const toast = useToast();
   const openTask = useOpenTask();
@@ -99,7 +100,7 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
 
   async function submit() {
     if (!repoId || !playbook || !hasTargets || mixedSources || tooManyForSchedule) return;
-    const { groupIds, hostIds } = compactSelection(tree, selection);
+    const { groupIds, hostIds } = fixedHostTargets ? { groupIds: [], hostIds: [...selection] } : compactSelection(tree, selection);
     setError(null);
     const what = chosen.length > 1 ? `${chosen.length} плейбука по очереди` : "плейбук";
     if (mode === "now" && targets.size > 30 && !window.confirm(`Запустить ${what} на ${pcCount(targets.size)}?`)) return;
@@ -290,7 +291,9 @@ export default function PlaybookRunForm({ initialHostIds = [], onDone, pickerHei
         {mode === "schedule" && (
           <div className="space-y-2">
             <CronEditor value={cron} onChange={setCron} />
-            <p className="text-xs text-subtle">Выбранные группы и теги раскрываются при каждом запуске: новые ПК в аудитории или с тегом попадут в расписание сами.</p>
+            <p className="text-xs text-subtle">{fixedHostTargets
+              ? "Расписание запоминает выбранные ПК. Если добавлены теги, их состав определяется при каждом запуске."
+              : "Выбранные группы и теги раскрываются при каждом запуске: новые ПК в аудитории или с тегом попадут в расписание сами."}</p>
           </div>
         )}
 

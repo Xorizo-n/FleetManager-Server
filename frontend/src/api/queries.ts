@@ -98,6 +98,8 @@ export function useFleet() {
     agentVersions: versions.data,
     isLoading: hosts.isLoading || groups.isLoading,
     error: hosts.error || groups.error,
+    isFetching: hosts.isFetching || groups.isFetching,
+    refetch: () => Promise.all([hosts.refetch(), groups.refetch()]),
   };
 }
 

@@ -141,7 +141,11 @@ def assign_wallpapers(payload: WallpaperAssignRequest, request: Request, db: Ses
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Изображение не найдено в каталоге")
 
     targets = f"hosts={len(found_hosts)} groups={len(found_groups)} desktop={payload.desktop} lock={payload.lock_screen}"
-    if payload.apply_at is not None and payload.apply_at > datetime.now(timezone.utc):
+    if payload.apply_at is not None:
+        if payload.apply_at <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[{
+                "loc": ["body", "apply_at"], "msg": "Укажите время смены в будущем", "type": "value_error",
+            }])
         schedule = WallpaperSchedule(
             apply_at=payload.apply_at, host_ids=[str(h) for h in payload.host_ids], group_ids=[str(g) for g in payload.group_ids],
             desktop=payload.desktop, lock_screen=payload.lock_screen, comment=payload.comment, created_by=user.id,

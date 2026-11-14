@@ -101,9 +101,9 @@ function Stat({ label, value, hint, to, tone = "text-foreground" }: { label: str
     </>
   );
   return to ? (
-    <Link to={to} className="rounded-lg border border-border px-3 py-2 hover:border-blue-500/40">{body}</Link>
+    <Link to={to} className="border-b border-border py-2 hover:border-blue-500/60">{body}</Link>
   ) : (
-    <div className="rounded-lg border border-border px-3 py-2">{body}</div>
+    <div className="border-b border-border py-2">{body}</div>
   );
 }
 

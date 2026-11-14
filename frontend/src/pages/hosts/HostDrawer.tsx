@@ -1,16 +1,17 @@
-import { ReactNode, useEffect, useMemo, useState } from "react";
+import { ReactNode, useEffect, useId, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowUpCircle, KeyRound, Monitor, Play, Power, RotateCw, Trash2 } from "lucide-react";
+import { Activity, ArrowUpCircle, KeyRound, MoreHorizontal, Monitor, Play, Power, RotateCw, Trash2 } from "lucide-react";
 import { apiClient } from "../../api/client";
 import { keys, useAlerts, useCanEdit, useCredentials, useFleet, useHostSoftware, useTasks } from "../../api/queries";
 import type { AgentAlert, Host, NetworkAdapter, TaskRun } from "../../api/types";
 import Drawer from "../../components/ui/Drawer";
 import Tabs from "../../components/ui/Tabs";
+import Menu from "../../components/ui/Menu";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
 import Checkbox from "../../components/ui/Checkbox";
 import SearchInput from "../../components/ui/SearchInput";
-import { Empty, ErrorText, Loading } from "../../components/ui/States";
+import { Empty, ErrorText, LoadError, Loading } from "../../components/ui/States";
 import { useToast } from "../../components/ui/Toast";
 import { useOpenTask } from "../../components/TaskPanel";
 import { useAccessChange } from "../../components/useAccessChange";
@@ -19,7 +20,7 @@ import { apiError, formatDateTime, formatRam, hostLabel, osLabel, relativeTime, 
 import { isSystemSoftware } from "../../lib/software";
 import { HOST_STATE_INFO, hostStateOf } from "../../lib/hostStates";
 import { downloadRdpFile, rdpAddress } from "../../lib/rdp";
-import { formatLinkSpeed, isSlowWiredLink, primaryAdapter } from "../../lib/hardware";
+import { diskTone, diskUsedPercent, formatLinkSpeed, fullestDisk, isSlowWiredLink, primaryAdapter } from "../../lib/hardware";
 import { DiskList } from "../../components/DiskUsage";
 import { ActivationSection } from "../../components/Activation";
 import { SshHealthSection } from "../../components/SshHealth";
@@ -29,6 +30,13 @@ import { sameCmidCount } from "../../lib/activation";
 import { effectiveCredential, EffectiveCredential, isSshAssignable } from "../../lib/credentials";
 
 type Tab = "overview" | "hardware" | "software" | "tasks" | "alerts";
+const HOST_TABS = [
+  { id: "overview", label: "Обзор" },
+  { id: "hardware", label: "Оборудование" },
+  { id: "software", label: "ПО" },
+  { id: "tasks", label: "Задачи" },
+  { id: "alerts", label: "Алерты" },
+] satisfies { id: Tab; label: string }[];
 
 interface Props {
   host: Host;
@@ -38,12 +46,16 @@ interface Props {
 
 export default function HostDrawer({ host, onClose, onRunPlaybook }: Props) {
   const [tab, setTab] = useState<Tab>("overview");
+  const tabsId = useId();
   const canEdit = useCanEdit();
   const queryClient = useQueryClient();
   const toast = useToast();
   const openTask = useOpenTask();
   const { tree } = useFleet();
   const alerts = useAlerts(host.id);
+  const disk = fullestDisk(host);
+  const diskUsage = disk ? diskUsedPercent(disk) : 0;
+  const latestAlert = alerts.data?.[0];
 
   async function diagnose() {
     try {
@@ -110,81 +122,68 @@ export default function HostDrawer({ host, onClose, onRunPlaybook }: Props) {
         </span>
       }
     >
-      <div className="mb-4 flex flex-wrap gap-2">
-        {canEdit && (
-          <>
-            <Button size="sm" onClick={() => onRunPlaybook([host.id])}>
-              <Play className="h-3.5 w-3.5" />
-              Запустить плейбук
-            </Button>
-            <Button size="sm" variant="secondary" onClick={diagnose}>
-              <Activity className="h-3.5 w-3.5" />
-              Диагностика
-            </Button>
-            {host.status !== "online" && (
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={wake}
-                disabled={!host.hw_mac_address}
-                title={
-                  host.hw_mac_address
-                    ? `Магический пакет на ${host.hw_mac_address} через включённый ПК той же подсети`
-                    : "MAC-адрес неизвестен: агент сообщит его после обновления до 2026.10.12 и следующего включения"
-                }
-              >
-                <Power className="h-3.5 w-3.5" />
-                Разбудить
-              </Button>
-            )}
-            <Button size="sm" variant="secondary" onClick={restart} disabled={host.status !== "online"} title={host.status === "online" ? "Перезагрузить этот ПК" : "Перезагрузка доступна только для ПК в сети"}>
-              <RotateCw className="h-3.5 w-3.5" />
-              Перезагрузить
-            </Button>
-            {host.has_agent && (
-              <Button size="sm" variant="secondary" onClick={updateAgent}>
-                <ArrowUpCircle className="h-3.5 w-3.5" />
-                Обновить агент
-              </Button>
-            )}
-          </>
+      <section aria-label="Состояние ПК" className="mb-4 space-y-3 border-b border-border pb-4">
+        <dl className="grid grid-cols-2 gap-3">
+          <Field label="Последний сигнал агента">{host.has_agent ? relativeTime(host.last_seen_at) : "Агент не установлен"}</Field>
+          <Field label="Проверка доступности">{relativeTime(host.last_checked_at)}</Field>
+        </dl>
+        {disk && diskTone(diskUsage) !== "ok" && (
+          <p className="text-sm text-amber-700 dark:text-amber-400">Диск {disk.name} заполнен на {diskUsage}%</p>
         )}
+        {alerts.isError ? (tab !== "alerts" && <LoadError onRetry={alerts.refetch} retrying={alerts.isFetching}>Не удалось загрузить алерты.</LoadError>) : latestAlert && (
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm">
+            <span className="min-w-0 break-words text-amber-700 dark:text-amber-400">
+              {ALERT_TYPE_LABELS[latestAlert.alert_type] ?? latestAlert.alert_type} · {relativeTime(latestAlert.created_at)}
+            </span>
+            <Button size="sm" variant="ghost" onClick={() => {
+              setTab("alerts");
+              document.getElementById(`${tabsId}-tab-alerts`)?.focus();
+            }}>Все алерты ({alerts.data?.length})</Button>
+          </div>
+        )}
+      </section>
+      <div className="mb-3 flex flex-wrap gap-2">
+        {canEdit && (
+          <Button size="sm" onClick={() => onRunPlaybook([host.id])}>
+            <Play className="h-3.5 w-3.5" />Запустить плейбук
+          </Button>
+        )}
+        {canEdit && <Button size="sm" variant="secondary" onClick={diagnose}><Activity className="h-3.5 w-3.5" />Диагностика</Button>}
         {rdpAddress(host) && (
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => downloadRdpFile(host)}
-            title={`Скачать файл подключения к ${rdpAddress(host)}: откроется окно «Подключение к удалённому рабочему столу», логин и пароль — свои`}
-          >
-            <Monitor className="h-3.5 w-3.5" />
-            RDP
+          <Button size="sm" variant="secondary" onClick={() => downloadRdpFile(host)} title="Скачать файл подключения к удалённому рабочему столу">
+            <Monitor className="h-3.5 w-3.5" />RDP
           </Button>
         )}
-        {canEdit && (
-          <Button size="sm" variant="ghost" className="ml-auto text-rose-600 dark:text-rose-400" onClick={remove}>
-            <Trash2 className="h-3.5 w-3.5" />
-            Удалить
-          </Button>
-        )}
+        {canEdit && <Menu
+          align="left"
+          trigger={({ open, toggle }) => <Button size="sm" variant="ghost" aria-expanded={open} aria-haspopup="menu" onClick={toggle}>
+            <MoreHorizontal className="h-4 w-4" />Действия
+          </Button>}
+          items={[
+            ...(host.status === "online" ? [] : [{ label: "Разбудить", icon: <Power className="h-4 w-4" />, onClick: wake, disabled: !host.hw_mac_address, hint: "Нужен MAC-адрес ПК" }]),
+            { label: "Перезагрузить", icon: <RotateCw className="h-4 w-4" />, onClick: restart, disabled: host.status !== "online", hint: "Только для ПК в сети" },
+            ...(host.has_agent ? [{ label: "Обновить агент", icon: <ArrowUpCircle className="h-4 w-4" />, onClick: updateAgent }] : []),
+            "divider",
+            { label: "Удалить из реестра", icon: <Trash2 className="h-4 w-4" />, danger: true, onClick: remove },
+          ]}
+        />}
       </div>
       <Tabs<Tab>
+        idPrefix={tabsId}
+        wrap
         value={tab}
         onChange={setTab}
-        tabs={[
-          { id: "overview", label: "Обзор" },
-          { id: "hardware", label: "Оборудование" },
-          { id: "software", label: "ПО" },
-          { id: "tasks", label: "Задачи" },
-          { id: "alerts", label: "Алерты", count: alerts.data?.length || undefined },
-        ]}
+        tabs={HOST_TABS.map((item) => item.id === "alerts" ? { ...item, count: alerts.data?.length || undefined } : item)}
       />
-      <div className="pt-4">
-        {tab === "overview" && <Overview host={host} />}
-        {tab === "hardware" && <WorkplaceTab host={host} />}
-        {tab === "software" && <HostSoftware hostId={host.id} />}
-        {tab === "tasks" && <HostTasks hostId={host.id} />}
-        {tab === "alerts" && <HostAlerts hostId={host.id} />}
-      </div>
+      {HOST_TABS.map(({ id }) => (
+        <div key={id} id={`${tabsId}-panel-${id}`} role="tabpanel" aria-labelledby={`${tabsId}-tab-${id}`} tabIndex={0} hidden={tab !== id} className="pt-4">
+          {tab === id && id === "overview" && <Overview host={host} />}
+          {tab === id && id === "hardware" && <WorkplaceTab host={host} />}
+          {tab === id && id === "software" && <HostSoftware hostId={host.id} />}
+          {tab === id && id === "tasks" && <HostTasks hostId={host.id} />}
+          {tab === id && id === "alerts" && <HostAlerts alerts={alerts} />}
+        </div>
+      ))}
     </Drawer>
   );
 }
@@ -265,8 +264,6 @@ function Overview({ host }: { host: Host }) {
     <div className="space-y-6">
       <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
         <Field label="ОС">{host.hw_os_caption || osLabel(host.os)}</Field>
-        <Field label="Последний heartbeat">{host.has_agent ? relativeTime(host.last_seen_at) : "нет агента"}</Field>
-        <Field label="Проверен">{relativeTime(host.last_checked_at)}</Field>
         <Field label="Агент">
           <AgentCell host={host} status={status} />
           {status === "outdated" && agentVersions?.available_version && <span className="text-xs text-subtle"> доступна {agentVersions.available_version}</span>}
@@ -430,7 +427,7 @@ function NetworkAdapters({ host }: { host: Host }) {
 }
 
 function HostSoftware({ hostId }: { hostId: string }) {
-  const { data, isLoading } = useHostSoftware(hostId);
+  const { data, isLoading, isError, isFetching, refetch } = useHostSoftware(hostId);
   const [search, setSearch] = useState("");
   const [hideSystem, setHideSystem] = useState(true);
   const items = useMemo(() => {
@@ -440,6 +437,7 @@ function HostSoftware({ hostId }: { hostId: string }) {
       .sort((a, b) => a.name.localeCompare(b.name, "ru"));
   }, [data, search, hideSystem]);
 
+  if (isError) return <LoadError onRetry={refetch} retrying={isFetching}>Не удалось загрузить список ПО.</LoadError>;
   if (isLoading) return <Loading />;
   return (
     <div className="space-y-3">
@@ -479,8 +477,9 @@ function HostSoftware({ hostId }: { hostId: string }) {
 }
 
 function HostTasks({ hostId }: { hostId: string }) {
-  const { data, isLoading } = useTasks({ host_id: hostId, limit: 50 }, false);
+  const { data, isLoading, isError, isFetching, refetch } = useTasks({ host_id: hostId, limit: 50 }, false);
   const openTask = useOpenTask();
+  if (isError) return <LoadError onRetry={refetch} retrying={isFetching}>Не удалось загрузить историю задач.</LoadError>;
   if (isLoading) return <Loading />;
   if (!data?.length) return <Empty>Задач с этим хостом не было</Empty>;
   return (
@@ -516,8 +515,9 @@ const ALERT_TYPE_LABELS: Record<string, string> = { hardware_changed: "Смен�
 // До определения смены железа сервером агент присылал только хэши отпечатков
 const isLegacyHardwareAlert = (a: AgentAlert) => a.alert_type === "hardware_changed" && a.message.startsWith("Hardware fingerprint changed");
 
-function HostAlerts({ hostId }: { hostId: string }) {
-  const { data, isLoading } = useAlerts(hostId);
+function HostAlerts({ alerts }: { alerts: ReturnType<typeof useAlerts> }) {
+  const { data, isLoading, isError, isFetching, refetch } = alerts;
+  if (isError) return <LoadError onRetry={refetch} retrying={isFetching}>Не удалось загрузить алерты.</LoadError>;
   if (isLoading) return <Loading />;
   if (!data?.length) return <Empty>Алертов от агента нет</Empty>;
   return (

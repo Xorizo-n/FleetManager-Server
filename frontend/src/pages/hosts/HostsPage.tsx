@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -28,7 +28,7 @@ import PageHeader from "../../components/ui/PageHeader";
 import Button from "../../components/ui/Button";
 import Menu from "../../components/ui/Menu";
 import Modal from "../../components/ui/Modal";
-import { Empty, Loading } from "../../components/ui/States";
+import { Empty, LoadError, Loading } from "../../components/ui/States";
 import { useToast } from "../../components/ui/Toast";
 import { useOpenTask } from "../../components/TaskPanel";
 import PlaybookRunForm from "../../components/PlaybookRunForm";
@@ -58,11 +58,12 @@ export default function HostsPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const openTask = useOpenTask();
-  const { hosts, tree, hostById, versionOf, agentVersions, isLoading } = useFleet();
+  const { hosts, tree, hostById, versionOf, agentVersions, isLoading, error, isFetching, refetch } = useFleet();
   const { filters, setFilter, reset } = useHostFilters();
   const [params, setParams] = useSearchParams();
   const [view, setView] = useState(readView);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [includedHidden, setIncludedHidden] = useState<string | null>(null);
   const [runFor, setRunFor] = useState<string[] | null>(null);
   const [groupFor, setGroupFor] = useState<string[] | null>(null);
   const [tagFor, setTagFor] = useState<string[] | null>(null);
@@ -79,11 +80,17 @@ export default function HostsPage() {
   const stats = useMemo(() => ({ online: hosts.filter((h) => h.status === "online").length }), [hosts]);
   const selectedHosts = useMemo(() => [...selected].map((id) => hostById.get(id)).filter((h): h is Host => !!h), [selected, hostById]);
   const visibleIds = useMemo(() => new Set(visible.map((h) => h.id)), [visible]);
-  const hiddenSelected = selectedHosts.filter((h) => !visibleIds.has(h.id)).length;
-  const withAgent = selectedHosts.filter((h) => h.has_agent).map((h) => h.id);
+  const hidden = selectedHosts.filter((h) => !visibleIds.has(h.id));
+  const hiddenKey = JSON.stringify([filters, hidden.map((h) => h.id).sort()]);
+  const includeHidden = hidden.length > 0 && includedHidden === hiddenKey;
+  useEffect(() => { setIncludedHidden(null); }, [hiddenKey]);
+  const filterUnavailable = !!filters.alerts && (alertSummary.isError || alertSummary.isPending);
+  const targets = error || filterUnavailable ? [] : includeHidden ? selectedHosts : selectedHosts.filter((h) => visibleIds.has(h.id));
+  const targetIds = targets.map((h) => h.id);
+  const withAgent = targets.filter((h) => h.has_agent).map((h) => h.id);
   // Будить имеет смысл выключенные ПК, чей MAC сообщил агент
-  const wakeable = selectedHosts.filter((h) => h.status !== "online" && h.hw_mac_address).map((h) => h.id);
-  const restartable = selectedHosts.filter((h) => h.status === "online").map((h) => h.id);
+  const wakeable = targets.filter((h) => h.status !== "online" && h.hw_mac_address).map((h) => h.id);
+  const restartable = targets.filter((h) => h.status === "online").map((h) => h.id);
 
   function updateView(next: Partial<typeof view>) {
     const merged = { ...view, ...next };
@@ -105,6 +112,7 @@ export default function HostsPage() {
   }
 
   function toggle(ids: string[]) {
+    setIncludedHidden(null);
     setSelected((prev) => {
       const next = new Set(prev);
       const all = ids.every((id) => next.has(id));
@@ -130,9 +138,9 @@ export default function HostsPage() {
   }
 
   async function bulkDelete() {
-    if (!window.confirm(`Удалить из реестра ${pcCount(selected.size)}? Агенты на этих ПК зарегистрируются заново при следующем heartbeat.`)) return;
+    if (!window.confirm(`Удалить из реестра ${pcCount(targetIds.length)}? Агенты на этих ПК зарегистрируются заново при следующем heartbeat.`)) return;
     try {
-      const { data } = await apiClient.post<{ deleted: number }>("/hosts/delete", { host_ids: [...selected] });
+      const { data } = await apiClient.post<{ deleted: number }>("/hosts/delete", { host_ids: targetIds });
       setSelected(new Set());
       queryClient.invalidateQueries({ queryKey: keys.hosts });
       toast({ tone: "success", message: `Удалено: ${pcCount(data.deleted)}` });
@@ -216,7 +224,7 @@ export default function HostsPage() {
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[15rem_minmax(0,1fr)]">
         <aside className="hidden xl:block">
           <div className="sticky top-[73px] max-h-[calc(100vh-90px)] overflow-y-auto pr-1">
-            {!isLoading && <GroupSidebar tree={tree} total={hosts.length} online={stats.online} value={filters.group} onChange={(id) => setFilter("group", id)} />}
+            {!isLoading && !error && <GroupSidebar tree={tree} total={hosts.length} online={stats.online} value={filters.group} onChange={(id) => setFilter("group", id)} />}
           </div>
         </aside>
 
@@ -234,9 +242,11 @@ export default function HostsPage() {
           />
 
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-            <span className="text-muted-foreground">
-              {visible.length === hosts.length ? `Все ${pcCount(hosts.length)}` : `Найдено ${pcCount(visible.length)} из ${hosts.length}`}
-              {filters.group && <> в группе <b className="font-medium text-foreground">{tree.pathOf(filters.group)}</b></>}
+            <span role="status" className="text-muted-foreground">
+              {error || filterUnavailable || isLoading ? null : <>
+                {visible.length === hosts.length ? `Все ${pcCount(hosts.length)}` : `Найдено ${pcCount(visible.length)} из ${hosts.length}`}
+                {filters.group && <> в группе <b className="font-medium text-foreground">{tree.pathOf(filters.group)}</b></>}
+              </>}
             </span>
             <div className="flex items-center gap-3">
               <label className="flex cursor-pointer items-center gap-2 text-muted-foreground">
@@ -259,7 +269,11 @@ export default function HostsPage() {
             </div>
           </div>
 
-          {isLoading ? (
+          {error ? (
+            <LoadError onRetry={refetch} retrying={isFetching}>Не удалось загрузить реестр ПК.</LoadError>
+          ) : filters.alerts && alertSummary.isError ? (
+            <LoadError onRetry={() => alertSummary.refetch()} retrying={alertSummary.isFetching}>Не удалось загрузить данные для фильтра «Алерты».</LoadError>
+          ) : isLoading || filterUnavailable ? (
             <Loading label="Загрузка реестра…" />
           ) : visible.length === 0 ? (
             <div className="rounded-xl border border-border bg-surface">
@@ -282,86 +296,100 @@ export default function HostsPage() {
         </div>
       </div>
 
-      {canEdit && selected.size > 0 && (
+      {canEdit && selectedHosts.length > 0 && (
         <div className="fixed inset-x-0 bottom-4 z-30 flex justify-center px-4">
-          <div className="flex max-w-full animate-slide-up flex-wrap items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2 shadow-panel-lg">
-            <span className="px-1 text-sm font-medium text-foreground">
-              Выбрано {pcCount(selected.size)}
-              {hiddenSelected > 0 && <span className="font-normal text-muted-foreground"> ({hiddenSelected} скрыто фильтром)</span>}
-            </span>
-            <Button size="sm" onClick={() => setRunFor([...selected])}>
-              <Play className="h-3.5 w-3.5" />
-              Запустить плейбук
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => startTask(apiClient.post("/software/scan", { host_ids: [...selected] }), "Не удалось запустить сканирование")}>
-              <ScanLine className="h-3.5 w-3.5" />
-              Сканировать ПО
-            </Button>
-            <Menu
-              direction="up"
-              trigger={({ toggle }) => (
-                <Button size="sm" variant="secondary" onClick={toggle}>
-                  Ещё
-                  <ChevronDown className="h-3.5 w-3.5" />
-                </Button>
+          <div className="w-fit min-w-0 max-w-full animate-slide-up space-y-2 rounded-xl border border-border bg-surface px-3 py-2 shadow-panel-lg">
+            <div className="px-1 text-sm">
+              <span role="status" className="font-medium">Цели действий — {pcCount(targetIds.length)}</span>
+              {hidden.length > 0 && (
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
+                  <span>В таблице {pcCount(selectedHosts.length - hidden.length)}, скрыто фильтром {pcCount(hidden.length)}</span>
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={includeHidden} onChange={(e) => setIncludedHidden(e.target.checked ? hiddenKey : null)} />
+                    Включить скрытые ПК
+                  </label>
+                  <Button size="sm" variant="ghost" onClick={() => {
+                    setSelected(new Set(selectedHosts.filter((h) => visibleIds.has(h.id)).map((h) => h.id)));
+                    setIncludedHidden(null);
+                  }}>Снять выбор со скрытых</Button>
+                </div>
               )}
-              items={[
-                {
-                  label: "Диагностика подключения",
-                  icon: <Activity className="h-4 w-4" />,
-                  disabled: selected.size !== 1,
-                  hint: "Диагностика запускается для одного хоста",
-                  onClick: () => startTask(apiClient.post(`/hosts/${[...selected][0]}/diagnostics`), "Не удалось запустить диагностику"),
-                },
-                {
-                  label: `Разбудить по сети (${wakeable.length})`,
-                  icon: <Power className="h-4 w-4" />,
-                  disabled: wakeable.length === 0,
-                  hint: "Только выключенные ПК с известным MAC-адресом",
-                  onClick: () => startTask(apiClient.post("/hosts/wake", { host_ids: wakeable }), "Не удалось запустить пробуждение"),
-                },
-                {
-                  label: `Перезагрузить (${restartable.length})`,
-                  icon: <RotateCw className="h-4 w-4" />,
-                  disabled: restartable.length === 0,
-                  hint: "Только выбранные ПК в сети",
-                  onClick: () => window.confirm(`Перезагрузить ${pcCount(restartable.length)}? Пользователи могут потерять несохранённые данные.`) &&
-                    startTask(apiClient.post("/hosts/restart", { host_ids: restartable }), "Не удалось запустить перезагрузку"),
-                },
-                {
-                  label: `Проверить версию агента (${withAgent.length})`,
-                  icon: <RefreshCw className="h-4 w-4" />,
-                  disabled: withAgent.length === 0,
-                  onClick: () => startTask(apiClient.post("/agent/version-scan", { host_ids: withAgent }), "Не удалось запустить проверку"),
-                },
-                {
-                  label: `Обновить агент (${withAgent.length})`,
-                  icon: <ArrowUpCircle className="h-4 w-4" />,
-                  disabled: withAgent.length === 0 || !agentVersions?.installer_present,
-                  hint: agentVersions?.installer_present ? undefined : "Установщик агента ещё не синхронизирован",
-                  onClick: () =>
-                    window.confirm(`Обновить агент до ${agentVersions?.available_version ?? "последней версии"} на ${pcCount(withAgent.length)}?`) &&
-                    startTask(apiClient.post("/agent/update", { host_ids: withAgent }), "Не удалось запустить обновление"),
-                },
-                { label: "Обои…", icon: <ImageIcon className="h-4 w-4" />, onClick: () => setWallpaperFor([...selected]) },
-                "divider",
-                { label: "Назначить группу…", icon: <FolderInput className="h-4 w-4" />, onClick: () => setGroupFor([...selected]) },
-                { label: "Тег…", icon: <Tag className="h-4 w-4" />, onClick: () => setTagFor([...selected]) },
-                { label: "Учётные данные SSH…", icon: <KeyRound className="h-4 w-4" />, onClick: () => setCredentialFor([...selected]) },
-                { label: "Удалить из реестра", icon: <Trash2 className="h-4 w-4" />, danger: true, onClick: bulkDelete },
-              ]}
-            />
-            <button className="btn-ghost btn-sm" onClick={() => setSelected(new Set())} aria-label="Снять выбор">
-              <X className="h-4 w-4" />
-            </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" disabled={!targetIds.length} onClick={() => setRunFor(targetIds)}>
+                <Play className="h-3.5 w-3.5" />
+                Запустить плейбук
+              </Button>
+              <Button size="sm" variant="secondary" disabled={!targetIds.length} onClick={() => startTask(apiClient.post("/software/scan", { host_ids: targetIds }), "Не удалось запустить сканирование")}>
+                <ScanLine className="h-3.5 w-3.5" />
+                Сканировать ПО
+              </Button>
+              {targetIds.length > 0 && <Menu
+                direction="up"
+                trigger={({ toggle }) => (
+                  <Button size="sm" variant="secondary" onClick={toggle}>
+                    Ещё
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+                items={[
+                  {
+                    label: "Диагностика подключения",
+                    icon: <Activity className="h-4 w-4" />,
+                    disabled: targetIds.length !== 1,
+                    hint: "Диагностика запускается для одного хоста",
+                    onClick: () => startTask(apiClient.post(`/hosts/${targetIds[0]}/diagnostics`), "Не удалось запустить диагностику"),
+                  },
+                  {
+                    label: `Разбудить по сети (${wakeable.length})`,
+                    icon: <Power className="h-4 w-4" />,
+                    disabled: wakeable.length === 0,
+                    hint: "Только выключенные ПК с известным MAC-адресом",
+                    onClick: () => startTask(apiClient.post("/hosts/wake", { host_ids: wakeable }), "Не удалось запустить пробуждение"),
+                  },
+                  {
+                    label: `Перезагрузить (${restartable.length})`,
+                    icon: <RotateCw className="h-4 w-4" />,
+                    disabled: restartable.length === 0,
+                    hint: "Только выбранные ПК в сети",
+                    onClick: () => window.confirm(`Перезагрузить ${pcCount(restartable.length)}? Пользователи могут потерять несохранённые данные.`) &&
+                      startTask(apiClient.post("/hosts/restart", { host_ids: restartable }), "Не удалось запустить перезагрузку"),
+                  },
+                  {
+                    label: `Проверить версию агента (${withAgent.length})`,
+                    icon: <RefreshCw className="h-4 w-4" />,
+                    disabled: withAgent.length === 0,
+                    onClick: () => startTask(apiClient.post("/agent/version-scan", { host_ids: withAgent }), "Не удалось запустить проверку"),
+                  },
+                  {
+                    label: `Обновить агент (${withAgent.length})`,
+                    icon: <ArrowUpCircle className="h-4 w-4" />,
+                    disabled: withAgent.length === 0 || !agentVersions?.installer_present,
+                    hint: agentVersions?.installer_present ? undefined : "Установщик агента ещё не синхронизирован",
+                    onClick: () =>
+                      window.confirm(`Обновить агент до ${agentVersions?.available_version ?? "последней версии"} на ${pcCount(withAgent.length)}?`) &&
+                      startTask(apiClient.post("/agent/update", { host_ids: withAgent }), "Не удалось запустить обновление"),
+                  },
+                  { label: "Обои…", icon: <ImageIcon className="h-4 w-4" />, onClick: () => setWallpaperFor(targetIds) },
+                  "divider",
+                  { label: "Назначить группу…", icon: <FolderInput className="h-4 w-4" />, onClick: () => setGroupFor(targetIds) },
+                  { label: "Тег…", icon: <Tag className="h-4 w-4" />, onClick: () => setTagFor(targetIds) },
+                  { label: "Учётные данные SSH…", icon: <KeyRound className="h-4 w-4" />, onClick: () => setCredentialFor(targetIds) },
+                  { label: "Удалить из реестра", icon: <Trash2 className="h-4 w-4" />, danger: true, onClick: bulkDelete },
+                ]}
+              />}
+              <button className="btn-ghost btn-sm" onClick={() => setSelected(new Set())} aria-label="Снять выбор">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {openHost && <HostDrawer host={openHost} onClose={() => setHostParam(null)} onRunPlaybook={(ids) => setRunFor(ids)} />}
+      {openHost && <HostDrawer key={openHost.id} host={openHost} onClose={() => setHostParam(null)} onRunPlaybook={(ids) => setRunFor(ids)} />}
       {runFor && (
-        <Modal open onClose={() => setRunFor(null)} title="Запуск плейбука" size="lg">
-          <PlaybookRunForm initialHostIds={runFor} onDone={() => setRunFor(null)} pickerHeight={280} />
+        <Modal open onClose={() => setRunFor(null)} title="Запуск плейбука" size="md">
+          <PlaybookRunForm initialHostIds={runFor} fixedHostTargets onDone={() => setRunFor(null)} pickerHeight={280} />
         </Modal>
       )}
       {groupFor && <GroupDialog hostIds={groupFor} onClose={() => setGroupFor(null)} onDone={() => { setGroupFor(null); setSelected(new Set()); }} />}

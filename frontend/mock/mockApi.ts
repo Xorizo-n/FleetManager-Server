@@ -711,7 +711,8 @@ route("DELETE", "/wallpapers/{id}", (ctx, p) => {
 route("POST", "/wallpapers/assign", (ctx) => {
   editor(ctx);
   const b = ctx.body;
-  if (b.apply_at && new Date(b.apply_at).getTime() > Date.now()) {
+  if (b.apply_at) {
+    if (new Date(b.apply_at).getTime() <= Date.now()) throw new HttpError(422, "Укажите время смены в будущем");
     const s = { id: uuid(), apply_at: b.apply_at, host_ids: b.host_ids, group_ids: b.group_ids, desktop: b.desktop ?? null, lock_screen: b.lock_screen ?? null,
       comment: b.comment ?? null, status: "pending" as const, result: null, created_at: now().toISOString(), applied_at: null, created_by_name: ctx.user!.username };
     wallpaperSchedules.unshift(s);
