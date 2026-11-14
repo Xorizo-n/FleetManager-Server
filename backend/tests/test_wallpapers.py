@@ -1,17 +1,39 @@
 import io
 import unittest
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from models.host import Host, HostGroup
 from models.wallpaper import DESKTOP, LOCK_SCREEN, Wallpaper, WallpaperAssignment
 from schemas.agent import AgentHeartbeatRequest
 from schemas.wallpaper import WallpaperAssignRequest
+from routers.wallpapers import assign_wallpapers
 from services.wallpapers import WallpaperError, effective_wallpapers, inspect_image, make_thumbnail, perceptual_hash, wallpaper_target
 
 SHA = "a" * 64
+
+
+class AssignWallpaperTests(unittest.TestCase):
+    def test_expired_schedule_is_rejected_without_applying(self):
+        host_id = uuid.uuid4()
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value = [host_id]
+        payload = WallpaperAssignRequest(
+            host_ids=[host_id], desktop="clear", apply_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+        )
+
+        with patch("routers.wallpapers.apply_assignment") as apply, self.assertRaises(HTTPException) as caught:
+            assign_wallpapers(payload, MagicMock(), db, MagicMock())
+
+        self.assertEqual(caught.exception.status_code, 422)
+        self.assertEqual(caught.exception.detail[0]["loc"], ["body", "apply_at"])
+        apply.assert_not_called()
+        db.add.assert_not_called()
+        db.commit.assert_not_called()
 
 
 def image_bytes(fmt: str, size=(1920, 1080)) -> bytes:
