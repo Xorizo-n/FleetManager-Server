@@ -211,7 +211,7 @@ export default function Ldap() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold text-foreground">Вход доменной учётной записью</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <p className="mt-1 max-w-[68ch] text-pretty text-sm text-muted-foreground">
               {form.source === "env"
                 ? "Сейчас действуют значения из .env на сервере. После сохранения здесь действуют эти настройки."
                 : `Сохранено ${saved.data?.updated_at ? formatDateTime(saved.data.updated_at) : ""}. Локальные учётные записи работают всегда.`}
@@ -239,7 +239,7 @@ export default function Ldap() {
       <section className="surface-panel space-y-4">
         <div>
           <h2 className="text-sm font-semibold text-foreground">Служебная учётная запись</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-1 max-w-[68ch] text-pretty text-sm text-muted-foreground">
             Нужна для поиска групп на этой странице и для перепроверки доступа: с ней отключённый в домене или исключённый из групп
             пользователь теряет доступ в течение 15 минут, без неё — когда истечёт его сессия (до 7 дней). Достаточно прав на чтение.
           </p>
@@ -283,7 +283,7 @@ export default function Ldap() {
       <section className="surface-panel space-y-4">
         <div>
           <h2 className="text-sm font-semibold text-foreground">Группы доступа</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-1 max-w-[68ch] text-pretty text-sm text-muted-foreground">
             Войти могут только участники этих групп (вложенные группы учитываются). Если пользователь в нескольких, действует старшая роль.
           </p>
         </div>
@@ -336,7 +336,7 @@ export default function Ldap() {
       <section className="surface-panel space-y-3">
         <div>
           <h2 className="text-sm font-semibold text-foreground">Проверка</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Проверяет настройки с этой страницы до сохранения: служебную запись, группы и роль пользователя. Пароль пользователя не нужен.</p>
+          <p className="mt-1 max-w-[68ch] text-pretty text-sm text-muted-foreground">Проверяет настройки с этой страницы до сохранения: служебную запись, группы и роль пользователя. Пароль пользователя не нужен.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <input value={checkUser} onChange={(e) => setCheckUser(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); check(); } }} placeholder="Логин, почта или имя (необязательно)" className="input-base max-w-xs py-1.5" aria-label="Логин для проверки" />

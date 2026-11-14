@@ -201,11 +201,11 @@ export default function Wallpapers() {
               const groups = used.filter((a) => a.group_id).length;
               const own = used.length - groups;
               return (
-                <div key={w.id} className="overflow-hidden rounded-xl border border-border bg-surface">
-                  <button onClick={() => openFull(w)} className="block w-full" title="Открыть в полном размере">
+                <div key={w.id} className="min-w-0 border-b border-border pb-3">
+                  <button onClick={() => openFull(w)} className="block w-full overflow-hidden rounded-md" title="Открыть в полном размере">
                     <img src={`data:image/jpeg;base64,${w.thumbnail_base64}`} alt="" className="aspect-video w-full object-cover" />
                   </button>
-                  <div className="space-y-1 p-3">
+                  <div className="space-y-1 pt-2">
                     <div className="truncate text-sm font-medium text-foreground" title={w.original_name ?? undefined}>{w.name}</div>
                     <div className="text-xs text-muted-foreground">
                       {w.width}×{w.height} · {formatSize(w.size_bytes)}
@@ -267,7 +267,7 @@ export default function Wallpapers() {
                   {s.result && s.status !== "pending" && <span className="text-subtle"> · {s.result}</span>}
                 </span>
                 <span className="text-xs text-subtle">{s.created_by_name}</span>
-                <Badge status={s.status} tone={SCHEDULE_STATUS[s.status].tone}>{SCHEDULE_STATUS[s.status].label}</Badge>
+                <Badge status={s.status} tone={SCHEDULE_STATUS[s.status].tone} staticIndicator>{SCHEDULE_STATUS[s.status].label}</Badge>
                 {canEdit && s.status === "pending" && (
                   <button className="btn-ghost btn-sm" onClick={() => cancel(s)} title="Отменить смену" aria-label="Отменить смену">
                     <X className="h-3.5 w-3.5" />
@@ -299,7 +299,7 @@ function AssignedSlot({ label, assignment, wallpaper, onRemove }: { label: strin
           {wallpaper ? (
             <img src={`data:image/jpeg;base64,${wallpaper.thumbnail_base64}`} alt="" className="aspect-video w-full rounded-md border border-border object-cover" title={wallpaper.name} />
           ) : (
-            <div className="aspect-video w-full rounded-md border border-dashed border-border" />
+            <div className="aspect-video w-full rounded-md bg-muted/30" />
           )}
           {onRemove && (
             <button onClick={() => onRemove(assignment)} className="absolute right-1 top-1 rounded-full bg-black/60 p-0.5 text-white hover:bg-black/80" title="Снять назначение" aria-label={`Снять: ${label}`}>
@@ -310,7 +310,7 @@ function AssignedSlot({ label, assignment, wallpaper, onRemove }: { label: strin
         </div>
       ) : (
         <>
-          <div className="flex aspect-video w-full items-center justify-center rounded-md border border-dashed border-border text-xs text-subtle">не назначено</div>
+          <div className="flex aspect-video w-full items-center justify-center rounded-md bg-muted/30 text-xs text-subtle">не назначено</div>
           <div className="mt-1 h-4" />
         </>
       )}

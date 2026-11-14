@@ -107,7 +107,7 @@ function OffsiteCell({ offsite, now }: { offsite: OffsiteStatus | undefined; now
           {when}
         </span>
       </div>
-      <div className={`truncate text-[11px] ${problem ? SEV.serious.text : "text-muted-foreground"}`}>{problem ? problem.title : checked}</div>
+      <div className={`truncate text-xs ${problem ? SEV.serious.text : "text-muted-foreground"}`}>{problem ? problem.title : checked}</div>
     </div>
   );
 }
@@ -410,7 +410,7 @@ function Kpi({ icon, label, value, suffix, sub, tone, meter }: {
         <span className={`text-3xl font-bold leading-none tabular-nums ${KPI_TONE[tone]}`}>{value}</span>
         {suffix && <span className="text-sm tabular-nums text-muted-foreground">{suffix}</span>}
       </div>
-      <div className="mt-1 truncate text-[11px] text-muted-foreground" title={sub}>{sub}</div>
+      <div className="mt-1 truncate text-xs text-muted-foreground" title={sub}>{sub}</div>
       {meter !== undefined && (
         <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted">
           <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${meter}%` }} />
@@ -503,7 +503,7 @@ function BackupCell({ backup, now }: { backup: BackupStatus | undefined; now: nu
           {when}
         </span>
       </div>
-      <div className={`truncate text-[11px] ${problem ? SEV.serious.text : "text-muted-foreground"}`}>{detail}</div>
+      <div className={`truncate text-xs ${problem ? SEV.serious.text : "text-muted-foreground"}`}>{detail}</div>
     </div>
   );
 }
@@ -531,7 +531,7 @@ function MetricCell({ icon, label, value, pctValue, detail, spark, sparkClass }:
           <Sparkline data={spark} className={sparkClass} />
         </div>
       )}
-      <div className={`truncate text-[11px] text-muted-foreground ${SHORT_HIDE}`} title={detail}>{detail}</div>
+      <div className={`truncate text-xs text-muted-foreground ${SHORT_HIDE}`} title={detail}>{detail}</div>
     </div>
   );
 }
@@ -699,7 +699,7 @@ export default function Monitoring() {
     overall.sev === "good"
       ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
       : overall.sev === "critical"
-        ? "bg-rose-600 text-white"
+        ? "bg-rose-700 text-white"
         : SEV[overall.sev].chip;
 
   const [problemsRef, problemsCap] = useRowCapacity<HTMLDivElement>(PROBLEM_ROW_PX);
@@ -723,7 +723,7 @@ export default function Monitoring() {
           <span className={`inline-flex min-w-0 items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold ${overallClass} ${overall.sev === "critical" ? "animate-pulse" : ""}`}>
             <OverallIcon className="h-4 w-4 shrink-0" />
             <span className="shrink-0">{overall.title}</span>
-            <span className="truncate font-normal opacity-90">· {overall.reason}</span>
+            <span className="truncate font-normal">· {overall.reason}</span>
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-4">
@@ -782,9 +782,9 @@ export default function Monitoring() {
                 <h2 className="text-sm font-semibold text-foreground">Аудитории с отклонениями</h2>
                 {s && <span className="text-xs tabular-nums text-muted-foreground">{deviations.length} из {s.buildings.reduce((n, b) => n + b.floors.reduce((k, f) => k + f.rooms.length, 0), 0)}</span>}
               </div>
-              <span className="text-[11px] text-muted-foreground">часть ПК выключена при работающих остальных · алерты · заполненный диск</span>
+              <span className="text-xs text-muted-foreground">часть ПК выключена при работающих остальных · алерты · заполненный диск</span>
             </div>
-            <div className="grid shrink-0 grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.4fr)_4.5rem_3.5rem_3rem] gap-3 border-b border-border px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            <div className="grid shrink-0 grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.4fr)_4.5rem_3.5rem_3rem] gap-3 border-b border-border px-2 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
               <span>Аудитория</span>
               <span>Где</span>
               <span>В сети</span>
@@ -858,7 +858,7 @@ export default function Monitoring() {
                 <h2 className="text-sm font-semibold text-foreground">Проблемы</h2>
                 {(["critical", "serious", "warning", "info"] as Sev[]).map((k) =>
                   sevCounts[k] ? (
-                    <span key={k} className={`rounded-md px-1.5 py-0.5 text-[11px] font-semibold tabular-nums ${SEV[k].chip}`} title={SEV[k].label}>
+                    <span key={k} className={`rounded-md px-1.5 py-0.5 text-xs font-semibold tabular-nums ${SEV[k].chip}`} title={SEV[k].label}>
                       {sevCounts[k]}
                     </span>
                   ) : null,
@@ -915,12 +915,12 @@ export default function Monitoring() {
               <Activity className="h-4 w-4 text-blue-600 dark:text-blue-400" />
               <h2 className="text-sm font-semibold text-foreground">Задачи</h2>
               {s && s.tasks_running > 0 && (
-                <span className="rounded-md bg-blue-500/15 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-blue-700 dark:text-blue-300">
+                <span className="rounded-md bg-blue-500/15 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-blue-700 dark:text-blue-300">
                   идёт {s.tasks_running}
                 </span>
               )}
               {s && s.tasks_failed_24h > 0 && (
-                <span className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-rose-700 dark:text-rose-300">
+                <span className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-rose-700 dark:text-rose-300">
                   ошибок за сутки {s.tasks_failed_24h}
                 </span>
               )}

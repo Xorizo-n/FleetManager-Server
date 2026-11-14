@@ -44,7 +44,7 @@ export default function Automation() {
         ]}
       />
       {tab === "run" && (
-        <div className="surface-panel max-w-4xl">
+        <div className="max-w-4xl py-2">
           <PlaybookRunForm
             key={`${params.get("mode") ?? "now"}:${params.get("playbook") ?? ""}`}
             initialMode={params.get("mode") === "schedule" ? "schedule" : "now"}

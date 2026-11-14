@@ -26,7 +26,7 @@ export default function WallpaperThumb({ sha256, path, thumbnails, className = "
       {thumb ? (
         <img src={thumb.src} alt="" className="aspect-video w-full rounded-md border border-border object-cover" />
       ) : (
-        <div className="flex aspect-video w-full flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border bg-muted/40 text-xs text-subtle">
+        <div className="flex aspect-video w-full flex-col items-center justify-center gap-1 rounded-md bg-muted/30 text-xs text-subtle">
           <ImageOff className="h-4 w-4" />
           {sha256 ? "миниатюра придёт с агентом" : path ? "файл не найден" : "не задано"}
         </div>

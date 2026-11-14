@@ -103,7 +103,7 @@ export default function DistributionStatus({ canManage, onSynced }: { canManage:
             </p>
           )}
           {state.enabled && (
-            <p className="text-xs text-subtle">
+            <p className="max-w-[68ch] text-pretty text-xs text-subtle">
               ПК скачивают установщики оттуда по HTTP; файл, которого там ещё нет, копируется с сервера по SSH.{" "}
               {state.syncs_here
                 ? "Синхронизация — после загрузки файла и каждые 15 минут."
