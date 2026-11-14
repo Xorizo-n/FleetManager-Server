@@ -267,7 +267,9 @@ def _earlier_in_chain(db, group: TaskRun) -> set[uuid.UUID]:
     return earlier
 
 
-def release_waiting_tasks(db, host_id: uuid.UUID, reason: str = "heartbeat") -> int:
+def release_waiting_tasks(
+    db, host_id: uuid.UUID, reason: str = "heartbeat", *, agent_updates_only: bool = False,
+) -> int:
     """ПК появился в сети: в запусках, где он ждёт, становится ready. Возвращает число запусков.
 
     В цепочке плейбуков ПК освобождает только первый запуск, который его ещё держит:
@@ -276,11 +278,13 @@ def release_waiting_tasks(db, host_id: uuid.UUID, reason: str = "heartbeat") -> 
     """
     host = str(host_id)
     state = cast(TaskRun.host_states, JSONB)[host].astext
-    groups = db.execute(
+    query = (
         select(TaskRun)
         .where(TaskRun.grouped.is_(True), TaskRun.finished_at.is_(None), state.in_([WAITING, READY]))
-        .with_for_update()
-    ).scalars().all()
+    )
+    if agent_updates_only:
+        query = query.where(TaskRun.task_type == TaskType.agent_update)
+    groups = db.execute(query.with_for_update()).scalars().all()
     if not groups:
         db.commit()
         return 0
