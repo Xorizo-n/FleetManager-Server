@@ -34,6 +34,7 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="UTC",
     enable_utc=True,
+    worker_prefetch_multiplier=1,
     beat_schedule={
         "dispatch-scheduled-playbooks": {
             "task": "services.ansible_runner.dispatch_scheduled_playbooks",
@@ -50,6 +51,7 @@ celery_app.conf.update(
         "ping-hosts": {
             "task": "services.host_health.ping_hosts",
             "schedule": 300.0,
+            "options": {"expires": 240},
         },
         # Отменяет задачи, чей ПК так и не появился в сети за waiting_task_ttl_days
         "expire-waiting-tasks": {
