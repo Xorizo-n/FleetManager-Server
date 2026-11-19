@@ -153,6 +153,7 @@ function SchedulesTab() {
                 </td>
                 <td className="max-w-[260px]">
                   <TargetsSummary tree={tree} hosts={hosts} schedule={s} />
+                  {s.only_online && <div className="text-xs text-muted-foreground">Только онлайн при запуске</div>}
                 </td>
                 <td>
                   <div className="text-foreground">{describeCron(s.cron_expression) ?? "по cron"}</div>
@@ -191,6 +192,7 @@ function ScheduleEditor({ schedule, tree, onClose }: { schedule: Schedule; tree:
   const [selection, setSelection] = useState(() => scheduleHostIds(tree, schedule));
   const [tagIds, setTagIds] = useState(() => new Set(schedule.host_tag_ids ?? []));
   const [cron, setCron] = useState(schedule.cron_expression);
+  const [onlyOnline, setOnlyOnline] = useState(schedule.only_online ?? false);
   const [vars, setVars] = useState<VarPair[]>(() => objectToVars(schedule.extra_vars));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -207,6 +209,7 @@ function ScheduleEditor({ schedule, tree, onClose }: { schedule: Schedule; tree:
         host_ids: hostIds,
         host_tag_ids: [...tagIds],
         extra_vars: varsToObject(vars),
+        only_online: onlyOnline,
       });
       queryClient.invalidateQueries({ queryKey: keys.schedules });
       toast({ tone: "success", message: "Расписание сохранено" });
@@ -236,12 +239,14 @@ function ScheduleEditor({ schedule, tree, onClose }: { schedule: Schedule; tree:
         <div>
           <label className="field-label">Когда</label>
           <CronEditor value={cron} onChange={setCron} />
+          <Switch checked={onlyOnline} onChange={setOnlyOnline} label="Только онлайн при запуске" />
+          {onlyOnline && <p className="text-xs text-subtle">При каждом срабатывании проверяется доступность SSH; недоступные ПК пропускаются.</p>}
         </div>
         <div>
           <label className="field-label">Хосты</label>
           <div className="space-y-2">
             <TagTargets value={tagIds} onChange={setTagIds} hosts={hosts} />
-            <HostPicker value={selection} onChange={setSelection} height={300} />
+            <HostPicker value={selection} onChange={setSelection} height={300} showOnlineFilter={false} />
           </div>
         </div>
         <div>

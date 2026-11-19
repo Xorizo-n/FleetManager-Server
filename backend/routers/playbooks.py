@@ -354,6 +354,7 @@ def create_schedule(
         extra_vars=payload.extra_vars,
         cron_expression=payload.cron_expression,
         enabled=payload.enabled,
+        only_online=payload.only_online,
         owner_id=user.id,
     )
     db.add(schedule)
@@ -387,7 +388,7 @@ def update_schedule(
         schedule.host_group_id = None  # цели теперь целиком в host_group_ids
         schedule.host_ids = [str(h) for h in host_ids]
         schedule.host_tag_ids = list(dict.fromkeys(str(t) for t in tag_ids))
-    for field in ("playbook_name", "extra_vars", "cron_expression", "enabled"):
+    for field in ("playbook_name", "extra_vars", "cron_expression", "enabled", "only_online"):
         if changes.get(field) is not None:
             setattr(schedule, field, changes[field])
     # Изменивший расписание становится его владельцем: плейбук пойдёт от его имени

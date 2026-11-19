@@ -1,8 +1,10 @@
 import logging
 import os
 import re
+import socket
 import tempfile
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from types import SimpleNamespace
@@ -17,6 +19,7 @@ from models.task import TaskRun, TaskStatus, TaskType
 from services.crypto import decrypt_secret
 from services.ssh_health import host_keys
 from services.inventory_generator import build_inventory_dict, host_group_credential, resolve_target_host_ids
+from services.host_target import resolve_host_target
 from services.schedule_targets import schedule_group_ids, schedule_tag_ids
 from services import local_admin, run_as
 
@@ -303,6 +306,29 @@ def run_playbook_task(self, task_run_id: str):
         db.close()
 
 
+def schedule_host_reachable(address: str, port: int) -> bool:
+    """Check the actual SSH port rather than relying on a possibly stale status."""
+    try:
+        with socket.create_connection((address, port), timeout=2):
+            return True
+    except OSError:
+        return False
+
+
+def schedule_online_hosts(db, host_ids: list[str]) -> list[str]:
+    hosts = db.query(Host).filter(Host.id.in_([uuid.UUID(host_id) for host_id in host_ids])).all()
+    candidates = []
+    for host in hosts:
+        try:
+            candidates.append((str(host.id), resolve_host_target(host.hostname, host.ip_address), host.ssh_port or settings.ansible_ssh_port))
+        except ValueError:
+            continue
+    with ThreadPoolExecutor(max_workers=64) as pool:
+        reachable = pool.map(lambda target: schedule_host_reachable(target[1], target[2]), candidates)
+        online = {target[0] for target, ok in zip(candidates, reachable) if ok}
+    return [host_id for host_id in host_ids if host_id in online]
+
+
 def schedule_is_due(cron_expression: str, now: datetime) -> bool:
     """Должно ли расписание сработать за последнюю минуту.
 
@@ -328,9 +354,11 @@ def dispatch_scheduled_playbooks():
                 continue  # ничего не должно было сработать за последнюю минуту
 
             host_ids = resolve_target_host_ids(db, schedule.host_ids or [], schedule_group_ids(schedule), schedule_tag_ids(schedule))
+            if schedule.only_online and host_ids:
+                host_ids = schedule_online_hosts(db, host_ids)
             if not host_ids:
                 # Пустой список хостов inventory понимает как «все ПК»: группа или тег опустели — пропускаем
-                logger.warning("Schedule %s: no hosts left in its targets, skipped", schedule.id)
+                logger.info("Schedule %s: no matching hosts available, skipped", schedule.id)
                 continue
 
             task_run = TaskRun(

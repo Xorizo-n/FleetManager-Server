@@ -79,6 +79,7 @@ class PlaybookScheduleCreate(BaseModel):
     extra_vars: dict = {}
     cron_expression: str
     enabled: bool = True
+    only_online: bool = False
 
     @field_validator("cron_expression")
     @classmethod
@@ -94,6 +95,7 @@ class PlaybookScheduleUpdate(BaseModel):
     extra_vars: dict | None = None
     cron_expression: str | None = None
     enabled: bool | None = None
+    only_online: bool | None = None
 
     @field_validator("cron_expression")
     @classmethod
@@ -114,6 +116,7 @@ class PlaybookScheduleOut(BaseModel):
     extra_vars: dict = {}
     cron_expression: str
     enabled: bool
+    only_online: bool = False
     created_at: datetime
     next_run_at: datetime | None = None
     owner_id: uuid.UUID | None = None
@@ -121,6 +124,11 @@ class PlaybookScheduleOut(BaseModel):
     owner_domain: bool = False
     playbook_title: str | None = None
     playbook_description: str | None = None
+
+    @field_validator("only_online", mode="before")
+    @classmethod
+    def none_as_false(cls, value):
+        return value if value is not None else False
 
     @field_validator("host_group_ids", "host_ids", "host_tag_ids", mode="before")
     @classmethod

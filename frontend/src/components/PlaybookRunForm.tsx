@@ -71,6 +71,7 @@ export default function PlaybookRunForm({ initialHostIds = [], fixedHostTargets 
   const [cron, setCron] = useState(DEFAULT_CRON);
   // Выключенным ПК — общая ожидающая задача: запустится для каждого, когда он появится в сети
   const [deferOffline, setDeferOffline] = useState(true);
+  const [onlyOnline, setOnlyOnline] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -131,6 +132,7 @@ export default function PlaybookRunForm({ initialHostIds = [], fixedHostTargets 
           extra_vars: varsToObject(vars),
           cron_expression: cron,
           enabled: true,
+          only_online: onlyOnline,
         });
         rememberPlaybook(chosen[0].key);
         queryClient.invalidateQueries({ queryKey: keys.schedules });
@@ -235,7 +237,7 @@ export default function PlaybookRunForm({ initialHostIds = [], fixedHostTargets 
       <section className="space-y-2">
         <label className="field-label mb-0">2. Хосты</label>
         <TagTargets value={tagIds} onChange={setTagIds} hosts={hosts} />
-        <HostPicker value={selection} onChange={setSelection} height={pickerHeight} />
+        <HostPicker value={selection} onChange={setSelection} height={pickerHeight} showOnlineFilter={mode !== "schedule"} />
         {tagIds.size > 0 && (
           <p className="text-xs text-muted-foreground">
             {tagIds.size > 1 ? "Теги" : "Тег"} {[...tagIds].map((id) => `«${tagById.get(id)?.name ?? "…"}»`).join(", ")}: {pcCount(tagged.length)}
@@ -255,7 +257,7 @@ export default function PlaybookRunForm({ initialHostIds = [], fixedHostTargets 
             </p>
           </div>
         )}
-        {offline > 0 && mode === "schedule" && (
+        {offline > 0 && mode === "schedule" && !onlyOnline && (
           <p className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
             <AlertTriangle className="h-3.5 w-3.5" />
             {offline} из {pcCount(targets.size)} сейчас не в сети — если при срабатывании расписания они будут выключены, запуск на них завершится ошибкой
@@ -291,6 +293,8 @@ export default function PlaybookRunForm({ initialHostIds = [], fixedHostTargets 
         {mode === "schedule" && (
           <div className="space-y-2">
             <CronEditor value={cron} onChange={setCron} />
+            <Switch checked={onlyOnline} onChange={setOnlyOnline} label="Только онлайн при запуске" />
+            {onlyOnline && <p className="text-xs text-subtle">При каждом срабатывании проверяется доступность SSH; недоступные ПК пропускаются.</p>}
             <p className="text-xs text-subtle">{fixedHostTargets
               ? "Расписание запоминает выбранные ПК. Если добавлены теги, их состав определяется при каждом запуске."
               : "Выбранные группы и теги раскрываются при каждом запуске: новые ПК в аудитории или с тегом попадут в расписание сами."}</p>

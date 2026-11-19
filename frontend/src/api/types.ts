@@ -375,6 +375,7 @@ export interface Schedule {
   extra_vars: Record<string, string>;
   cron_expression: string;
   enabled: boolean;
+  only_online: boolean;
   created_at: string;
   next_run_at: string | null;
   /** Владелец — создал или последним изменил: плейбук идёт от его имени */
