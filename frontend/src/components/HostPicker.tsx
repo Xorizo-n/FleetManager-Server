@@ -16,6 +16,7 @@ interface HostPickerProps {
   value: Set<string>;
   onChange: (next: Set<string>) => void;
   height?: number;
+  showOnlineFilter?: boolean;
 }
 
 /**
@@ -23,10 +24,11 @@ interface HostPickerProps {
  * аудитория или отдельные ПК), поиск и фильтр «только online». Список
  * виртуализован — рассчитан на тысячи ПК.
  */
-export default function HostPicker({ value, onChange, height = 360 }: HostPickerProps) {
+export default function HostPicker({ value, onChange, height = 360, showOnlineFilter = true }: HostPickerProps) {
   const { tree, hostById, isLoading } = useFleet();
   const [search, setSearch] = useState("");
-  const [onlineOnly, setOnlineOnly] = useState(false);
+  const [onlineOnlyFilter, setOnlineOnly] = useState(false);
+  const onlineOnly = showOnlineFilter && onlineOnlyFilter;
   // Ветки с уже выбранными ПК раскрыты сразу (запуск из реестра хостов)
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     const open = new Set<string>();
@@ -101,10 +103,10 @@ export default function HostPicker({ value, onChange, height = 360 }: HostPicker
     <div className="overflow-hidden rounded-lg border border-border">
       <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/30 p-2">
         <SearchInput value={search} onChange={setSearch} placeholder="Имя ПК, IP или группа" className="min-w-[200px] flex-1" />
-        <label className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-muted-foreground hover:text-foreground">
+        {showOnlineFilter && <label className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-muted-foreground hover:text-foreground">
           <Checkbox checked={onlineOnly} onChange={(e) => setOnlineOnly(e.target.checked)} />
           Только online
-        </label>
+        </label>}
         {filtering && visibleHostIds.length > 0 && (
           <button type="button" className="btn-ghost btn-sm" onClick={() => toggleIds(visibleHostIds)}>
             {visibleHostIds.every((id) => value.has(id)) ? "Снять найденные" : `Выбрать найденные (${visibleHostIds.length})`}

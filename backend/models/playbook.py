@@ -41,6 +41,7 @@ class PlaybookSchedule(Base):
     extra_vars: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     cron_expression: Mapped[str] = mapped_column(String(64), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    only_online: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     # Владелец — кто создал или последним изменил: плейбук выполняется от его имени
     # (services/run_as.py). Правка чужого расписания делает владельцем правящего, иначе
     # можно было бы запускать что угодно от чужой учётки.
