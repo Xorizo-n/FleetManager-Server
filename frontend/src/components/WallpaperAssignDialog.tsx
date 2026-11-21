@@ -11,6 +11,7 @@ import { ErrorText } from "./ui/States";
 import { useToast } from "./ui/Toast";
 import HostPicker from "./HostPicker";
 import { apiError, pcCount, plural } from "../lib/format";
+import { compactSelection } from "../lib/groupTree";
 import { KIND_LABELS, KINDS } from "../lib/wallpapers";
 
 type Choice = { mode: "keep" } | { mode: "clear" } | { mode: "set"; id: string };
@@ -25,7 +26,7 @@ interface Props {
 export default function WallpaperAssignDialog({ initialHostIds = [], initialWallpaperId, onClose }: Props) {
   const queryClient = useQueryClient();
   const toast = useToast();
-  const { tree } = useFleet();
+  const { tree, isLoading: fleetLoading, error: fleetError, refetch: refetchFleet } = useFleet();
   const catalog = useWallpapers();
   const assignments = useWallpaperAssignments();
   const [choices, setChoices] = useState<Record<WallpaperKind, Choice>>({
@@ -33,8 +34,6 @@ export default function WallpaperAssignDialog({ initialHostIds = [], initialWall
     lock_screen: { mode: "keep" },
   });
   const [selection, setSelection] = useState<Set<string>>(() => new Set(initialHostIds));
-  const [scope, setScope] = useState<"hosts" | "groups">("hosts");
-  const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
   const [when, setWhen] = useState<"now" | "later">("now");
   const [at, setAt] = useState("");
   const [comment, setComment] = useState("");
@@ -44,10 +43,11 @@ export default function WallpaperAssignDialog({ initialHostIds = [], initialWall
   const [editingKind, setEditingKind] = useState<WallpaperKind | null>(null);
   const timeId = useId();
 
-  const groupIds = scope === "groups" ? selectedGroups : [];
-  const hostIds = scope === "hosts" ? [...selection] : [];
-  const targetCount = scope === "hosts" ? selection.size : new Set(groupIds.flatMap((id) => tree.byId.get(id)?.hostIds ?? [])).size;
-  const targetLabel = scope === "hosts" ? pcCount(targetCount) : plural(groupIds.length, "группу", "группы", "групп");
+  const { groupIds, hostIds } = useMemo(() => compactSelection(tree, selection), [tree, selection]);
+  const targetLabel = [
+    groupIds.length ? plural(groupIds.length, "группа", "группы", "групп") : null,
+    hostIds.length ? pcCount(hostIds.length) : null,
+  ].filter(Boolean).join(" + ");
   const noTargets = hostIds.length + groupIds.length === 0;
   const nothingChosen = KINDS.every((k) => choices[k].mode === "keep");
   const removingOnly = !nothingChosen && KINDS.every((k) => choices[k].mode !== "set");
@@ -67,14 +67,14 @@ export default function WallpaperAssignDialog({ initialHostIds = [], initialWall
     const kinds = KINDS.filter((k) => choices[k].mode !== "keep");
     const nestedGroups = new Set<string>();
     const hostIds = new Set<string>();
-    for (const gid of selectedGroups) {
+    for (const gid of groupIds) {
       tree.descendants(gid).forEach((d) => d !== gid && nestedGroups.add(d));
       tree.byId.get(gid)?.hostIds.forEach((h) => hostIds.add(h));
     }
     return (assignments.data ?? []).filter((a) => kinds.includes(a.kind) && (
       (a.group_id && nestedGroups.has(a.group_id)) || (a.host_id && hostIds.has(a.host_id))
     )).length;
-  }, [choices, selectedGroups, tree, assignments.data]);
+  }, [choices, groupIds, tree, assignments.data]);
   const impactPending = groupIds.length > 0 && (assignments.isLoading || assignments.isError);
   const atDate = at ? new Date(at) : null;
   const dateError = when === "later" ? timeError ?? (at && !(atDate && atDate.getTime() > Date.now()) ? "Укажите время смены в будущем" : null) : null;
@@ -83,7 +83,7 @@ export default function WallpaperAssignDialog({ initialHostIds = [], initialWall
   const value = (choice: Choice) => (choice.mode === "set" ? choice.id : choice.mode === "clear" ? "clear" : null);
 
   async function submit() {
-    if (busy || nothingChosen || noTargets || impactPending || missingImage) return;
+    if (busy || nothingChosen || noTargets || fleetLoading || fleetError || impactPending || missingImage) return;
     if (when === "later" && !(atDate && atDate.getTime() > Date.now())) {
       setTimeError("Укажите время смены в будущем");
       return;
@@ -134,18 +134,17 @@ export default function WallpaperAssignDialog({ initialHostIds = [], initialWall
             <div className="min-w-0 flex-1 break-words text-sm">
               <p className="font-medium text-foreground">{changes.join(" · ") || "Выберите, что изменить"}</p>
               <p className="text-muted-foreground">
-                {noTargets ? "Получатели не выбраны" : scope === "hosts" ? pcCount(targetCount) :
-                  `${groupIds.slice(0, 2).map((id) => tree.pathOf(id)).join(", ")}${groupIds.length > 2 ? ` и ещё ${groupIds.length - 2}` : ""} (${pcCount(targetCount)} сейчас и будущие ПК)`}
+                {noTargets ? "Получатели не выбраны" : targetLabel}
                 {" · "}{when === "now" ? "Сейчас" : atDate && !dateError ? atDate.toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }) : "Укажите время смены"}
               </p>
             </div>
-            <Button onClick={submit} loading={busy} disabled={nothingChosen || noTargets || impactPending || missingImage || (when === "later" && (!at || !!dateError))}>
+            <Button onClick={submit} loading={busy} disabled={nothingChosen || noTargets || fleetLoading || !!fleetError || impactPending || missingImage || (when === "later" && (!at || !!dateError))}>
               {when === "later" ? "Запланировать" : removingOnly ? "Снять назначения" : "Назначить обои"}
             </Button>
           </div>
           {groupIds.length > 0 && replaced > 0 && (
             <p className="text-sm text-amber-700 dark:text-amber-400">
-              Снятие назначений у подгрупп и ПК: {plural(replaced, "локальное назначение", "локальных назначения", "локальных назначений")}.
+              Будет снято {plural(replaced, "локальное назначение", "локальных назначения", "локальных назначений")} у подгрупп и ПК.
             </p>
           )}
           <ErrorText>{error}</ErrorText>
@@ -167,43 +166,21 @@ export default function WallpaperAssignDialog({ initialHostIds = [], initialWall
           ))}
         </section>
 
-        <section>
-          <fieldset className="mb-3">
-            <legend className="mb-2 text-sm font-semibold text-foreground">Кому назначить</legend>
-            <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm">
-              <label className="flex items-center gap-2"><input type="radio" name="wallpaper-scope" checked={scope === "hosts"} onChange={() => setScope("hosts")} />Текущие ПК</label>
-              <label className="flex items-center gap-2"><input type="radio" name="wallpaper-scope" checked={scope === "groups"} onChange={() => setScope("groups")} />Вся группа</label>
-            </div>
-          </fieldset>
-          {scope === "hosts" ? <HostPicker value={selection} onChange={setSelection} height={220} /> : (
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Правило охватит текущие и будущие ПК выбранных групп. Локальные назначения того же вида в подгруппах и на ПК будут сняты.</p>
-              <label className="block text-sm">
-                Добавить группу
-                <select className="input-base mt-1" value="" onChange={(e) => {
-                  const id = e.target.value;
-                  const descendants = tree.descendants(id);
-                  setSelectedGroups((prev) => [...prev.filter((group) => !descendants.has(group)), id]);
-                }}>
-                  <option value="" disabled>Корпус, этаж или аудитория</option>
-                  {tree.options.map(({ id, label }) => (
-                    <option key={id} value={id} disabled={selectedGroups.some((group) => tree.descendants(group).has(id))}>{label}</option>
-                  ))}
-                </select>
-              </label>
-              {groupIds.length > 0 && <ul className="divide-y divide-border">
-                {groupIds.map((id) => <li key={id} className="flex items-center justify-between gap-3 py-1 text-sm">
-                  <span>{tree.pathOf(id)}</span>
-                  <Button size="sm" variant="secondary" aria-label={`Убрать ${tree.pathOf(id)} из выбора`} onClick={() => setSelectedGroups((prev) => prev.filter((group) => group !== id))}>Убрать</Button>
-                </li>)}
-              </ul>}
-              {assignments.isLoading && <p className="text-sm text-muted-foreground">Проверяем локальные назначения…</p>}
-              {assignments.isError && <div className="space-y-1">
-                <ErrorText>Не удалось проверить локальные назначения.</ErrorText>
-                <Button size="sm" variant="secondary" loading={assignments.isFetching} onClick={() => assignments.refetch()}>Повторить</Button>
-              </div>}
-            </div>
-          )}
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold text-foreground">Кому назначить</h3>
+          <HostPicker value={selection} onChange={setSelection} height={220} />
+          {fleetError && <div className="space-y-1">
+            <ErrorText>Не удалось загрузить ПК и группы.</ErrorText>
+            <Button size="sm" variant="secondary" onClick={refetchFleet}>Повторить</Button>
+          </div>}
+          {groupIds.length > 0 && <>
+            <p className="text-sm text-muted-foreground">Назначение на всю группу применяется к текущим и будущим ПК.</p>
+            {assignments.isLoading && <p className="text-sm text-muted-foreground">Проверяем локальные назначения…</p>}
+            {assignments.isError && <div className="space-y-1">
+              <ErrorText>Не удалось проверить локальные назначения.</ErrorText>
+              <Button size="sm" variant="secondary" loading={assignments.isFetching} onClick={() => assignments.refetch()}>Повторить</Button>
+            </div>}
+          </>}
         </section>
 
         <section className="space-y-2">

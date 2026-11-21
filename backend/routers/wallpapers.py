@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from database import SessionLocal, get_db
@@ -20,6 +20,8 @@ from schemas.wallpaper import (
     WallpaperOut,
     WallpaperRename,
     WallpaperScheduleOut,
+    WallpaperUnassignRequest,
+    WallpaperUnassignResult,
 )
 from services.audit import record_audit
 from services.wallpapers import (
@@ -124,6 +126,18 @@ def observed_wallpapers(db: Session = Depends(get_db), _: User = Depends(get_cur
 @router.get("/assignments", response_model=list[WallpaperAssignmentOut])
 def list_assignments(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     return db.execute(select(WallpaperAssignment)).scalars().all()
+
+
+@router.post("/assignments/remove", response_model=WallpaperUnassignResult)
+def remove_assignments(
+    payload: WallpaperUnassignRequest, request: Request, db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*EDITOR_ROLES)),
+):
+    # Удаляем именно отмеченные записи. Назначение группы не влечёт удаление дочерних.
+    result = db.execute(delete(WallpaperAssignment).where(WallpaperAssignment.id.in_(set(payload.assignment_ids))))
+    changed = result.rowcount
+    record_audit(db, user.id, "wallpaper.unassign", f"removed={changed}", request)
+    return WallpaperUnassignResult(changed=changed)
 
 
 @router.post("/assign", response_model=WallpaperAssignResult)
