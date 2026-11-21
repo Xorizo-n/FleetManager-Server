@@ -295,6 +295,10 @@ const wallpaperAssignments: WallpaperAssignment[] = [
   { id: uuid(), host_id: null, group_id: groups.find((g) => g.name === "SU5")!.id, kind: "lock_screen", wallpaper_id: wallpapers[2].id, updated_at: minutesAgo(600) },
   { id: uuid(), host_id: null, group_id: groups.find((g) => g.name === "MR32")!.id, kind: "desktop", wallpaper_id: wallpapers[0].id, updated_at: minutesAgo(300) },
 ];
+const demoRoom = groups.find((g) => g.name.startsWith("MR32-") && hosts.some((h) => h.group_id === g.id))!;
+for (const host of hosts.filter((h) => h.group_id === demoRoom.id).slice(0, 3)) {
+  wallpaperAssignments.push({ id: uuid(), host_id: host.id, group_id: null, kind: "desktop", wallpaper_id: wallpapers[1].id, updated_at: minutesAgo(180) });
+}
 const wallpaperSchedules: (WallpaperSchedule & { created_by_name: string | null })[] = [
   { id: uuid(), apply_at: new Date(new Date().getFullYear(), 11, 29, 8, 0).toISOString(), host_ids: [], group_ids: groups.filter((g) => !g.parent_id && g.is_auto).map((g) => g.id),
     desktop: wallpapers[3].id, lock_screen: null, comment: "Новогодние обои", status: "pending", result: null, created_at: minutesAgo(90), applied_at: null, created_by_name: "admin" },
@@ -699,6 +703,14 @@ route("GET", "/hosts/groups", () => groups);
 route("GET", "/wallpapers", () => wallpapers);
 route("GET", "/wallpapers/observed", () => observedWallpapers);
 route("GET", "/wallpapers/assignments", () => wallpaperAssignments);
+route("POST", "/wallpapers/assignments/remove", (ctx) => {
+  editor(ctx);
+  const ids = new Set<string>(ctx.body.assignment_ids);
+  const remaining = wallpaperAssignments.filter((a) => !ids.has(a.id));
+  const changed = wallpaperAssignments.length - remaining.length;
+  wallpaperAssignments.splice(0, wallpaperAssignments.length, ...remaining);
+  return { changed };
+});
 route("GET", "/wallpapers/schedules", () => wallpaperSchedules);
 route("POST", "/wallpapers", (ctx) => { editor(ctx); throw new HttpError(400, "Загрузка изображений в мок-режиме не поддерживается"); });
 route("DELETE", "/wallpapers/schedules/{id}", (ctx, p) => { editor(ctx); find(wallpaperSchedules, p.id, "Расписание").status = "cancelled"; return null; });
@@ -722,8 +734,17 @@ route("POST", "/wallpapers/assign", (ctx) => {
   for (const kind of ["desktop", "lock_screen"] as const) {
     const value = b[kind];
     if (!value) continue;
-    for (const [field, ids] of [["host_id", b.host_ids], ["group_id", b.group_ids]] as const) {
+    for (const [field, ids] of [["group_id", b.group_ids], ["host_id", b.host_ids]] as const) {
       for (const id of ids as string[]) {
+        if (field === "group_id") {
+          const nested = wallpaperAssignments.filter((a) => {
+            if (a.kind !== kind) return false;
+            if (a.group_id) return groupChain(a.group_id).slice(1).includes(id);
+            return groupChain(hosts.find((host) => host.id === a.host_id)?.group_id ?? null).includes(id);
+          });
+          for (const assignment of nested) wallpaperAssignments.splice(wallpaperAssignments.indexOf(assignment), 1);
+          changed += nested.length;
+        }
         const i = wallpaperAssignments.findIndex((a) => a[field] === id && a.kind === kind);
         if (value === "clear") { if (i >= 0) { wallpaperAssignments.splice(i, 1); changed++; } continue; }
         if (i >= 0) wallpaperAssignments[i].wallpaper_id = value;

@@ -1,4 +1,4 @@
-import { ReactNode, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Image as ImageIcon, Trash2, Upload, X } from "lucide-react";
@@ -12,8 +12,9 @@ import Badge from "../components/ui/Badge";
 import { Empty, Loading } from "../components/ui/States";
 import { useToast } from "../components/ui/Toast";
 import WallpaperAssignDialog from "../components/WallpaperAssignDialog";
+import WallpaperAssignments from "../components/WallpaperAssignments";
 import WallpaperThumb, { useThumbnails } from "../components/WallpaperThumb";
-import { apiError, formatDateTime, formatSize, hostLabel, pcCount, plural } from "../lib/format";
+import { apiError, formatDateTime, formatSize, pcCount, plural } from "../lib/format";
 import { currentDistribution, KIND_LABELS, KINDS } from "../lib/wallpapers";
 
 const SCHEDULE_STATUS: Record<WallpaperSchedule["status"], { label: string; tone: "info" | "success" | "neutral" | "danger" }> = {
@@ -27,7 +28,7 @@ export default function Wallpapers() {
   const canEdit = useCanEdit();
   const queryClient = useQueryClient();
   const toast = useToast();
-  const { hosts, hostById, tree } = useFleet();
+  const { hosts, hostById, tree, isLoading: fleetLoading } = useFleet();
   const catalog = useWallpapers();
   const assignments = useWallpaperAssignments();
   const schedules = useWallpaperSchedules();
@@ -94,21 +95,6 @@ export default function Wallpapers() {
     }
   }
 
-  async function unassign(a: WallpaperAssignment) {
-    const target = a.host_id ? hostLabel(hostById.get(a.host_id) ?? { hostname: null, ip_address: null }) : tree.pathOf(a.group_id);
-    if (!window.confirm(`Снять ${KIND_LABELS[a.kind].toLowerCase()} с ${target}? ПК вернутся к обоям группы или образа.`)) return;
-    try {
-      await apiClient.post("/wallpapers/assign", {
-        host_ids: a.host_id ? [a.host_id] : [],
-        group_ids: a.group_id ? [a.group_id] : [],
-        [a.kind]: "clear",
-      });
-      refresh();
-    } catch (err) {
-      toast({ tone: "error", message: apiError(err, "Не удалось снять назначение") });
-    }
-  }
-
   async function cancel(s: WallpaperSchedule) {
     try {
       await apiClient.delete(`/wallpapers/schedules/${s.id}`);
@@ -117,19 +103,6 @@ export default function Wallpapers() {
       toast({ tone: "error", message: apiError(err, "Не удалось отменить") });
     }
   }
-
-  // Назначения по целям: группа или ПК — одна строка с двумя видами
-  const targets = useMemo(() => {
-    const rows = new Map<string, { key: string; label: string; isGroup: boolean; kinds: Partial<Record<WallpaperKind, WallpaperAssignment>> }>();
-    for (const a of assignments.data ?? []) {
-      const key = a.group_id ? `g:${a.group_id}` : `h:${a.host_id}`;
-      const label = a.group_id ? tree.pathOf(a.group_id) : hostLabel(hostById.get(a.host_id!) ?? { hostname: "удалённый ПК", ip_address: null });
-      const row = rows.get(key) ?? { key, label, isGroup: !!a.group_id, kinds: {} };
-      row.kinds[a.kind] = a;
-      rows.set(key, row);
-    }
-    return [...rows.values()].sort((x, y) => Number(y.isGroup) - Number(x.isGroup) || x.label.localeCompare(y.label, "ru"));
-  }, [assignments.data, tree, hostById]);
 
   const wallpaperById = useMemo(() => new Map((catalog.data ?? []).map((w) => [w.id, w])), [catalog.data]);
   const pending = (schedules.data ?? []).filter((s) => s.status === "pending");
@@ -230,25 +203,7 @@ export default function Wallpapers() {
         )}
       </Card>
 
-      <Card title="Назначения">
-        {!targets.length ? (
-          <p className="py-4 text-sm text-subtle">Ничего не назначено — на ПК стоят обои из образа Windows</p>
-        ) : (
-          <ul className="divide-y divide-border">
-            {targets.map((t) => (
-              <li key={t.key} className="flex flex-wrap items-center gap-4 py-3">
-                <div className="min-w-[12rem] flex-1">
-                  <div className="text-sm font-medium text-foreground">{t.label}</div>
-                  <div className="text-xs text-subtle">{t.isGroup ? "группа — со всеми ПК внутри" : "отдельный ПК"}</div>
-                </div>
-                {KINDS.map((kind) => (
-                  <AssignedSlot key={kind} label={KIND_LABELS[kind]} assignment={t.kinds[kind]} wallpaper={t.kinds[kind] && wallpaperById.get(t.kinds[kind]!.wallpaper_id)} onRemove={canEdit ? unassign : undefined} />
-                ))}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
+      <WallpaperAssignments tree={tree} hostById={hostById} catalog={wallpaperById} canEdit={canEdit} fleetLoading={fleetLoading} />
 
       <Card title="Смена по расписанию">
         {!pending.length && !history.length ? (
@@ -283,37 +238,8 @@ export default function Wallpapers() {
     </div>
   );
 }
-
 function describeChange(kind: WallpaperKind, value: string | null, byId: Map<string, Wallpaper>): string | null {
   if (!value) return null;
   const label = KIND_LABELS[kind].toLowerCase();
   return value === "clear" ? `${label}: снять назначение` : `${label}: ${byId.get(value)?.name ?? "удалённое изображение"}`;
-}
-
-function AssignedSlot({ label, assignment, wallpaper, onRemove }: { label: string; assignment?: WallpaperAssignment; wallpaper?: Wallpaper; onRemove?: (a: WallpaperAssignment) => void }): ReactNode {
-  return (
-    <div className="w-36">
-      <div className="mb-1 text-xs text-muted-foreground">{label}</div>
-      {assignment ? (
-        <div className="relative">
-          {wallpaper ? (
-            <img src={`data:image/jpeg;base64,${wallpaper.thumbnail_base64}`} alt="" className="aspect-video w-full rounded-md border border-border object-cover" title={wallpaper.name} />
-          ) : (
-            <div className="aspect-video w-full rounded-md bg-muted/30" />
-          )}
-          {onRemove && (
-            <button onClick={() => onRemove(assignment)} className="absolute right-1 top-1 rounded-full bg-black/60 p-0.5 text-white hover:bg-black/80" title="Снять назначение" aria-label={`Снять: ${label}`}>
-              <X className="h-3 w-3" />
-            </button>
-          )}
-          <div className="mt-1 truncate text-xs text-foreground">{wallpaper?.name}</div>
-        </div>
-      ) : (
-        <>
-          <div className="flex aspect-video w-full items-center justify-center rounded-md bg-muted/30 text-xs text-subtle">не назначено</div>
-          <div className="mt-1 h-4" />
-        </>
-      )}
-    </div>
-  );
 }

@@ -1,3 +1,4 @@
+from pydantic import PositiveInt
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -57,6 +58,7 @@ class Settings(BaseSettings):
     local_admin_login: str = "admin"
 
     # Ansible
+    ansible_job_timeout_seconds: PositiveInt = 7200
     ansible_playbooks_repo_dir: str = "/app/ansible_data/playbooks_repo"
     ansible_private_key_dir: str = "/app/ansible_data/keys"
     # Плейбуки, созданные в редакторе (services/local_playbooks.py): только на этом сервере, не в git

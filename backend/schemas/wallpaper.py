@@ -81,6 +81,14 @@ class WallpaperAssignResult(BaseModel):
     schedule_id: uuid.UUID | None = None
 
 
+class WallpaperUnassignRequest(BaseModel):
+    assignment_ids: list[uuid.UUID] = Field(min_length=1, max_length=20000)
+
+
+class WallpaperUnassignResult(BaseModel):
+    changed: int
+
+
 class WallpaperScheduleOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

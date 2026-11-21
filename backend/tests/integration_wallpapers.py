@@ -7,13 +7,16 @@ DATABASE_URL должен указывать на пустую копию схе
 import io
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from PIL import Image
 
 from database import SessionLocal
 from models.host import Host, HostGroup
 from models.wallpaper import WallpaperAssignment, WallpaperSchedule
+from routers.wallpapers import remove_assignments
 from schemas.agent import AgentWallpaperReport
+from schemas.wallpaper import WallpaperUnassignRequest
 from services.wallpapers import CLEAR, WallpaperError, apply_assignment, apply_due_schedules, heartbeat_wallpaper, store_report, store_upload
 
 
@@ -121,4 +124,16 @@ db.commit()
 db.delete(extra)
 db.commit()
 assert db.query(WallpaperAssignment).filter(WallpaperAssignment.group_id == extra.id).count() == 0
+
+# Массовое снятие выбирает записи, а не всех получателей группового правила.
+apply_assignment(db, [host.id], [building.id], str(winter.id), str(winter.id), None)
+db.commit()
+group_desktop = db.query(WallpaperAssignment).filter_by(group_id=building.id, kind="desktop").one()
+host_lock = db.query(WallpaperAssignment).filter_by(host_id=host.id, kind="lock_screen").one()
+payload = WallpaperUnassignRequest(assignment_ids=[group_desktop.id, host_lock.id, host_lock.id])
+assert remove_assignments(payload, None, db, SimpleNamespace(id=None)).changed == 2
+assert remove_assignments(payload, None, db, SimpleNamespace(id=None)).changed == 0
+assert db.query(WallpaperAssignment).filter_by(host_id=host.id, kind="desktop").count() == 1
+assert db.query(WallpaperAssignment).filter_by(group_id=building.id, kind="lock_screen").count() == 1
+assert heartbeat_wallpaper(db, host)["lock_screen"]["id"] == str(winter.id)
 print("integration OK")

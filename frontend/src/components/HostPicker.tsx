@@ -186,11 +186,11 @@ function HostRow({ host, depth, checked, onToggle }: { host: Host; depth: number
     <label className="flex h-full cursor-pointer items-center gap-2 border-b border-border/30 pr-3 text-sm hover:bg-muted/40" style={{ paddingLeft: 8 + depth * 20 + 24 }}>
       <Checkbox checked={checked} onChange={onToggle} />
       <Monitor className="h-3.5 w-3.5 shrink-0 text-subtle" />
-      <span className="truncate text-foreground">{hostLabel(host)}</span>
-      <span className="font-mono text-xs text-subtle">{host.ip_address}</span>
+      <span className="min-w-0 truncate text-foreground" title={hostLabel(host)}>{hostLabel(host)}</span>
+      {host.hostname && <span className="hidden shrink-0 font-mono text-xs text-subtle sm:inline">{host.ip_address}</span>}
       <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
         <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
-        {host.status}
+        <span className="sr-only sm:not-sr-only">{host.status}</span>
       </span>
     </label>
   );

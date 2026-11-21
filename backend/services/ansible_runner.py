@@ -33,9 +33,11 @@ def run_ansible(**kwargs):
     ``private_data_dir``. Materialize events and stats while that directory is
     still alive, then remove it so completed tasks cannot accumulate artifacts.
     The inventory separately disables OpenSSH control persistence.
+    Calls without an explicit timeout use the configured Ansible job limit.
     """
     import ansible_runner
 
+    kwargs.setdefault("timeout", settings.ansible_job_timeout_seconds)
     with tempfile.TemporaryDirectory(prefix="ansible-") as private_data_dir:
         result = ansible_runner.run(private_data_dir=private_data_dir, **kwargs)
         events = list(result.events)
@@ -60,7 +62,8 @@ def run_raw_command(inventory: dict, inventory_host: str, command: str, *, timeo
     if timeout is not None:
         kwargs["timeout"] = timeout
     result = run_ansible(**kwargs)
-
+    if result.status == "timeout":
+        raise TimeoutError("Ansible: истёк лимит выполнения команды")
     output_parts: list[str] = []
     failure_msg = None
     for event in result.events:
@@ -269,8 +272,15 @@ def run_playbook_task(self, task_run_id: str):
         # финализации артефактов ansible-runner, хотя recap реально был
         # напечатан и прогон реально закончился штатно (проверено вживую:
         # файлы на дисках хостов были на месте при таком расхождении).
-        has_final_recap = "PLAY RECAP" in (task_run.log_output or "")
-        if result.rc != 0:
+        timed_out = result.status == "timeout"
+        has_final_recap = not timed_out and "PLAY RECAP" in (task_run.log_output or "")
+        if timed_out:
+            task_run.status = TaskStatus.failed
+            task_run.log_output = (task_run.log_output or "") + (
+                f"\n[ERROR] Ansible остановлен по тайм-ауту ({settings.ansible_job_timeout_seconds} с)."
+                " Журнал содержит частичные результаты, итог по ПК не подтверждён."
+            )
+        elif result.rc != 0:
             task_run.status = TaskStatus.failed
         elif result.status != "successful":
             task_run.status = TaskStatus.failed
