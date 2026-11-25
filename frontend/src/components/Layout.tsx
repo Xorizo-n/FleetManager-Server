@@ -1,9 +1,8 @@
-import { Suspense, useEffect, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { MouseEvent, Suspense, useEffect, useId, useRef, useState } from "react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { ChevronDown, LayoutDashboard, Menu as MenuIcon, Monitor, Server, Settings, Workflow, X } from "lucide-react";
 import { UserRole, useAuth } from "../context/AuthContext";
 import UserMenu, { ROLE_LABELS } from "./UserMenu";
-import Menu from "./ui/Menu";
 import { TaskPanelProvider } from "./TaskPanel";
 import { Loading } from "./ui/States";
 
@@ -47,11 +46,88 @@ const linkClass = ({ isActive }: { isActive: boolean }) =>
     isActive ? "bg-blue-600 text-white" : "text-muted-foreground hover:bg-muted hover:text-foreground"
   }`;
 
+const followsLink = (event: MouseEvent<HTMLAnchorElement>) =>
+  event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey;
+
+function NavDropdown({ label, icon: Icon, items, active }: {
+  label: string;
+  icon: typeof LayoutDashboard;
+  items: Omit<NavItem, "roles">[];
+  active: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  const container = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const { pathname } = useLocation();
+
+  useEffect(() => setOpen(false), [pathname]);
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!container.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [open]);
+
+  return (
+    <div
+      ref={container}
+      className="relative"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+      onKeyDown={(event) => {
+        if (!open) return;
+        if (event.key === "Escape") {
+          event.preventDefault();
+          button.current?.focus();
+          setOpen(false);
+        }
+      }}
+    >
+      <button ref={button} type="button" onClick={() => setOpen((value) => !value)} aria-controls={id} aria-expanded={open}
+        className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors ${active ? "bg-blue-600 text-white" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+      >
+        <Icon aria-hidden="true" className="h-3.5 w-3.5" />
+        {label}
+        <ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      <ul id={id} hidden={!open} className="absolute left-0 top-full z-50 mt-1 min-w-[220px] animate-scale-in rounded-xl border border-border bg-surface py-1 shadow-panel-lg">
+        {items.map((item) => (
+          <li key={item.to}>
+            <NavLink
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) => `block px-3 py-2 text-sm transition-colors hover:bg-muted focus-visible:bg-muted ${isActive ? "font-medium text-primary" : "text-foreground"}`}
+              onClick={(event) => {
+                if (!followsLink(event)) return;
+                button.current?.focus();
+                setOpen(false);
+              }}
+            >
+              {item.label}
+            </NavLink>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function Layout() {
   const { user } = useAuth();
-  const navigate = useNavigate();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
+  const mobileMenu = useRef<HTMLButtonElement>(null);
+  function closeMobileMenu() {
+    mobileMenu.current?.focus();
+    setMenuOpen(false);
+  }
+  function onMobileFollow(event: MouseEvent<HTMLAnchorElement>) {
+    if (followsLink(event)) closeMobileMenu();
+  }
 
   useEffect(() => setMenuOpen(false), [location.pathname]);
 
@@ -69,68 +145,53 @@ export default function Layout() {
   return (
     <TaskPanelProvider>
       <div className="min-h-screen bg-background text-foreground">
-        <header className="sticky top-0 z-20 border-b border-border bg-background/85 backdrop-blur-md">
+        <header
+          className="sticky top-0 z-20 border-b border-border bg-background/85 backdrop-blur-md"
+          onKeyDown={(event) => {
+            if (event.key !== "Escape" || event.defaultPrevented || !menuOpen) return;
+            event.preventDefault();
+            closeMobileMenu();
+          }}
+        >
           <div className="mx-auto flex h-14 max-w-[96rem] items-center justify-between gap-4 px-4">
             <div className="flex min-w-0 items-center gap-6">
-              <NavLink to="/" className="flex shrink-0 items-center gap-2 text-base font-semibold tracking-tight">
+              <NavLink to="/" end aria-label="Fleet Manager" className="flex shrink-0 items-center gap-2 text-base font-semibold tracking-tight">
                 <span className="flex h-7 w-7 items-center justify-center rounded-md bg-blue-600 text-white">
                   <Server className="h-4 w-4" />
                 </span>
                 <span className="hidden sm:inline">Fleet Manager</span>
               </NavLink>
-              <nav className="hidden items-center gap-0.5 lg:flex">
+              <nav aria-label="Основная навигация" className="hidden items-center gap-0.5 lg:flex">
                 {navGroups.map((group) => (
-                  <Menu key={group.label} align="left" trigger={({ open, toggle }) => (
-                    <button onClick={toggle} aria-haspopup="menu" aria-expanded={open} className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors ${groupActive(group) ? "bg-blue-600 text-white" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
-                      <group.icon className="h-3.5 w-3.5" aria-hidden="true" />
-                      {group.label} <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
-                    </button>
-                  )} items={group.items.map((item) => ({ label: item.label, onClick: () => navigate(item.to) }))} />
+                  <NavDropdown key={group.label} label={group.label} icon={group.icon} items={group.items} active={groupActive(group)} />
                 ))}
                 {adminItems.length > 0 && (
-                  <Menu
-                    align="left"
-                    trigger={({ open, toggle }) => (
-                      <button
-                        onClick={toggle}
-                        aria-haspopup="menu"
-                        aria-expanded={open}
-                        className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                          adminActive ? "bg-blue-600 text-white" : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                        }`}
-                      >
-                        <Settings className="h-3.5 w-3.5" />
-                        Администрирование
-                        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
-                      </button>
-                    )}
-                    items={adminItems.map((item) => ({ label: item.label, onClick: () => navigate(item.to) }))}
-                  />
+                  <NavDropdown label="Администрирование" icon={Settings} items={adminItems} active={adminActive} />
                 )}
               </nav>
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
               <UserMenu />
-              <button className="btn-ghost btn-icon lg:hidden" onClick={() => setMenuOpen((v) => !v)} aria-label="Меню" aria-expanded={menuOpen}>
+              <button ref={mobileMenu} type="button" className="btn-ghost btn-icon lg:hidden" onClick={() => setMenuOpen((v) => !v)} aria-label="Меню" aria-expanded={menuOpen} aria-controls={menuOpen ? "mobile-navigation" : undefined}>
                 {menuOpen ? <X className="h-5 w-5" /> : <MenuIcon className="h-5 w-5" />}
               </button>
             </div>
           </div>
 
           {menuOpen && (
-            <nav className="flex flex-col gap-1 border-t border-border px-4 py-2 lg:hidden">
+            <nav id="mobile-navigation" aria-label="Основная навигация" className="flex flex-col gap-1 border-t border-border px-4 py-2 lg:hidden">
               {navGroups.map((group) => (
                 <div key={group.label} className="flex flex-col gap-1">
                   <p className="flex items-center gap-1.5 px-3 pt-2 text-xs font-medium uppercase tracking-wide text-subtle">
                     <group.icon className="h-3.5 w-3.5" aria-hidden="true" />{group.label}
                   </p>
-                  {group.items.map((item) => <NavLink key={item.to} to={item.to} end={item.end} className={linkClass}>{item.label}</NavLink>)}
+                  {group.items.map((item) => <NavLink key={item.to} to={item.to} end={item.end} className={linkClass} onClick={onMobileFollow}>{item.label}</NavLink>)}
                 </div>
               ))}
               {adminItems.length > 0 && <p className="px-3 pt-2 text-xs font-medium uppercase tracking-wide text-subtle">Администрирование</p>}
               {adminItems.map((item) => (
-                <NavLink key={item.to} to={item.to} className={linkClass}>
+                <NavLink key={item.to} to={item.to} className={linkClass} onClick={onMobileFollow}>
                   {item.label}
                 </NavLink>
               ))}

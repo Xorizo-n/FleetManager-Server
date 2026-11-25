@@ -1,9 +1,9 @@
-import { ReactNode, useMemo, useState } from "react";
+import { ReactNode, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useFleet, useTasks } from "../api/queries";
 import type { TaskRun } from "../api/types";
 import PageHeader from "../components/ui/PageHeader";
-import Tabs from "../components/ui/Tabs";
+import Tabs, { TabPanel, tabId } from "../components/ui/Tabs";
 import Badge from "../components/ui/Badge";
 import Button from "../components/ui/Button";
 import SearchInput from "../components/ui/SearchInput";
@@ -21,21 +21,34 @@ type Tab = "runs" | "rollouts";
 export default function Tasks() {
   const [params, setParams] = useSearchParams();
   const tab: Tab = params.get("tab") === "rollouts" ? "rollouts" : "runs";
+  const tabsId = useId();
+  const restoreTabFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (!restoreTabFocus.current) return;
+    restoreTabFocus.current = false;
+    document.getElementById(tabId(tabsId, tab))?.focus();
+  }, [tabsId, tab]);
   const tabs = (
     <Tabs<Tab>
+      idPrefix={tabsId}
+      label="Задачи"
+      manual
       value={tab}
-      onChange={(id) => setParams(id === "runs" ? {} : { tab: id })}
+      onChange={(id) => {
+        restoreTabFocus.current = true;
+        setParams(id === "runs" ? {} : { tab: id });
+      }}
       tabs={[
         { id: "runs", label: "Запуски" },
         { id: "rollouts", label: "Раскатка ПО" },
       ]}
     />
   );
-  return tab === "rollouts" ? <Rollouts tabs={tabs} /> : <TaskJournal tabs={tabs} />;
+  return tab === "rollouts" ? <Rollouts tabs={tabs} tabsId={tabsId} /> : <TaskJournal tabs={tabs} tabsId={tabsId} />;
 }
 
 /** Журнал запусков плейбуков, сканирований, диагностик и обновлений агента. */
-function TaskJournal({ tabs }: { tabs: ReactNode }) {
+function TaskJournal({ tabs, tabsId }: { tabs: ReactNode; tabsId: string }) {
   const [params] = useSearchParams();
   const [type, setType] = useState(params.get("type") ?? "");
   const [status, setStatus] = useState(params.get("status") ?? "");
@@ -72,75 +85,77 @@ function TaskJournal({ tabs }: { tabs: ReactNode }) {
         description={summary || "Журнал запусков плейбуков, сканирований, диагностик и обновлений агента"}
       />
       {tabs}
-      <div className="flex flex-wrap items-center gap-2">
-        <SearchInput value={search} onChange={setSearch} placeholder="Плейбук, хост или автор" className="min-w-[220px] flex-1" />
-        <select value={type} onChange={(e) => { setType(e.target.value); setLimit(PAGE); }} className="input-base w-auto py-2" aria-label="Тип задачи">
-          <option value="">Все типы</option>
-          {Object.entries(TASK_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-        </select>
-        <select value={status} onChange={(e) => { setStatus(e.target.value); setLimit(PAGE); }} className="input-base w-auto py-2" aria-label="Статус">
-          <option value="">Любой статус</option>
-          {["waiting", "pending", "queued", "running", "success", "failed", "cancelled"].map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
-        </select>
-      </div>
-
-      <div className="table-shell">
-        <table className="table-base">
-          <thead>
-            <tr>
-              <th>Задача</th>
-              <th>Цели</th>
-              <th>Запустил</th>
-              <th>Создана</th>
-              <th>Длительность</th>
-              <th>Статус</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((t) => {
-              const targets = targetsOf(t);
-              return (
-                <tr
-                  key={t.id}
-                  tabIndex={0}
-                  className="is-interactive"
-                  onClick={() => openTask(t.id)}
-                  onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), openTask(t.id))}
-                >
-                  <td className="max-w-[320px]">
-                    <div className="truncate font-medium text-foreground">{taskTitle(t)}</div>
-                    {t.task_type === "playbook" && <div className="truncate text-xs text-subtle">{t.playbook_name}</div>}
-                  </td>
-                  <td className="max-w-[260px] text-muted-foreground">
-                    <div className="truncate" title={targets.join(", ")}>
-                      {targets.length === 0 ? "—" : targets.slice(0, 2).join(", ")}
-                      {targets.length > 2 && <span className="text-subtle"> +{targets.length - 2}</span>}
-                    </div>
-                  </td>
-                  <td className="text-muted-foreground">{t.created_by_name ?? (t.created_by ? "—" : "расписание")}</td>
-                  <td className="whitespace-nowrap text-muted-foreground">{formatDateTime(t.created_at)}</td>
-                  <td className="whitespace-nowrap text-muted-foreground">{formatDuration(t.started_at, t.finished_at)}</td>
-                  <td>
-                    <div className="flex flex-col items-start gap-1.5">
-                      <Badge status={displayStatus(t)}>{STATUS_LABELS[displayStatus(t)] ?? t.status}</Badge>
-                      {t.host_ids.length > 1 && t.host_states && <HostStateBar counts={countHostStates(t)} compact />}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        {isLoading && <Loading />}
-        {!isLoading && rows.length === 0 && <Empty>{search ? "Ничего не найдено" : "Задач нет"}</Empty>}
-      </div>
-      {(data?.length ?? 0) >= limit && (
-        <div className="flex justify-center">
-          <Button variant="secondary" onClick={() => setLimit((l) => l + PAGE)} loading={isFetching}>
-            Показать ещё
-          </Button>
+      <TabPanel idPrefix={tabsId} tab="runs" className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <SearchInput value={search} onChange={setSearch} label="Поиск запусков" placeholder="Плейбук, хост или автор" className="min-w-[220px] flex-1" />
+          <select value={type} onChange={(e) => { setType(e.target.value); setLimit(PAGE); }} className="input-base w-auto py-2" aria-label="Тип задачи">
+            <option value="">Все типы</option>
+            {Object.entries(TASK_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+          <select value={status} onChange={(e) => { setStatus(e.target.value); setLimit(PAGE); }} className="input-base w-auto py-2" aria-label="Статус">
+            <option value="">Любой статус</option>
+            {["waiting", "pending", "queued", "running", "success", "failed", "cancelled"].map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
+          </select>
         </div>
-      )}
+
+        <div className="table-shell">
+          <table className="table-base">
+            <thead>
+              <tr>
+                <th>Задача</th>
+                <th>Цели</th>
+                <th>Запустил</th>
+                <th>Создана</th>
+                <th>Длительность</th>
+                <th>Статус</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((t) => {
+                const targets = targetsOf(t);
+                return (
+                  <tr
+                    key={t.id}
+                    tabIndex={0}
+                    className="is-interactive"
+                    onClick={() => openTask(t.id)}
+                    onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), openTask(t.id))}
+                  >
+                    <td className="max-w-[320px]">
+                      <div className="truncate font-medium text-foreground">{taskTitle(t)}</div>
+                      {t.task_type === "playbook" && <div className="truncate text-xs text-subtle">{t.playbook_name}</div>}
+                    </td>
+                    <td className="max-w-[260px] text-muted-foreground">
+                      <div className="truncate" title={targets.join(", ")}>
+                        {targets.length === 0 ? "—" : targets.slice(0, 2).join(", ")}
+                        {targets.length > 2 && <span className="text-subtle"> +{targets.length - 2}</span>}
+                      </div>
+                    </td>
+                    <td className="text-muted-foreground">{t.created_by_name ?? (t.created_by ? "—" : "расписание")}</td>
+                    <td className="whitespace-nowrap text-muted-foreground">{formatDateTime(t.created_at)}</td>
+                    <td className="whitespace-nowrap text-muted-foreground">{formatDuration(t.started_at, t.finished_at)}</td>
+                    <td>
+                      <div className="flex flex-col items-start gap-1.5">
+                        <Badge status={displayStatus(t)}>{STATUS_LABELS[displayStatus(t)] ?? t.status}</Badge>
+                        {t.host_ids.length > 1 && t.host_states && <HostStateBar counts={countHostStates(t)} compact />}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {isLoading && <Loading />}
+          {!isLoading && rows.length === 0 && <Empty>{search ? "Ничего не найдено" : "Задач нет"}</Empty>}
+        </div>
+        {(data?.length ?? 0) >= limit && (
+          <div className="flex justify-center">
+            <Button variant="secondary" onClick={() => setLimit((l) => l + PAGE)} loading={isFetching}>
+              Показать ещё
+            </Button>
+          </div>
+        )}
+      </TabPanel>
     </div>
   );
 }

@@ -134,7 +134,7 @@ export default function WallpaperAssignments({ tree, hostById, catalog, canEdit,
           <span className="break-words text-sm text-foreground">{isGroup ? "Правило группы" : target.label}</span>
         </div>
         <div className="grid w-full gap-2 sm:w-auto sm:grid-cols-2">
-          {[...target.assignments].sort((a, b) => a.kind.localeCompare(b.kind)).map((assignment) => {
+          {target.assignments.toSorted((a, b) => a.kind.localeCompare(b.kind)).map((assignment) => {
             const wallpaper = catalog.get(assignment.wallpaper_id);
             const kind = KIND_LABELS[assignment.kind];
             return (

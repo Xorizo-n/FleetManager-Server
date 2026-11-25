@@ -104,7 +104,7 @@ export default function FilterPanel({ hosts, filters, setFilter, reset, tree, ve
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <SearchInput value={filters.q} onChange={(v) => setFilter("q", v)} placeholder="Имя, IP, серийный номер, комментарий" className="min-w-[220px] grow basis-full sm:basis-0" />
+        <SearchInput value={filters.q} onChange={(v) => setFilter("q", v)} label="Поиск ПК" placeholder="Имя, IP, серийный номер, комментарий" className="min-w-[220px] grow basis-full sm:basis-0" />
         <select value={filters.group} onChange={(e) => setFilter("group", e.target.value)} className="input-base w-auto min-w-0 flex-1 py-2 sm:max-w-[14rem] sm:flex-none xl:hidden" aria-label="Группа">
           <option value="">Все группы</option>
           {tree.options.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}

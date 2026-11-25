@@ -5,6 +5,7 @@ import { apiClient } from "../../api/client";
 import { keys, useCanEdit, useFleet, useRolloutAssignees, useRollouts, useTasks } from "../../api/queries";
 import type { RolloutItem, RolloutItemStatus, RolloutProgress, RolloutRequest, RolloutStatus } from "../../api/types";
 import PageHeader from "../../components/ui/PageHeader";
+import { TabPanel } from "../../components/ui/Tabs";
 import Badge from "../../components/ui/Badge";
 import Button from "../../components/ui/Button";
 import Modal from "../../components/ui/Modal";
@@ -76,7 +77,7 @@ function itemTitle(i: RolloutItem) {
   return [ITEM_STATUS[i.status].label, i.progress && `${i.progress.done} из ${pcCount(i.progress.total)}`, i.note].filter(Boolean).join(" — ");
 }
 
-export default function Rollouts({ tabs }: { tabs: ReactNode }) {
+export default function Rollouts({ tabs, tabsId }: { tabs: ReactNode; tabsId: string }) {
   const canEdit = useCanEdit();
   const { data, isLoading } = useRollouts();
   const [search, setSearch] = useState("");
@@ -122,87 +123,89 @@ export default function Rollouts({ tabs }: { tabs: ReactNode }) {
         )}
       />
       {tabs}
-      <div className="flex flex-wrap items-center gap-2">
-        <SearchInput value={search} onChange={setSearch} placeholder="Курс, партнёр, аудитория, программа" className="min-w-[220px] flex-1" />
-        <select value={status} onChange={(e) => setStatus(e.target.value)} className="input-base w-auto py-2" aria-label="Статус заявки">
-          <option value="active">Незакрытые</option>
-          <option value="">Все заявки</option>
-          {(Object.keys(ROLLOUT_STATUS) as RolloutStatus[]).map((s) => <option key={s} value={s}>{ROLLOUT_STATUS[s].label}</option>)}
-        </select>
-      </div>
+      <TabPanel idPrefix={tabsId} tab="rollouts" className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <SearchInput value={search} onChange={setSearch} label="Поиск заявок" placeholder="Курс, партнёр, аудитория, программа" className="min-w-[220px] flex-1" />
+          <select value={status} onChange={(e) => setStatus(e.target.value)} className="input-base w-auto py-2" aria-label="Статус заявки">
+            <option value="active">Незакрытые</option>
+            <option value="">Все заявки</option>
+            {(Object.keys(ROLLOUT_STATUS) as RolloutStatus[]).map((s) => <option key={s} value={s}>{ROLLOUT_STATUS[s].label}</option>)}
+          </select>
+        </div>
 
-      <div className="table-shell">
-        <table className="table-base">
-          <thead>
-            <tr>
-              <th>Курс</th>
-              <th>Аудитории</th>
-              <th>Программы</th>
-              <th>Готово</th>
-              <th>Ответственный</th>
-              <th>Статус</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              const doneItems = r.items.filter((i) => i.status === "done").length;
-              return (
-                <tr
-                  key={r.id}
-                  tabIndex={0}
-                  className="is-interactive align-top"
-                  onClick={() => setEditing(r)}
-                  onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), setEditing(r))}
-                >
-                  <td className="max-w-[300px]">
-                    {r.partner && <div className="truncate text-xs text-subtle">{r.partner}</div>}
-                    <div className="line-clamp-2 font-medium text-foreground">{r.course}</div>
-                  </td>
-                  <td className="max-w-[180px] text-muted-foreground">
-                    <div className="truncate text-foreground">{r.rooms ?? "—"}</div>
-                    {r.schedule && <div className="truncate text-xs">{r.schedule}</div>}
-                  </td>
-                  <td className="max-w-[340px]">
-                    <div className="flex flex-wrap gap-1">
-                      {r.items.map((i, n) => (
-                        <span key={i.id ?? n} className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs text-foreground" title={itemTitle(i)}>
-                          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${ITEM_STATUS[i.status].dot}`} />
-                          {i.software}
-                          {i.progress && i.status !== "done" && <span className="tabular-nums text-subtle">{i.progress.done}/{i.progress.total}</span>}
-                        </span>
-                      ))}
-                      {r.items.length === 0 && <span className="text-subtle">—</span>}
-                    </div>
-                  </td>
-                  <td className="whitespace-nowrap">
-                    <div className="w-32 space-y-1">
-                      {r.progress && <ProgressBar progress={r.progress} />}
-                      {r.items.length > 0 && <div className="text-xs tabular-nums text-subtle">программ: {doneItems} из {r.items.length}</div>}
-                      {r.items.length === 0 && "—"}
-                    </div>
-                  </td>
-                  <td className="whitespace-nowrap text-muted-foreground">
-                    <div className="text-foreground">{r.assignee_name ?? "—"}</div>
-                    {r.due_date && (
-                      <div className={`text-xs ${isOverdue(r) ? "font-medium text-rose-600 dark:text-rose-400" : ""}`}>
-                        до {formatDay(r.due_date)}{isOverdue(r) && " · просрочено"}
+        <div className="table-shell">
+          <table className="table-base">
+            <thead>
+              <tr>
+                <th>Курс</th>
+                <th>Аудитории</th>
+                <th>Программы</th>
+                <th>Готово</th>
+                <th>Ответственный</th>
+                <th>Статус</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const doneItems = r.items.filter((i) => i.status === "done").length;
+                return (
+                  <tr
+                    key={r.id}
+                    tabIndex={0}
+                    className="is-interactive align-top"
+                    onClick={() => setEditing(r)}
+                    onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), setEditing(r))}
+                  >
+                    <td className="max-w-[300px]">
+                      {r.partner && <div className="truncate text-xs text-subtle">{r.partner}</div>}
+                      <div className="line-clamp-2 font-medium text-foreground">{r.course}</div>
+                    </td>
+                    <td className="max-w-[180px] text-muted-foreground">
+                      <div className="truncate text-foreground">{r.rooms ?? "—"}</div>
+                      {r.schedule && <div className="truncate text-xs">{r.schedule}</div>}
+                    </td>
+                    <td className="max-w-[340px]">
+                      <div className="flex flex-wrap gap-1">
+                        {r.items.map((i, n) => (
+                          <span key={i.id ?? n} className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs text-foreground" title={itemTitle(i)}>
+                            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${ITEM_STATUS[i.status].dot}`} />
+                            {i.software}
+                            {i.progress && i.status !== "done" && <span className="tabular-nums text-subtle">{i.progress.done}/{i.progress.total}</span>}
+                          </span>
+                        ))}
+                        {r.items.length === 0 && <span className="text-subtle">—</span>}
                       </div>
-                    )}
-                  </td>
-                  <td>
-                    <Badge status={r.status} tone={ROLLOUT_STATUS[r.status].tone}>{ROLLOUT_STATUS[r.status].label}</Badge>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        {isLoading && <Loading />}
-        {!isLoading && rows.length === 0 && (
-          <Empty>{list.length === 0 ? "Заявок пока нет — добавьте первую кнопкой «Новая заявка»" : "Под фильтр ничего не подходит"}</Empty>
-        )}
-      </div>
-      {editing && <RolloutEditor request={editing === "new" ? null : editing} canEdit={canEdit} onClose={() => setEditing(null)} />}
+                    </td>
+                    <td className="whitespace-nowrap">
+                      <div className="w-32 space-y-1">
+                        {r.progress && <ProgressBar progress={r.progress} />}
+                        {r.items.length > 0 && <div className="text-xs tabular-nums text-subtle">программ: {doneItems} из {r.items.length}</div>}
+                        {r.items.length === 0 && "—"}
+                      </div>
+                    </td>
+                    <td className="whitespace-nowrap text-muted-foreground">
+                      <div className="text-foreground">{r.assignee_name ?? "—"}</div>
+                      {r.due_date && (
+                        <div className={`text-xs ${isOverdue(r) ? "font-medium text-rose-600 dark:text-rose-400" : ""}`}>
+                          до {formatDay(r.due_date)}{isOverdue(r) && " · просрочено"}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <Badge status={r.status} tone={ROLLOUT_STATUS[r.status].tone}>{ROLLOUT_STATUS[r.status].label}</Badge>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {isLoading && <Loading />}
+          {!isLoading && rows.length === 0 && (
+            <Empty>{list.length === 0 ? "Заявок пока нет — добавьте первую кнопкой «Новая заявка»" : "Под фильтр ничего не подходит"}</Empty>
+          )}
+        </div>
+        {editing && <RolloutEditor request={editing === "new" ? null : editing} canEdit={canEdit} onClose={() => setEditing(null)} />}
+      </TabPanel>
     </div>
   );
 }

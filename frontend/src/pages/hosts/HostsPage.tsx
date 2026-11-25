@@ -196,8 +196,8 @@ export default function HostsPage() {
               </Button>
             )}
             <Menu
-              trigger={({ toggle }) => (
-                <button className="btn-secondary btn-sm" onClick={toggle} aria-label="Другие действия">
+              trigger={({ id, open, toggle }) => (
+                <button id={id} type="button" className="btn-secondary btn-sm" onClick={toggle} aria-label="Другие действия" aria-haspopup="menu" aria-expanded={open}>
                   <MoreHorizontal className="h-4 w-4" />
                 </button>
               )}
@@ -326,8 +326,8 @@ export default function HostsPage() {
               </Button>
               {targetIds.length > 0 && <Menu
                 direction="up"
-                trigger={({ toggle }) => (
-                  <Button size="sm" variant="secondary" onClick={toggle}>
+                trigger={({ id, open, toggle }) => (
+                  <Button id={id} size="sm" variant="secondary" onClick={toggle} aria-haspopup="menu" aria-expanded={open}>
                     Ещё
                     <ChevronDown className="h-3.5 w-3.5" />
                   </Button>

@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useId, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { GitBranch, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
@@ -7,7 +7,7 @@ import { useAuth } from "../context/AuthContext";
 import { keys, useCredentials, useFleet, usePlaybookFiles, useRepos, useSchedules } from "../api/queries";
 import type { Host, Schedule } from "../api/types";
 import PageHeader from "../components/ui/PageHeader";
-import Tabs from "../components/ui/Tabs";
+import Tabs, { TabPanel } from "../components/ui/Tabs";
 import Button from "../components/ui/Button";
 import Modal from "../components/ui/Modal";
 import Switch from "../components/ui/Switch";
@@ -27,7 +27,9 @@ type Tab = "run" | "schedules" | "repos";
 
 export default function Automation() {
   const [params, setParams] = useSearchParams();
-  const tab = (params.get("tab") as Tab) || "run";
+  const current = params.get("tab");
+  const tab: Tab = current === "schedules" || current === "repos" ? current : "run";
+  const tabsId = useId();
   const schedules = useSchedules();
   const repos = useRepos();
 
@@ -35,6 +37,9 @@ export default function Automation() {
     <div className="animate-fade-in space-y-5">
       <PageHeader title="Автоматизация" description="Запуск плейбуков Ansible на хостах и расписания" />
       <Tabs<Tab>
+        idPrefix={tabsId}
+        label="Плейбуки"
+        manual
         value={tab}
         onChange={(id) => setParams((prev) => { const next = new URLSearchParams(prev); next.set("tab", id); return next; })}
         tabs={[
@@ -43,19 +48,21 @@ export default function Automation() {
           { id: "repos", label: "Репозитории", count: repos.data?.length },
         ]}
       />
-      {tab === "run" && (
-        <div className="max-w-4xl py-2">
-          <PlaybookRunForm
-            key={`${params.get("mode") ?? "now"}:${params.get("playbook") ?? ""}`}
-            initialMode={params.get("mode") === "schedule" ? "schedule" : "now"}
-            initialRepoId={params.get("repo") ?? undefined}
-            initialPlaybook={params.get("playbook") ?? undefined}
-            pickerHeight={380}
-          />
-        </div>
-      )}
-      {tab === "schedules" && <SchedulesTab />}
-      {tab === "repos" && <ReposTab />}
+      <TabPanel idPrefix={tabsId} tab={tab}>
+        {tab === "run" && (
+          <div className="max-w-4xl py-2">
+            <PlaybookRunForm
+              key={`${params.get("mode") ?? "now"}:${params.get("playbook") ?? ""}`}
+              initialMode={params.get("mode") === "schedule" ? "schedule" : "now"}
+              initialRepoId={params.get("repo") ?? undefined}
+              initialPlaybook={params.get("playbook") ?? undefined}
+              pickerHeight={380}
+            />
+          </div>
+        )}
+        {tab === "schedules" && <SchedulesTab />}
+        {tab === "repos" && <ReposTab />}
+      </TabPanel>
     </div>
   );
 }

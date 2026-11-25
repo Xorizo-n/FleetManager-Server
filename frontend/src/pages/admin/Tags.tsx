@@ -269,7 +269,7 @@ function TagEditor({ tag, onClose }: { tag: HostTag | null; onClose: () => void 
       <form onSubmit={submit} className="space-y-3">
         <div>
           <label className="field-label" htmlFor="tag-name">Название</label>
-          <input id="tag-name" required autoFocus maxLength={64} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="input-base" placeholder="Преподавательские" />
+          <input id="tag-name" required data-dialog-autofocus maxLength={64} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="input-base" placeholder="Преподавательские" />
         </div>
         <div>
           <label className="field-label" htmlFor="tag-desc">Описание</label>

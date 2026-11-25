@@ -63,7 +63,7 @@ export function buildGroupTree(groups: HostGroup[], hosts: Host[]): GroupTree {
     const own = hostsByGroup.get(group.id) ?? [];
     node.hostIds = own.map((h) => h.id);
     node.online = own.filter((h) => h.status === "online").length;
-    for (const child of [...(childrenOf.get(group.id) ?? [])].sort((a, b) => collator.compare(a.name, b.name))) {
+    for (const child of (childrenOf.get(group.id) ?? []).toSorted((a, b) => collator.compare(a.name, b.name))) {
       const childNode = build(child, depth + 1, rootName ?? group.name, path);
       if (!childNode) continue;
       node.children.push(childNode);
@@ -73,8 +73,8 @@ export function buildGroupTree(groups: HostGroup[], hosts: Host[]): GroupTree {
     return node;
   }
 
-  const roots = [...(childrenOf.get(null) ?? [])]
-    .sort((a, b) => collator.compare(a.name, b.name))
+  const roots = (childrenOf.get(null) ?? [])
+    .toSorted((a, b) => collator.compare(a.name, b.name))
     .map((g) => build(g, 0, null, ""))
     .filter((n): n is TreeNode => n !== null);
 

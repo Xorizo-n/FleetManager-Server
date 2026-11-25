@@ -5,7 +5,7 @@ import { apiClient } from "../../api/client";
 import { keys, useAlerts, useCanEdit, useCredentials, useFleet, useHostSoftware, useTasks } from "../../api/queries";
 import type { AgentAlert, Host, NetworkAdapter, TaskRun } from "../../api/types";
 import Drawer from "../../components/ui/Drawer";
-import Tabs from "../../components/ui/Tabs";
+import Tabs, { TabPanel } from "../../components/ui/Tabs";
 import Menu from "../../components/ui/Menu";
 import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
@@ -156,7 +156,7 @@ export default function HostDrawer({ host, onClose, onRunPlaybook }: Props) {
         )}
         {canEdit && <Menu
           align="left"
-          trigger={({ open, toggle }) => <Button size="sm" variant="ghost" aria-expanded={open} aria-haspopup="menu" onClick={toggle}>
+          trigger={({ id, open, toggle }) => <Button id={id} size="sm" variant="ghost" aria-expanded={open} aria-haspopup="menu" onClick={toggle}>
             <MoreHorizontal className="h-4 w-4" />Действия
           </Button>}
           items={[
@@ -170,20 +170,19 @@ export default function HostDrawer({ host, onClose, onRunPlaybook }: Props) {
       </div>
       <Tabs<Tab>
         idPrefix={tabsId}
+        label="Карточка ПК"
         wrap
         value={tab}
         onChange={setTab}
         tabs={HOST_TABS.map((item) => item.id === "alerts" ? { ...item, count: alerts.data?.length || undefined } : item)}
       />
-      {HOST_TABS.map(({ id }) => (
-        <div key={id} id={`${tabsId}-panel-${id}`} role="tabpanel" aria-labelledby={`${tabsId}-tab-${id}`} tabIndex={0} hidden={tab !== id} className="pt-4">
-          {tab === id && id === "overview" && <Overview host={host} />}
-          {tab === id && id === "hardware" && <WorkplaceTab host={host} />}
-          {tab === id && id === "software" && <HostSoftware hostId={host.id} />}
-          {tab === id && id === "tasks" && <HostTasks hostId={host.id} />}
-          {tab === id && id === "alerts" && <HostAlerts alerts={alerts} />}
-        </div>
-      ))}
+      <TabPanel key={tab} idPrefix={tabsId} tab={tab} className="pt-4">
+        {tab === "overview" && <Overview host={host} />}
+        {tab === "hardware" && <WorkplaceTab host={host} />}
+        {tab === "software" && <HostSoftware hostId={host.id} />}
+        {tab === "tasks" && <HostTasks hostId={host.id} />}
+        {tab === "alerts" && <HostAlerts alerts={alerts} />}
+      </TabPanel>
     </Drawer>
   );
 }
@@ -401,7 +400,7 @@ function LinkSpeed({ adapter }: { adapter: NetworkAdapter | null }) {
 }
 
 function NetworkAdapters({ host }: { host: Host }) {
-  const adapters = [...(host.hw_network_adapters ?? [])].sort((a, b) => Number((b.status ?? "").toLowerCase() === "up") - Number((a.status ?? "").toLowerCase() === "up"));
+  const adapters = (host.hw_network_adapters ?? []).toSorted((a, b) => Number((b.status ?? "").toLowerCase() === "up") - Number((a.status ?? "").toLowerCase() === "up"));
   return (
     <ul className="divide-y divide-border rounded-lg border border-border">
       {adapters.map((a) => {
@@ -442,7 +441,7 @@ function HostSoftware({ hostId }: { hostId: string }) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
-        <SearchInput value={search} onChange={setSearch} placeholder="Поиск по названию" className="min-w-[200px] flex-1" />
+        <SearchInput value={search} onChange={setSearch} label="Поиск установленного ПО" placeholder="Поиск по названию" className="min-w-[200px] flex-1" />
         <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
           <Checkbox checked={hideSystem} onChange={(e) => setHideSystem(e.target.checked)} />
           Скрыть системное

@@ -9,10 +9,15 @@
     <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="theme-color" content="#2563eb" />
+    <meta name="color-scheme" content="dark" />
     <script>
-      // Apply stored theme before first paint to avoid a flash of the wrong theme.
-      if (localStorage.getItem("fm-theme") === "light") {
-        document.documentElement.classList.remove("dark");
+      try {
+        if (localStorage.getItem("fm-theme") === "light") {
+          document.documentElement.classList.remove("dark");
+          document.querySelector('meta[name="color-scheme"]').content = "light";
+        }
+      } catch {
+        // The default theme also works when browser storage is unavailable.
       }
     </script>
   </head>

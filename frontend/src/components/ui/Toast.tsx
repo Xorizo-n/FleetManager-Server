@@ -1,6 +1,7 @@
 import { createContext, ReactNode, useCallback, useContext, useState } from "react";
 import { createPortal } from "react-dom";
 import { CheckCircle2, Info, X, XCircle } from "lucide-react";
+import { useDialogPortalTarget } from "./DialogLayer";
 
 type Tone = "success" | "error" | "info";
 interface ToastItem {
@@ -16,6 +17,7 @@ let nextId = 1;
 
 /** Короткие уведомления в углу экрана вместо строк статуса, разбросанных по страницам. */
 export function ToastProvider({ children }: { children: ReactNode }) {
+  const portalTarget = useDialogPortalTarget();
   const [items, setItems] = useState<ToastItem[]>([]);
   const dismiss = useCallback((id: number) => setItems((list) => list.filter((t) => t.id !== id)), []);
   const push = useCallback(
@@ -57,7 +59,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             );
           })}
         </div>,
-        document.body,
+        portalTarget,
       )}
     </ToastContext.Provider>
   );

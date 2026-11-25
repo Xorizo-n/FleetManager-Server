@@ -2,6 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
+.dialog-layer[open] {
+  display: flex;
+}
+
+.dialog-layer:modal {
+  overscroll-behavior: contain;
+}
+
+.dialog-layer::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
