@@ -11,12 +11,17 @@ const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(() =>
-    localStorage.getItem("fm-theme") === "light" ? "light" : "dark"
+    document.documentElement.classList.contains("dark") ? "dark" : "light"
   );
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
-    localStorage.setItem("fm-theme", theme);
+    document.querySelector('meta[name="color-scheme"]')?.setAttribute("content", theme);
+    try {
+      localStorage.setItem("fm-theme", theme);
+    } catch {
+      // The in-memory preference still applies for this page.
+    }
   }, [theme]);
 
   function toggleTheme() {

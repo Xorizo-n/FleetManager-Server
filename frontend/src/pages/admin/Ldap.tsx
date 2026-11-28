@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Plus, Search, X, XCircle } from "lucide-react";
 import { apiClient } from "../../api/client";
@@ -51,6 +51,13 @@ const MEMBER_LIMIT = 1000;
 /** CN группы из DN: «CN=IRITRTF OOD Staff,OU=…» → «IRITRTF OOD Staff». */
 const groupName = (dn: string) => dn.match(/^CN=((?:\\,|[^,])+)/i)?.[1].replace(/\\,/g, ",") ?? dn;
 
+// Эти поля внутри формы настроек: обычный Enter не должен сохранять всю страницу.
+const onEnter = (action: () => void) => (event: KeyboardEvent<HTMLInputElement>) => {
+  if (event.key !== "Enter" || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+  event.preventDefault();
+  action();
+};
+
 function GroupPicker({ form, password, onAdd }: { form: LdapSettings; password: string | null; onAdd: (dn: string) => void }) {
   const [query, setQuery] = useState("");
   const [manual, setManual] = useState("");
@@ -58,13 +65,6 @@ function GroupPicker({ form, password, onAdd }: { form: LdapSettings; password: 
   const [error, setError] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
 
-  // Поиск внутри формы страницы: вложенный <form> по Enter отправил бы всю страницу
-  const onEnter = (action: () => void) => (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      action();
-    }
-  };
   const addManual = () => {
     if (manual.includes("=")) onAdd(manual.trim());
     setManual("");
@@ -173,6 +173,7 @@ export default function Ldap() {
   const dirty = password !== null || JSON.stringify(form) !== JSON.stringify(saved.data);
 
   async function check() {
+    if (checking || !form?.bind_dn || !hasPassword) return;
     setChecking(true);
     try {
       const { data } = await apiClient.post<CheckReport>("/settings/ldap/check", { ...form, bind_password: password, username: checkUser || null });
@@ -339,7 +340,7 @@ export default function Ldap() {
           <p className="mt-1 max-w-[68ch] text-pretty text-sm text-muted-foreground">Проверяет настройки с этой страницы до сохранения: служебную запись, группы и роль пользователя. Пароль пользователя не нужен.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <input value={checkUser} onChange={(e) => setCheckUser(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); check(); } }} placeholder="Логин, почта или имя (необязательно)" className="input-base max-w-xs py-1.5" aria-label="Логин для проверки" />
+          <input value={checkUser} onChange={(e) => setCheckUser(e.target.value)} onKeyDown={onEnter(check)} placeholder="Логин, почта или имя (необязательно)" className="input-base max-w-xs py-1.5" aria-label="Логин для проверки" />
           <Button size="sm" variant="secondary" type="button" onClick={check} loading={checking} disabled={!form.bind_dn || !hasPassword}>
             Проверить
           </Button>

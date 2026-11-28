@@ -62,7 +62,7 @@ export function ActivationSection({ host, sameCmid }: { host: Host; sameCmid: nu
     );
   }
   const probe = activation.kms_probe;
-  const products = [...activation.products].sort((a, b) => Number(a.kind === "office") - Number(b.kind === "office"));
+  const products = activation.products.toSorted((a, b) => Number(a.kind === "office") - Number(b.kind === "office"));
   return (
     <div className="space-y-2">
       {products.length === 0 ? (

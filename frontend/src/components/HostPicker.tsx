@@ -102,7 +102,7 @@ export default function HostPicker({ value, onChange, height = 360, showOnlineFi
   return (
     <div className="overflow-hidden rounded-lg border border-border">
       <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/30 p-2">
-        <SearchInput value={search} onChange={setSearch} placeholder="Имя ПК, IP или группа" className="min-w-[200px] flex-1" />
+        <SearchInput value={search} onChange={setSearch} label="Поиск ПК" placeholder="Имя ПК, IP или группа" className="min-w-[200px] flex-1" />
         {showOnlineFilter && <label className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-muted-foreground hover:text-foreground">
           <Checkbox checked={onlineOnly} onChange={(e) => setOnlineOnly(e.target.checked)} />
           Только online

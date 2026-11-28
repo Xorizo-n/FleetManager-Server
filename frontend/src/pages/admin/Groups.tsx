@@ -87,7 +87,7 @@ export default function Groups() {
           </Button>
         }
       />
-      <SearchInput value={search} onChange={setSearch} placeholder="Поиск группы" className="max-w-sm" />
+      <SearchInput value={search} onChange={setSearch} label="Поиск групп" placeholder="Поиск группы" className="max-w-sm" />
       {isLoading ? (
         <Loading />
       ) : (
@@ -170,7 +170,7 @@ function CreateGroupDialog({ onClose }: { onClose: () => void }) {
         <p className="text-sm text-muted-foreground">ПК в группу добавляются на странице «Хосты»: выберите их и нажмите «Ещё → Назначить группу».</p>
         <div>
           <label className="field-label" htmlFor="group-name">Название</label>
-          <input id="group-name" required autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="input-base" placeholder="Преподаватели" />
+          <input id="group-name" required data-dialog-autofocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="input-base" placeholder="Преподаватели" />
         </div>
         <div>
           <label className="field-label" htmlFor="group-parent">Внутри группы</label>

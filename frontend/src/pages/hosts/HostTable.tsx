@@ -86,6 +86,7 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
   const compact = width < GRID[columns].wideFrom;
   // На телефоне — только имя (с IP и агентом второй строкой) и статус
   const grid = mobile ? "2.25rem minmax(0,1fr) auto" : compact ? GRID[columns].compact : GRID[columns].wide;
+  const columnCount = grid.split(" ").length;
 
   const rows = useMemo<Row[]>(() => {
     const compare = (a: Host, b: Host) => {
@@ -102,7 +103,7 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
       if (result === 0) result = collator.compare(hostLabel(a), hostLabel(b));
       return sort.desc ? -result : result;
     };
-    const sorted = [...hosts].sort(compare);
+    const sorted = hosts.toSorted(compare);
     if (!grouped) return sorted.map((host) => ({ kind: "host", host }));
     const byGroup = new Map<string, Host[]>();
     for (const h of sorted) {
@@ -131,29 +132,38 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
   const allIds = useMemo(() => hosts.map((h) => h.id), [hosts]);
   const selectedVisible = allIds.filter((id) => selected.has(id)).length;
 
-  const header = (key: SortKey | null, label: string) => (
-    <div className="flex items-center">
-      {key ? (
-        <button
-          className="inline-flex items-center gap-1 uppercase hover:text-foreground"
-          onClick={() => setSort((s) => ({ key, desc: s.key === key ? !s.desc : false }))}
-        >
-          {label}
-          {sort.key === key && (sort.desc ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />)}
-        </button>
-      ) : (
-        label
-      )}
-    </div>
-  );
+  const header = (key: SortKey | null, label: string) => {
+    const active = sort.key === key;
+    const customOrder = key === "status" || key === "agent" || key === "activation" || key === "devices";
+    const descending = sort.desc !== (key === "checked" || key === "disk");
+    const sortOrder = customOrder ? "other" : descending ? "descending" : "ascending";
+    return (
+      <div role="columnheader" aria-sort={active ? sortOrder : undefined} className="flex items-center">
+        {key ? (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 uppercase hover:text-foreground"
+            onClick={() => setSort((s) => ({ key, desc: s.key === key ? !s.desc : false }))}
+          >
+            {label}
+            {active && (descending ? <ArrowDown aria-hidden="true" className="h-3 w-3" /> : <ArrowUp aria-hidden="true" className="h-3 w-3" />)}
+          </button>
+        ) : (
+          label
+        )}
+      </div>
+    );
+  };
 
   return (
-    <div ref={shellRef} className="rounded-xl border border-border bg-surface">
+    <div ref={shellRef} role="table" aria-label="Компьютеры" aria-rowcount={rows.length + 1} aria-colcount={columnCount} className="rounded-xl border border-border bg-surface">
       <div
+        role="row"
+        aria-rowindex={1}
         className="sticky top-[57px] z-10 grid items-center gap-3 rounded-t-xl border-b border-border bg-muted/90 px-3 py-2.5 text-xs font-medium uppercase tracking-wide text-muted-foreground backdrop-blur-sm"
         style={{ gridTemplateColumns: grid }}
       >
-        <div>
+        <div role="columnheader" aria-label="Выбор ПК">
           {selectable && (
             <Checkbox
               checked={selectedVisible > 0 && selectedVisible === allIds.length}
@@ -190,7 +200,7 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
         )}
       </div>
 
-      <div ref={listRef} style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+      <div role="rowgroup" ref={listRef} style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
         {virtualizer.getVirtualItems().map((item) => {
           const row = rows[item.index];
           const style = {
@@ -206,8 +216,8 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
             const count = ids.filter((id) => selected.has(id)).length;
             const online = row.hosts.filter((h) => h.status === "online").length;
             return (
-              <div key={`g-${row.key}`} style={style} className="grid items-center gap-3 border-b border-border bg-muted/40 px-3 text-sm" >
-                <div className="flex items-center gap-3" style={{ gridColumn: "1 / -1" }}>
+              <div role="row" aria-rowindex={item.index + 2} key={`g-${row.key}`} style={style} className="grid items-center gap-3 border-b border-border bg-muted/40 px-3 text-sm">
+                <div role="cell" aria-colspan={columnCount} className="flex items-center gap-3" style={{ gridColumn: "1 / -1" }}>
                   <div className="w-[1.125rem]">
                     {selectable && (
                       <Checkbox
@@ -232,14 +242,16 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
           return (
             <div
               key={h.id}
+              role="row"
+              aria-rowindex={item.index + 2}
               style={{ ...style, gridTemplateColumns: grid }}
               className={`grid cursor-pointer items-center gap-3 border-b border-border/60 px-3 text-sm transition-colors hover:bg-muted/50 ${checked ? "bg-blue-500/5" : ""}`}
               onClick={() => onOpen(h)}
             >
-              <div onClick={(e) => e.stopPropagation()}>
+              <div role="cell" onClick={(e) => e.stopPropagation()}>
                 {selectable && <Checkbox checked={checked} onChange={() => onToggle([h.id])} aria-label={`Выбрать ${hostLabel(h)}`} />}
               </div>
-              <div className="min-w-0">
+              <div role="rowheader" className="min-w-0">
                 <div className="flex min-w-0 items-center gap-1.5">
                   <button type="button" className="truncate text-left font-medium text-foreground hover:underline focus-visible:underline" onClick={(event) => {
                     event.stopPropagation();
@@ -266,31 +278,31 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
                 )}
               </div>
               {mobile ? (
-                <div><StatusDot status={h.status} /></div>
+                <div role="cell"><StatusDot status={h.status} /></div>
               ) : columns === "main" ? (
                 <>
-                  <div className="truncate font-mono text-xs text-foreground/80">{h.ip_address ?? "—"}</div>
-                  <div><StatusDot status={h.status} /></div>
-                  <div className="min-w-0"><AgentCell host={h} status={versionOf(h)} /></div>
-                  {!compact && <div className="truncate text-muted-foreground">{osLabel(h.os)}</div>}
-                  {!compact && <div className="min-w-0"><ActivationCell host={h} /></div>}
-                  <div className="truncate text-muted-foreground" title={h.last_checked_at ? new Date(h.last_checked_at).toLocaleString("ru-RU", { timeZone: APP_TIME_ZONE }) : undefined}>
+                  <div role="cell" className="truncate font-mono text-xs text-foreground/80">{h.ip_address ?? "—"}</div>
+                  <div role="cell"><StatusDot status={h.status} /></div>
+                  <div role="cell" className="min-w-0"><AgentCell host={h} status={versionOf(h)} /></div>
+                  {!compact && <div role="cell" className="truncate text-muted-foreground">{osLabel(h.os)}</div>}
+                  {!compact && <div role="cell" className="min-w-0"><ActivationCell host={h} /></div>}
+                  <div role="cell" className="truncate text-muted-foreground" title={h.last_checked_at ? new Date(h.last_checked_at).toLocaleString("ru-RU", { timeZone: APP_TIME_ZONE }) : undefined}>
                     {relativeTime(h.last_checked_at)}
                   </div>
                 </>
               ) : (
                 <>
-                  <div className="min-w-0">
+                  <div role="cell" className="min-w-0">
                     <div className="truncate text-foreground">{h.hw_model ?? "—"}</div>
                     <div className="truncate text-xs text-subtle">{h.hw_manufacturer}</div>
                   </div>
-                  {!compact && <div className="truncate text-xs text-foreground/80" title={h.hw_processor ?? ""}>{h.hw_processor ?? "—"}</div>}
+                  {!compact && <div role="cell" className="truncate text-xs text-foreground/80" title={h.hw_processor ?? ""}>{h.hw_processor ?? "—"}</div>}
                   {!compact && <GpuCell host={h} />}
                   {!compact && <MonitorCell host={h} />}
-                  <div className="tabular-nums">{formatRam(h.hw_total_memory_bytes)}</div>
-                  <DiskCell disk={fullestDisk(h)} all={h.hw_disks ?? []} />
+                  <div role="cell" className="tabular-nums">{formatRam(h.hw_total_memory_bytes)}</div>
+                  <div role="cell" className="min-w-0"><DiskCell disk={fullestDisk(h)} all={h.hw_disks ?? []} /></div>
                   <LinkSpeedCell host={h} />
-                  <div><PeripheralCell host={h} /></div>
+                  <div role="cell"><PeripheralCell host={h} /></div>
                 </>
               )}
             </div>
@@ -304,7 +316,7 @@ export default function HostTable({ hosts, tree, versionOf, columns, grouped, se
 function GpuCell({ host }: { host: Host }) {
   const names = (host.hw_components?.gpus ?? []).map((g) => cleanName(g.name)).filter(Boolean);
   return (
-    <div className="truncate text-xs text-foreground/80" title={names.join("\n")}>
+    <div role="cell" className="truncate text-xs text-foreground/80" title={names.join("\n")}>
       {names.length ? names.join(", ") : <span className="text-muted-foreground">—</span>}
     </div>
   );
@@ -312,11 +324,11 @@ function GpuCell({ host }: { host: Host }) {
 
 function MonitorCell({ host }: { host: Host }) {
   const monitors = host.hw_components?.monitors ?? [];
-  if (!host.hw_components) return <div className="text-xs text-muted-foreground">—</div>;
-  if (!monitors.length) return <div className="text-xs text-rose-600 dark:text-rose-400">нет</div>;
+  if (!host.hw_components) return <div role="cell" className="text-xs text-muted-foreground">—</div>;
+  if (!monitors.length) return <div role="cell" className="text-xs text-rose-600 dark:text-rose-400">нет</div>;
   const titles = monitors.map(monitorTitle);
   return (
-    <div className="truncate text-xs text-foreground/80" title={titles.join("\n")}>
+    <div role="cell" className="truncate text-xs text-foreground/80" title={titles.join("\n")}>
       {titles[0]}
       {monitors.length > 1 && <span className="text-muted-foreground"> +{monitors.length - 1}</span>}
     </div>
@@ -326,10 +338,11 @@ function MonitorCell({ host }: { host: Host }) {
 function LinkSpeedCell({ host }: { host: Host }) {
   const adapter = primaryAdapter(host);
   const speed = formatLinkSpeed(adapter?.link_speed_bps);
-  if (!speed) return <div className="text-muted-foreground">—</div>;
+  if (!speed) return <div role="cell" className="text-muted-foreground">—</div>;
   const slow = isSlowWiredLink(adapter);
   return (
     <div
+      role="cell"
       className={`truncate text-xs tabular-nums ${slow ? "text-amber-600 dark:text-amber-400" : "text-foreground/80"}`}
       title={`${adapter?.name ?? "Адаптер"}${adapter?.description ? ` — ${adapter.description}` : ""}${slow ? "\nМеньше гигабита по проводу: проверьте кабель и порт" : ""}`}
     >

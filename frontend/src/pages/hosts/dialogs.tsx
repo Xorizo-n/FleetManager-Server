@@ -55,7 +55,7 @@ export function AddHostDialog({ onClose }: { onClose: () => void }) {
         </p>
         <div>
           <label className="field-label" htmlFor="add-hostname">Имя хоста</label>
-          <input id="add-hostname" autoFocus value={form.hostname} onChange={(e) => setForm({ ...form, hostname: e.target.value })} className="input-base" placeholder="MR32-411-01" />
+          <input id="add-hostname" data-dialog-autofocus value={form.hostname} onChange={(e) => setForm({ ...form, hostname: e.target.value })} className="input-base" placeholder="MR32-411-01" />
         </div>
         <div>
           <label className="field-label" htmlFor="add-ip">IP-адрес</label>
@@ -165,7 +165,7 @@ export function GroupDialog({ hostIds, onClose, onDone }: { hostIds: string[]; o
           Существующая группа
         </label>
         {mode === "existing" && (
-          <select value={groupId} onChange={(e) => setGroupId(e.target.value)} className="input-base" autoFocus>
+          <select value={groupId} onChange={(e) => setGroupId(e.target.value)} className="input-base" data-dialog-autofocus autoFocus>
             <option value="">Выберите группу</option>
             {tree.options.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
           </select>
@@ -174,7 +174,7 @@ export function GroupDialog({ hostIds, onClose, onDone }: { hostIds: string[]; o
           <input type="radio" checked={mode === "new"} onChange={() => setMode("new")} className="accent-blue-600" />
           Новая группа
         </label>
-        {mode === "new" && <input value={name} onChange={(e) => setName(e.target.value)} className="input-base" placeholder="Например, Преподаватели" autoFocus />}
+        {mode === "new" && <input value={name} onChange={(e) => setName(e.target.value)} className="input-base" placeholder="Например, Преподаватели" data-dialog-autofocus autoFocus />}
         <label className="flex items-center gap-2">
           <input type="radio" checked={mode === "none"} onChange={() => setMode("none")} className="accent-blue-600" />
           Убрать из группы
@@ -232,7 +232,7 @@ export function CredentialDialog({ hostIds, onClose, onDone }: { hostIds: string
       }
     >
       <div className="space-y-3 text-sm">
-        <select value={credentialId} onChange={(e) => setCredentialId(e.target.value)} className="input-base" autoFocus aria-label="Учётные данные">
+        <select value={credentialId} onChange={(e) => setCredentialId(e.target.value)} className="input-base" data-dialog-autofocus aria-label="Учётные данные">
           <option value="">Выберите учётные данные</option>
           <option value="__group__">Как у группы (убрать собственную учётку)</option>
           {(credentials.data ?? []).filter(isSshAssignable).map((c) => <option key={c.id} value={c.id}>{c.name} · {c.login}</option>)}
@@ -282,7 +282,7 @@ export function TagDialog({ hostIds, onClose, onDone }: { hostIds: string[]; onC
       }
     >
       <div className="space-y-3 text-sm">
-        <select value={choice} onChange={(e) => setChoice(e.target.value)} className="input-base" autoFocus aria-label="Тег">
+        <select value={choice} onChange={(e) => setChoice(e.target.value)} className="input-base" data-dialog-autofocus aria-label="Тег">
           <option value="">Выберите тег</option>
           {(tags.data ?? []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           <option value="none">Без тега</option>

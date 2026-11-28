@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useId, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { apiClient } from "../../api/client";
@@ -6,7 +6,7 @@ import { keys, useCredentials, useFleet } from "../../api/queries";
 import type { Credential } from "../../api/types";
 import { useAuth } from "../../context/AuthContext";
 import PageHeader from "../../components/ui/PageHeader";
-import Tabs from "../../components/ui/Tabs";
+import Tabs, { TabPanel } from "../../components/ui/Tabs";
 import Button from "../../components/ui/Button";
 import Modal from "../../components/ui/Modal";
 import SearchInput from "../../components/ui/SearchInput";
@@ -27,6 +27,7 @@ function usage(c: Credential) {
 }
 
 export default function Credentials() {
+  const tabsId = useId();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const queryClient = useQueryClient();
@@ -79,6 +80,8 @@ export default function Credentials() {
         }
       />
       <Tabs
+        idPrefix={tabsId}
+        label="Учётные данные"
         value={tab}
         onChange={setTab}
         tabs={[
@@ -86,111 +89,113 @@ export default function Credentials() {
           { id: "agent", label: "Ключи агентов", count: agentKeys.length },
         ]}
       />
-      {credentials.isLoading && <Loading />}
+      <TabPanel idPrefix={tabsId} tab={tab}>
+        {credentials.isLoading && <Loading />}
 
-      {tab === "manual" && !credentials.isLoading && (
-        <div className="table-shell">
-          <table className="table-base">
-            <thead>
-              <tr>
-                <th>Название</th>
-                <th>Тип</th>
-                <th>Логин</th>
-                <th>Используется</th>
-                <th>Создан</th>
-                {isAdmin && <th className="w-12" />}
-              </tr>
-            </thead>
-            <tbody>
-              {manual.map((c) => (
-                <tr key={c.id}>
-                  <td className="font-medium text-foreground">
-                    <span className="inline-flex items-center gap-2">
-                      <KeyRound className="h-3.5 w-3.5 text-subtle" />
-                      {c.name}
-                    </span>
-                  </td>
-                  <td>{TYPE_LABELS[c.type]}</td>
-                  <td className="font-mono text-xs">{c.login ?? "—"}</td>
-                  <td className="text-muted-foreground">{usage(c) ?? <span className="text-subtle">нигде</span>}</td>
-                  <td className="text-muted-foreground">{formatDateTime(c.created_at)}</td>
-                  {isAdmin && (
-                    <td className="text-right">
-                      <button className="action-danger" onClick={() => remove([c])} aria-label={`Удалить ${c.name}`}>
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {manual.length === 0 && <Empty>Учётные данные не добавлены</Empty>}
-        </div>
-      )}
-
-      {tab === "agent" && !credentials.isLoading && (
-        <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Сервер выпускает SSH-ключ каждому агенту при регистрации и подключается к ПК только им. Ключ используемого ПК
-            удаляется вместе с агентом или хостом. Ключ, не привязанный ни к одному хосту, остался от удалённого или
-            перерегистрированного ПК: сервер его больше не использует, и его можно удалить.
-          </p>
-          <div className="flex flex-wrap items-center gap-3">
-            <SearchInput value={search} onChange={setSearch} placeholder="Имя ПК" className="min-w-[200px] flex-1" />
-            <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-              <Checkbox checked={unusedOnly} onChange={(e) => setUnusedOnly(e.target.checked)} />
-              Только неиспользуемые ({unused.length})
-            </label>
-            {isAdmin && unused.length > 0 && (
-              <Button size="sm" variant="secondary" onClick={() => remove(unused)}>
-                <Trash2 className="h-3.5 w-3.5" />
-                Удалить неиспользуемые ({unused.length})
-              </Button>
-            )}
-          </div>
+        {tab === "manual" && !credentials.isLoading && (
           <div className="table-shell">
             <table className="table-base">
               <thead>
                 <tr>
-                  <th>Ключ</th>
-                  <th>Хост</th>
+                  <th>Название</th>
+                  <th>Тип</th>
                   <th>Логин</th>
-                  <th>Выпущен</th>
+                  <th>Используется</th>
+                  <th>Создан</th>
                   {isAdmin && <th className="w-12" />}
                 </tr>
               </thead>
               <tbody>
-                {shownAgentKeys.slice(0, 300).map((c) => {
-                  const host = hostOfKey.get(c.id);
-                  return (
-                    <tr key={c.id}>
-                      <td className="text-foreground">{c.name.replace(/^Agent SSH — /, "")}</td>
-                      <td>{host ? host.hostname : <span className="text-amber-600 dark:text-amber-400">не используется</span>}</td>
-                      <td className="font-mono text-xs">{c.login ?? "—"}</td>
-                      <td className="text-muted-foreground">{formatDateTime(c.created_at)}</td>
-                      {isAdmin && (
-                        <td className="text-right">
-                          {host ? (
-                            <span className="text-xs text-subtle" title="Ключ удаляется вместе с агентом или хостом">используется</span>
-                          ) : (
-                            <button className="action-danger" onClick={() => remove([c])} aria-label={`Удалить ${c.name}`}>
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
+                {manual.map((c) => (
+                  <tr key={c.id}>
+                    <td className="font-medium text-foreground">
+                      <span className="inline-flex items-center gap-2">
+                        <KeyRound className="h-3.5 w-3.5 text-subtle" />
+                        {c.name}
+                      </span>
+                    </td>
+                    <td>{TYPE_LABELS[c.type]}</td>
+                    <td className="font-mono text-xs">{c.login ?? "—"}</td>
+                    <td className="text-muted-foreground">{usage(c) ?? <span className="text-subtle">нигде</span>}</td>
+                    <td className="text-muted-foreground">{formatDateTime(c.created_at)}</td>
+                    {isAdmin && (
+                      <td className="text-right">
+                        <button className="action-danger" onClick={() => remove([c])} aria-label={`Удалить ${c.name}`}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
               </tbody>
             </table>
-            {shownAgentKeys.length > 300 && <p className="px-4 py-2 text-xs text-subtle">Показаны первые 300 из {shownAgentKeys.length} — уточните поиск</p>}
-            {shownAgentKeys.length === 0 && <Empty>Ничего не найдено</Empty>}
+            {manual.length === 0 && <Empty>Учётные данные не добавлены</Empty>}
           </div>
-        </div>
-      )}
+        )}
 
+        {tab === "agent" && !credentials.isLoading && (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Сервер выпускает SSH-ключ каждому агенту при регистрации и подключается к ПК только им. Ключ используемого ПК
+              удаляется вместе с агентом или хостом. Ключ, не привязанный ни к одному хосту, остался от удалённого или
+              перерегистрированного ПК: сервер его больше не использует, и его можно удалить.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <SearchInput value={search} onChange={setSearch} label="Поиск ключей по имени ПК" placeholder="Имя ПК" className="min-w-[200px] flex-1" />
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                <Checkbox checked={unusedOnly} onChange={(e) => setUnusedOnly(e.target.checked)} />
+                Только неиспользуемые ({unused.length})
+              </label>
+              {isAdmin && unused.length > 0 && (
+                <Button size="sm" variant="secondary" onClick={() => remove(unused)}>
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Удалить неиспользуемые ({unused.length})
+                </Button>
+              )}
+            </div>
+            <div className="table-shell">
+              <table className="table-base">
+                <thead>
+                  <tr>
+                    <th>Ключ</th>
+                    <th>Хост</th>
+                    <th>Логин</th>
+                    <th>Выпущен</th>
+                    {isAdmin && <th className="w-12" />}
+                  </tr>
+                </thead>
+                <tbody>
+                  {shownAgentKeys.slice(0, 300).map((c) => {
+                    const host = hostOfKey.get(c.id);
+                    return (
+                      <tr key={c.id}>
+                        <td className="text-foreground">{c.name.replace(/^Agent SSH — /, "")}</td>
+                        <td>{host ? host.hostname : <span className="text-amber-600 dark:text-amber-400">не используется</span>}</td>
+                        <td className="font-mono text-xs">{c.login ?? "—"}</td>
+                        <td className="text-muted-foreground">{formatDateTime(c.created_at)}</td>
+                        {isAdmin && (
+                          <td className="text-right">
+                            {host ? (
+                              <span className="text-xs text-subtle" title="Ключ удаляется вместе с агентом или хостом">используется</span>
+                            ) : (
+                              <button className="action-danger" onClick={() => remove([c])} aria-label={`Удалить ${c.name}`}>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {shownAgentKeys.length > 300 && <p className="px-4 py-2 text-xs text-subtle">Показаны первые 300 из {shownAgentKeys.length} — уточните поиск</p>}
+              {shownAgentKeys.length === 0 && <Empty>Ничего не найдено</Empty>}
+            </div>
+          </div>
+        )}
+
+      </TabPanel>
       {adding && <AddCredentialDialog onClose={() => setAdding(false)} />}
     </div>
   );
@@ -224,7 +229,7 @@ function AddCredentialDialog({ onClose }: { onClose: () => void }) {
       <form onSubmit={submit} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <label htmlFor="cred-name" className="field-label">Название</label>
-          <input id="cred-name" required autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="input-base" autoComplete="off" />
+          <input id="cred-name" required data-dialog-autofocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="input-base" autoComplete="off" />
         </div>
         <div>
           <label htmlFor="cred-type" className="field-label">Тип</label>

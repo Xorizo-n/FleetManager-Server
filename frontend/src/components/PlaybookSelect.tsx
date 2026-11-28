@@ -122,7 +122,7 @@ export default function PlaybookSelect({ files, value, onChange, loading }: Prop
       if (recent.length) map.set("Недавние", recent);
     }
     // Сначала основной репозиторий по папкам, затем остальные источники (локальные — последними)
-    const sorted = [...matched].sort((a, b) => Number(!!a.source) - Number(!!b.source) || playbookLabel(a).localeCompare(playbookLabel(b), "ru"));
+    const sorted = matched.toSorted((a, b) => Number(!!a.source) - Number(!!b.source) || playbookLabel(a).localeCompare(playbookLabel(b), "ru"));
     for (const f of sorted) {
       const folder = f.source ? [f.source, folderOf(f.path, "")].filter(Boolean).join(" · ") : folderOf(f.path, commonRoot) || "Общие";
       if (!map.has(folder)) map.set(folder, []);
@@ -157,7 +157,7 @@ export default function PlaybookSelect({ files, value, onChange, loading }: Prop
       {open && (
         <div className="absolute left-0 right-0 top-full z-50 mt-1 animate-scale-in overflow-hidden rounded-xl border border-border bg-surface shadow-panel-lg">
           <div className="border-b border-border p-2">
-            <SearchInput value={search} onChange={setSearch} placeholder="Поиск по названию, описанию или файлу" autoFocus />
+            <SearchInput value={search} onChange={setSearch} label="Поиск плейбуков" placeholder="Поиск по названию, описанию или файлу" autoFocus />
           </div>
           <div className="max-h-80 overflow-y-auto" role="listbox">
             {groups.length === 0 && <p className="px-4 py-6 text-center text-sm text-subtle">Ничего не найдено</p>}

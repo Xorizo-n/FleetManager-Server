@@ -8,14 +8,14 @@ export default function PasswordInput({
   onChange,
   autoComplete,
   minLength = 8,
-  autoFocus,
+  dialogAutoFocus,
 }: {
   id: string;
   value: string;
   onChange: (value: string) => void;
   autoComplete: string;
   minLength?: number;
-  autoFocus?: boolean;
+  dialogAutoFocus?: boolean;
 }) {
   const [show, setShow] = useState(false);
   return (
@@ -28,7 +28,7 @@ export default function PasswordInput({
         onChange={(e) => onChange(e.target.value)}
         required
         minLength={minLength}
-        autoFocus={autoFocus}
+        data-dialog-autofocus={dialogAutoFocus ? "" : undefined}
         className="input-base pr-10"
       />
       <button

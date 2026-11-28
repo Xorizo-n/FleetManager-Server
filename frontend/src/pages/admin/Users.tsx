@@ -215,7 +215,7 @@ function CreateUserModal({ open, onClose }: { open: boolean; onClose: () => void
         </p>
         <div>
           <label htmlFor="new-username" className="field-label">Имя пользователя</label>
-          <input id="new-username" type="text" autoComplete="off" autoFocus value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} required minLength={3} className="input-base" />
+          <input id="new-username" type="text" autoComplete="off" data-dialog-autofocus value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} required minLength={3} className="input-base" />
         </div>
         <div>
           <label htmlFor="new-email" className="field-label">Email</label>

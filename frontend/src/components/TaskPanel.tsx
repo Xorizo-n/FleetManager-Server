@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import Drawer from "./ui/Drawer";
@@ -14,6 +14,7 @@ import { Loading } from "./ui/States";
 import { keys, useCanEdit, useFleet, useTask } from "../api/queries";
 import { apiError, formatDateTime, formatDuration, hostLabel, pcCount, playbookShortName, STATUS_LABELS, TASK_TYPE_LABELS, taskTitle } from "../lib/format";
 import { countHostStates, displayStatus, finishedCount, HOST_STATE_INFO, HOST_STATES, hostStateOf } from "../lib/hostStates";
+import Tabs, { TabPanel } from "./ui/Tabs";
 import type { HostState, RunAs, TaskRun, TaskRunDetail } from "../api/types";
 
 const TaskPanelContext = createContext<(taskId: string) => void>(() => {});
@@ -199,6 +200,7 @@ function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }
 
 /** ПК запуска с их состоянием и журналы выполнения. */
 function TaskBody({ task, vars, onRunDone }: { task: TaskRunDetail; vars: [string, unknown][]; onRunDone: () => void }) {
+  const tabsId = useId();
   const runs: TaskRun[] = useMemo(() => (task.grouped ? task.runs ?? [] : [task]), [task]);
   // Какая выполняющая задача у каждого ПК — последняя, где он был
   const runOfHost = useMemo(() => {
@@ -233,29 +235,33 @@ function TaskBody({ task, vars, onRunDone }: { task: TaskRunDetail; vars: [strin
       <section ref={logRef} className="scroll-mt-4 space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-foreground">Журнал</h3>
-          {runs.length > 1 && (
-            <div className="flex flex-wrap gap-1" role="tablist" aria-label="Запуски">
-              {runs.map((run, index) => (
-                <button
-                  key={run.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={run.id === selectedRun}
-                  onClick={() => setSelectedRun(run.id)}
-                  title={`${formatDateTime(run.created_at)} · ${pcCount(run.host_ids.length)} · ${STATUS_LABELS[run.status] ?? run.status}`}
-                  className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors ${
-                    run.id === selectedRun ? "bg-surface text-foreground shadow-panel ring-1 ring-border" : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  }`}
-                >
-                  <span className={`h-1.5 w-1.5 rounded-full ${HOST_STATE_INFO[hostStateOf({ status: run.status }, "")].dot}`} />
-                  {formatDateTime(run.created_at)} · {run.host_ids.length} ПК
-                  <span className="sr-only">{index + 1}</span>
-                </button>
-              ))}
-            </div>
+          {runs.length > 1 && selectedRun && (
+            <Tabs
+              idPrefix={tabsId}
+              label="Запуски"
+              value={selectedRun}
+              onChange={setSelectedRun}
+              manual
+              wrap
+              tabs={runs.map((run) => ({
+                id: run.id,
+                title: `${formatDateTime(run.created_at)} · ${pcCount(run.host_ids.length)} · ${STATUS_LABELS[run.status] ?? run.status}`,
+                label: (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${HOST_STATE_INFO[hostStateOf({ status: run.status }, "")].dot}`} />
+                    {formatDateTime(run.created_at)} · {run.host_ids.length} ПК
+                    <span className="sr-only"> · {STATUS_LABELS[run.status] ?? run.status}</span>
+                  </span>
+                ),
+              }))}
+            />
           )}
         </div>
-        {selectedRun ? (
+        {selectedRun ? runs.length > 1 ? (
+          <TabPanel idPrefix={tabsId} tab={selectedRun}>
+            <RunLog runId={selectedRun} own={selectedRun === task.id ? task : undefined} onDone={onRunDone} />
+          </TabPanel>
+        ) : (
           <RunLog runId={selectedRun} own={selectedRun === task.id ? task : undefined} onDone={onRunDone} />
         ) : (
           <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
@@ -337,7 +343,7 @@ function HostList({
             <FilterChip key={s.key} active={filter === s.key} onClick={() => setFilter(s.key)} label={s.label} count={counts[s.key] ?? 0} dot={s.dot} />
           ))}
         </div>
-        {task.host_ids.length > 12 && <SearchInput value={search} onChange={setSearch} placeholder="Имя ПК" className="w-full sm:ml-auto sm:w-48" />}
+        {task.host_ids.length > 12 && <SearchInput value={search} onChange={setSearch} label="Поиск ПК в запуске" placeholder="Имя ПК" className="w-full sm:ml-auto sm:w-48" />}
       </div>
       <div className="max-h-80 overflow-y-auto rounded-lg border border-border">
         <ul className="divide-y divide-border text-sm">

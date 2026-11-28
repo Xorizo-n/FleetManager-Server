@@ -157,31 +157,62 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Online за последние 24 часа">
-          <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={timeline.data ?? []}>
-              <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
-              <XAxis dataKey="hour" tick={{ fontSize: 10, fill: chart.tick }} interval={3} tickFormatter={(v: string) => v.slice(-5)} />
-              <YAxis tick={{ fontSize: 10, fill: chart.tick }} allowDecimals={false} />
-              <Tooltip contentStyle={chart.tooltip} formatter={(v) => [v, "online"]} />
-              <Line type="monotone" dataKey="online" stroke="#3b82f6" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
+          <div aria-hidden="true">
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={timeline.data ?? []}>
+                <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
+                <XAxis dataKey="hour" tick={{ fontSize: 10, fill: chart.tick }} interval={3} tickFormatter={(v: string) => v.slice(-5)} />
+                <YAxis tick={{ fontSize: 10, fill: chart.tick }} allowDecimals={false} />
+                <Tooltip contentStyle={chart.tooltip} formatter={(v) => [v, "online"]} />
+                <Line type="monotone" dataKey="online" stroke="#3b82f6" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <ChartData label="ПК онлайн за последние 24 часа" columns={["Время", "ПК онлайн"]} rows={timeline.data?.map(({ hour, online }) => [hour, online]) ?? []} />
         </Card>
         <Card title="Задачи за 7 дней">
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={weekly.data ?? []}>
-              <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
-              <XAxis dataKey="day" tick={{ fontSize: 10, fill: chart.tick }} />
-              <YAxis tick={{ fontSize: 10, fill: chart.tick }} allowDecimals={false} />
-              <Tooltip contentStyle={chart.tooltip} cursor={{ fill: isDark ? "rgba(148,163,184,0.08)" : "rgba(100,116,139,0.08)" }} />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="success" name="успешно" stackId="runs" fill="#10b981" />
-              <Bar dataKey="failed" name="с ошибкой" stackId="runs" fill="#f43f5e" radius={[3, 3, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+          <div aria-hidden="true">
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={weekly.data ?? []}>
+                <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
+                <XAxis dataKey="day" tick={{ fontSize: 10, fill: chart.tick }} />
+                <YAxis tick={{ fontSize: 10, fill: chart.tick }} allowDecimals={false} />
+                <Tooltip contentStyle={chart.tooltip} cursor={{ fill: isDark ? "rgba(148,163,184,0.08)" : "rgba(100,116,139,0.08)" }} />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Bar dataKey="success" name="успешно" stackId="runs" fill="#10b981" />
+                <Bar dataKey="failed" name="с ошибкой" stackId="runs" fill="#f43f5e" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <ChartData label="Результаты задач за 7 дней" columns={["День", "Успешно", "С ошибкой"]} rows={weekly.data?.map(({ day, success, failed }) => [day, success, failed]) ?? []} />
         </Card>
       </div>
 
     </div>
+  );
+}
+
+function ChartData({ label, columns, rows }: { label: string; columns: string[]; rows: (string | number)[][] }) {
+  if (!rows.length) return null;
+  return (
+    <details className="mt-2 text-sm text-muted-foreground">
+      <summary className="cursor-pointer" aria-label={`Данные графика: ${label}`}>Данные графика</summary>
+      <div className="table-shell mt-2">
+        <table className="table-base">
+          <caption className="sr-only">{label}</caption>
+          <thead>
+            <tr>{columns.map((column) => <th key={column} scope="col">{column}</th>)}</tr>
+          </thead>
+          <tbody>
+            {rows.map(([period, ...values]) => (
+              <tr key={period}>
+                <th scope="row">{period}</th>
+                {values.map((value, index) => <td key={columns[index + 1]}>{value}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
   );
 }
